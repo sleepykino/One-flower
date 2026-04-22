@@ -97,6 +97,45 @@ export interface ExtendedContinuationRequest {
   useCharacters?: boolean
 }
 
+export type ContinuationLengthType = 'words' | 'paragraphs' | 'scenes'
+
+export interface ContinuationLengthConfig {
+  type: ContinuationLengthType
+  value: number
+}
+
+export type ContinuationDirection = 'plot' | 'emotion' | 'scene' | 'dialogue' | 'action' | 'suspense'
+
+export interface ContinuationDirectionConfig {
+  direction: ContinuationDirection
+  intensity: number // 0-10
+}
+
+export interface ContinuationCandidate {
+  id: string
+  text: string
+  direction?: ContinuationDirection
+  created: number
+}
+
+export type PolishingType = 'polish' | 'rewrite' | 'expand'
+
+export interface PolishingRequest {
+  text: string
+  type: PolishingType
+  instruction?: string
+  model?: AIModel
+  temperature?: number
+}
+
+export interface StyleAnalysis {
+  styleType: string
+  keywords: string[]
+  sentenceStructure: string
+  vocabularyLevel: string
+  tone: string
+}
+
 export type AIProviderType = 'glm' | 'deepseek' | 'openai' | 'anthropic' | 'xai' | 'custom'
 
 export interface AIProvider {

@@ -172,7 +172,7 @@ export async function exportToEpub(chapters: Chapter[], filename?: string): Prom
     <dc:identifier id="BookId">${uuid}</dc:identifier>
     <dc:title>小说创作</dc:title>
     <dc:language>zh-CN</dc:language>
-    <dc:creator>小说续写工具</dc:creator>
+    <dc:creator>一花一世界</dc:creator>
     <meta property="dcterms:modified">${dateStr}</meta>
   </metadata>
   <manifest>

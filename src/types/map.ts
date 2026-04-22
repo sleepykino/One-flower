@@ -97,6 +97,8 @@ export interface FillConfig {
   randomness: number
 }
 
+export type ResizeHandleType = 'nw' | 'n' | 'ne' | 'w' | 'e' | 'sw' | 's' | 'se'
+
 export interface SelectionRect {
   x: number
   y: number

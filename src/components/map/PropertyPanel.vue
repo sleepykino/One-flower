@@ -125,6 +125,15 @@
             底部对齐
           </el-button>
         </div>
+
+        <div class="batch-actions" style="margin-top: 8px;">
+          <el-button size="small" @click="distributeElements('horizontal')">
+            水平分布
+          </el-button>
+          <el-button size="small" @click="distributeElements('vertical')">
+            垂直分布
+          </el-button>
+        </div>
       </div>
     </div>
   </div>
@@ -326,6 +335,40 @@ function alignElements(direction: string) {
         emit('update-element', p.id, { y: avgY })
       })
       break
+    }
+  }
+}
+
+function distributeElements(direction: 'horizontal' | 'vertical') {
+  if (props.elements.length < 3) return
+
+  const positions = props.elements.map(el => ({
+    id: el.id,
+    x: el.x,
+    y: el.y,
+    w: el.width || (el.type === 'marker' ? (el.data as MarkerData).size : 50),
+    h: el.height || (el.type === 'marker' ? (el.data as MarkerData).size : 50)
+  }))
+
+  if (direction === 'horizontal') {
+    const sorted = [...positions].sort((a, b) => a.x - b.x)
+    const minX = sorted[0].x
+    const maxX = sorted[sorted.length - 1].x
+    const totalGap = maxX - minX
+    const gap = totalGap / (sorted.length - 1)
+
+    for (let i = 1; i < sorted.length - 1; i++) {
+      emit('update-element', sorted[i].id, { x: minX + gap * i })
+    }
+  } else {
+    const sorted = [...positions].sort((a, b) => a.y - b.y)
+    const minY = sorted[0].y
+    const maxY = sorted[sorted.length - 1].y
+    const totalGap = maxY - minY
+    const gap = totalGap / (sorted.length - 1)
+
+    for (let i = 1; i < sorted.length - 1; i++) {
+      emit('update-element', sorted[i].id, { y: minY + gap * i })
     }
   }
 }

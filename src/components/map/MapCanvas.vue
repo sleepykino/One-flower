@@ -1,16 +1,36 @@
 <template>
   <div class="map-canvas-wrapper" ref="wrapperRef">
-    <canvas ref="canvasRef" @mousedown="onMouseDown" @mousemove="onMouseMove" @mouseup="onMouseUp" @wheel="onWheel" @contextmenu.prevent="onContextMenu" />
+    <canvas ref="canvasRef" @mousedown="onMouseDown" @mousemove="onMouseMove" @mouseup="onMouseUp" @mouseleave="onMouseUp" @wheel="onWheel" @contextmenu.prevent="onContextMenu" />
     
     <div v-if="!map" class="empty-state">
       <el-empty description="请选择或创建一个地图" />
+    </div>
+
+    <div v-if="showContextMenu" class="context-menu" :style="{ left: contextMenuPos.x + 'px', top: contextMenuPos.y + 'px' }">
+      <div class="menu-item" @click="copySelected">
+        <el-icon><DocumentCopy /></el-icon>
+        复制
+      </div>
+      <div class="menu-item" @click="pasteElements">
+        <el-icon><Document /></el-icon>
+        粘贴
+      </div>
+      <div class="menu-item" @click="deleteSelected">
+        <el-icon><Delete /></el-icon>
+        删除
+      </div>
+      <el-divider margin="5px" />
+      <div class="menu-item" @click="selectAllElements">
+        全选
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import type { NovelMap, MapElement, MapTool, MapAsset, Point, MarkerData, PathData, ShapeData, BrushConfig, FillConfig, SelectionRect } from '@/types/map'
+import { DocumentCopy, Document, Delete } from '@element-plus/icons-vue'
+import type { NovelMap, MapElement, MapTool, MapAsset, Point, MarkerData, PathData, ShapeData, BrushConfig, FillConfig, SelectionRect, ResizeHandleType } from '@/types/map'
 
 const props = defineProps<{
   map: NovelMap | null
@@ -59,6 +79,16 @@ const brushPendingElements = ref<Omit<MapElement, 'id'>[]>([])
 const isFillDrawing = ref(false)
 const fillStartPoint = ref<Point | null>(null)
 const fillCurrentPoint = ref<Point | null>(null)
+
+const isResizing = ref(false)
+const resizeHandle = ref<ResizeHandleType | null>(null)
+const resizeElement = ref<MapElement | null>(null)
+const resizeStartPoint = ref<Point | null>(null)
+const resizeStartState = ref<{ x: number; y: number; width?: number; height?: number; markerSize?: number } | null>(null)
+
+const showContextMenu = ref(false)
+const contextMenuPos = ref({ x: 0, y: 0 })
+const clipboard = ref<Omit<MapElement, 'id'>[]>([])
 
 function initCanvas() {
   if (!canvasRef.value || !wrapperRef.value) return
@@ -122,6 +152,13 @@ function render() {
 
   if (isFillDrawing.value && fillStartPoint.value && fillCurrentPoint.value) {
     drawFillPreview()
+  }
+
+  if (props.tool === 'select' && props.selectedElementIds.length === 1) {
+    const element = findElementById(props.selectedElementIds[0])
+    if (element) {
+      drawResizeHandles(element)
+    }
   }
   
   ctx.restore()
@@ -403,6 +440,59 @@ function drawFillPreview() {
   ctx.restore()
 }
 
+function drawResizeHandles(element: MapElement) {
+  if (!ctx) return
+
+  const bounds = getElementBounds(element)
+  const handleSize = 8 / zoom.value
+  
+  const handles: { type: ResizeHandleType; x: number; y: number }[] = [
+    { type: 'nw', x: bounds.x - 5, y: bounds.y - 5 },
+    { type: 'n', x: bounds.x + bounds.width / 2, y: bounds.y - 5 },
+    { type: 'ne', x: bounds.x + bounds.width + 5, y: bounds.y - 5 },
+    { type: 'w', x: bounds.x - 5, y: bounds.y + bounds.height / 2 },
+    { type: 'e', x: bounds.x + bounds.width + 5, y: bounds.y + bounds.height / 2 },
+    { type: 'sw', x: bounds.x - 5, y: bounds.y + bounds.height + 5 },
+    { type: 's', x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height + 5 },
+    { type: 'se', x: bounds.x + bounds.width + 5, y: bounds.y + bounds.height + 5 }
+  ]
+
+  ctx.fillStyle = '#ffffff'
+  ctx.strokeStyle = '#e94560'
+  ctx.lineWidth = 2 / zoom.value
+
+  for (const handle of handles) {
+    ctx.beginPath()
+    ctx.rect(handle.x - handleSize / 2, handle.y - handleSize / 2, handleSize, handleSize)
+    ctx.fill()
+    ctx.stroke()
+  }
+}
+
+function getElementBounds(element: MapElement): { x: number; y: number; width: number; height: number } {
+  let halfW = 25
+  let halfH = 25
+
+  if (element.type === 'marker') {
+    const size = (element.data as MarkerData).size
+    halfW = size / 2 + 5
+    halfH = size / 2 + 5
+  } else if (element.type === 'shape') {
+    halfW = (element.width || 100) / 2 + 5
+    halfH = (element.height || 100) / 2 + 5
+  } else if (element.type === 'text') {
+    halfW = 75
+    halfH = 15
+  }
+
+  return {
+    x: element.x - halfW,
+    y: element.y - halfH,
+    width: halfW * 2,
+    height: halfH * 2
+  }
+}
+
 function screenToCanvas(screenX: number, screenY: number): Point {
   if (!canvasRef.value) return { x: 0, y: 0 }
   
@@ -453,6 +543,31 @@ function isPointInElement(point: Point, element: MapElement): boolean {
   const size = element.type === 'marker' ? (element.data as MarkerData).size : 50
   
   return Math.abs(dx) <= size / 2 + 10 && Math.abs(dy) <= size / 2 + 10
+}
+
+function findResizeHandleAt(point: Point, element: MapElement): ResizeHandleType | null {
+  const bounds = getElementBounds(element)
+  const handleSize = 12 / zoom.value
+  const tolerance = handleSize / 2
+
+  const handles: { type: ResizeHandleType; x: number; y: number }[] = [
+    { type: 'nw', x: bounds.x - 5, y: bounds.y - 5 },
+    { type: 'n', x: bounds.x + bounds.width / 2, y: bounds.y - 5 },
+    { type: 'ne', x: bounds.x + bounds.width + 5, y: bounds.y - 5 },
+    { type: 'w', x: bounds.x - 5, y: bounds.y + bounds.height / 2 },
+    { type: 'e', x: bounds.x + bounds.width + 5, y: bounds.y + bounds.height / 2 },
+    { type: 'sw', x: bounds.x - 5, y: bounds.y + bounds.height + 5 },
+    { type: 's', x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height + 5 },
+    { type: 'se', x: bounds.x + bounds.width + 5, y: bounds.y + bounds.height + 5 }
+  ]
+
+  for (const handle of handles) {
+    if (Math.abs(point.x - handle.x) <= tolerance && Math.abs(point.y - handle.y) <= tolerance) {
+      return handle.type
+    }
+  }
+
+  return null
 }
 
 function findElementsInRect(rect: SelectionRect): string[] {
@@ -561,6 +676,7 @@ function generateFillElements(startPoint: Point, endPoint: Point): Omit<MapEleme
 }
 
 function onMouseDown(e: MouseEvent) {
+  showContextMenu.value = false
   const point = screenToCanvas(e.clientX, e.clientY)
   
   if (props.tool === 'pan' || e.button === 1) {
@@ -570,6 +686,27 @@ function onMouseDown(e: MouseEvent) {
   }
   
   if (props.tool === 'select') {
+    if (props.selectedElementIds.length === 1) {
+      const element = findElementById(props.selectedElementIds[0])
+      if (element) {
+        const handle = findResizeHandleAt(point, element)
+        if (handle) {
+          isResizing.value = true
+          resizeHandle.value = handle
+          resizeElement.value = element
+          resizeStartPoint.value = point
+          resizeStartState.value = {
+            x: element.x,
+            y: element.y,
+            width: element.width,
+            height: element.height,
+            markerSize: element.type === 'marker' ? (element.data as MarkerData).size : undefined
+          }
+          return
+        }
+      }
+    }
+
     const element = findElementAt(point)
     if (element) {
       if (!props.selectedElementIds.includes(element.id)) {
@@ -685,6 +822,57 @@ function onMouseMove(e: MouseEvent) {
     render()
     return
   }
+
+  if (isResizing.value && resizeElement.value && resizeStartPoint.value && resizeStartState.value) {
+    const point = screenToCanvas(e.clientX, e.clientY)
+    const dx = point.x - resizeStartPoint.value.x
+    const dy = point.y - resizeStartPoint.value.y
+    const handle = resizeHandle.value
+
+    let newX = resizeStartState.value.x
+    let newY = resizeStartState.value.y
+    let newWidth = resizeStartState.value.width
+    let newHeight = resizeStartState.value.height
+    let newMarkerSize = resizeStartState.value.markerSize
+
+    if (resizeElement.value.type === 'marker' && newMarkerSize !== undefined) {
+      const scale = Math.max(0.3, 1 + (dx + dy) / 100)
+      newMarkerSize = Math.round(newMarkerSize * scale)
+      emit('update-element', resizeElement.value.id, {
+        data: { ...resizeElement.value.data, size: newMarkerSize }
+      }, true)
+    } else if (resizeElement.value.type === 'shape' || resizeElement.value.type === 'text') {
+      const updates: Partial<MapElement> = {}
+
+      if (handle?.includes('e') && newWidth !== undefined) {
+        newWidth = Math.max(20, newWidth + dx)
+        updates.width = newWidth
+      }
+      if (handle?.includes('w') && newWidth !== undefined) {
+        newWidth = Math.max(20, newWidth - dx)
+        newX = resizeStartState.value.x + dx
+        updates.x = newX
+        updates.width = newWidth
+      }
+      if (handle?.includes('s') && newHeight !== undefined) {
+        newHeight = Math.max(20, newHeight + dy)
+        updates.height = newHeight
+      }
+      if (handle?.includes('n') && newHeight !== undefined) {
+        newHeight = Math.max(20, newHeight - dy)
+        newY = resizeStartState.value.y + dy
+        updates.y = newY
+        updates.height = newHeight
+      }
+
+      if (Object.keys(updates).length > 0) {
+        emit('update-element', resizeElement.value.id, updates, true)
+      }
+    }
+
+    render()
+    return
+  }
   
   if (isDrawing.value && props.tool === 'path') {
     const point = screenToCanvas(e.clientX, e.clientY)
@@ -768,6 +956,15 @@ function onMouseUp(e: MouseEvent) {
   if (isPanning.value) {
     isPanning.value = false
     lastPanPoint.value = null
+    return
+  }
+
+  if (isResizing.value) {
+    isResizing.value = false
+    resizeHandle.value = null
+    resizeElement.value = null
+    resizeStartPoint.value = null
+    resizeStartState.value = null
     return
   }
   
@@ -891,26 +1088,72 @@ function onMouseUp(e: MouseEvent) {
   isDragging.value = false
 }
 
-function onWheel(e: WheelEvent) {
-  e.preventDefault()
+function onContextMenu(e: MouseEvent) {
+  const point = screenToCanvas(e.clientX, e.clientY)
   
-  const delta = e.deltaY > 0 ? 0.9 : 1.1
-  const newZoom = Math.max(0.1, Math.min(5, zoom.value * delta))
-  
-  if (canvasRef.value) {
-    const rect = canvasRef.value.getBoundingClientRect()
-    const mouseX = e.clientX - rect.left
-    const mouseY = e.clientY - rect.top
-    
-    panX.value = mouseX - (mouseX - panX.value) * (newZoom / zoom.value)
-    panY.value = mouseY - (mouseY - panY.value) * (newZoom / zoom.value)
+  if (props.selectedElementIds.length === 0) {
+    const element = findElementAt(point)
+    if (element) {
+      emit('select-element', element.id, false)
+    }
   }
-  
-  zoom.value = newZoom
-  render()
+
+  if (props.selectedElementIds.length > 0) {
+    contextMenuPos.value = { x: e.clientX, y: e.clientY }
+    showContextMenu.value = true
+  }
 }
 
-function onContextMenu(e: MouseEvent) {
+function copySelected() {
+  clipboard.value = []
+  for (const id of props.selectedElementIds) {
+    const element = findElementById(id)
+    if (element) {
+      const copy: Omit<MapElement, 'id'> = {
+        type: element.type,
+        x: element.x + 20,
+        y: element.y + 20,
+        rotation: element.rotation,
+        opacity: element.opacity,
+        data: JSON.parse(JSON.stringify(element.data))
+      }
+      if (element.width !== undefined) copy.width = element.width
+      if (element.height !== undefined) copy.height = element.height
+      clipboard.value.push(copy)
+    }
+  }
+  showContextMenu.value = false
+}
+
+function pasteElements() {
+  if (clipboard.value.length > 0) {
+    emit('add-elements', clipboard.value)
+  }
+  showContextMenu.value = false
+}
+
+function deleteSelected() {
+  if (props.selectedElementIds.length > 0) {
+    emit('delete-elements', props.selectedElementIds)
+  }
+  showContextMenu.value = false
+}
+
+function selectAllElements() {
+  if (props.map) {
+    const allIds: string[] = []
+    for (const layer of props.map.layers) {
+      if (!layer.locked) {
+        for (const el of layer.elements) {
+          allIds.push(el.id)
+        }
+      }
+    }
+    for (const id of allIds) {
+      emit('select-element', id, true)
+    }
+  }
+  showContextMenu.value = false
 }
 
 function findElementById(id: string): MapElement | null {
@@ -931,6 +1174,58 @@ function resetView() {
   render()
 }
 
+function onWheel(e: WheelEvent) {
+  e.preventDefault()
+  
+  const delta = e.deltaY > 0 ? 0.9 : 1.1
+  const newZoom = Math.max(0.1, Math.min(5, zoom.value * delta))
+  
+  if (canvasRef.value) {
+    const rect = canvasRef.value.getBoundingClientRect()
+    const mouseX = e.clientX - rect.left
+    const mouseY = e.clientY - rect.top
+    
+    panX.value = mouseX - (mouseX - panX.value) * (newZoom / zoom.value)
+    panY.value = mouseY - (mouseY - panY.value) * (newZoom / zoom.value)
+  }
+  
+  zoom.value = newZoom
+  render()
+}
+
+function handleDocumentClick(e: MouseEvent) {
+  if (showContextMenu.value) {
+    const wrapper = wrapperRef.value
+    if (wrapper && !wrapper.contains(e.target as Node)) {
+      showContextMenu.value = false
+    }
+  }
+}
+
+function handleKeydown(e: KeyboardEvent) {
+  if (e.ctrlKey || e.metaKey) {
+    switch (e.key.toLowerCase()) {
+      case 'c':
+        e.preventDefault()
+        copySelected()
+        break
+      case 'v':
+        e.preventDefault()
+        pasteElements()
+        break
+      case 'a':
+        e.preventDefault()
+        selectAllElements()
+        break
+    }
+  } else {
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault()
+      deleteSelected()
+    }
+  }
+}
+
 watch(() => props.map, () => {
   nextTick(() => {
     render()
@@ -944,10 +1239,14 @@ watch(() => props.selectedElementIds, () => {
 onMounted(() => {
   initCanvas()
   window.addEventListener('resize', initCanvas)
+  document.addEventListener('click', handleDocumentClick)
+  window.addEventListener('keydown', handleKeydown)
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', initCanvas)
+  document.removeEventListener('click', handleDocumentClick)
+  window.removeEventListener('keydown', handleKeydown)
 })
 
 defineExpose({
@@ -974,5 +1273,36 @@ canvas {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
+}
+
+.context-menu {
+  position: fixed;
+  background: #16213e;
+  border: 1px solid #0f3460;
+  border-radius: 6px;
+  padding: 5px 0;
+  z-index: 1000;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  min-width: 140px;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  color: #e0e0e0;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.menu-item:hover {
+  background: #0f3460;
+  color: #ffffff;
+}
+
+.menu-item .el-icon {
+  font-size: 14px;
 }
 </style>

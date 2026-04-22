@@ -4,7 +4,7 @@
       <div class="header-left">
         <div class="logo">
           <span class="logo-icon">✨</span>
-          <span class="logo-text">小说续写工具</span>
+          <span class="logo-text">一花一世界</span>
         </div>
       </div>
       <div class="header-center">
