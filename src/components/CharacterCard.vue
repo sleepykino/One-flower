@@ -142,9 +142,26 @@
     >
       <div class="dialog-content" v-if="editForm">
         <div class="form-sidebar">
-          <div class="avatar-preview" :style="{ background: editForm.name ? getAvatarGradient(editForm.name) : '#e5e7eb' }">
-            <span v-if="editForm.name">{{ editForm.name.charAt(0) }}</span>
+          <div class="avatar-preview" :style="editForm.avatar ? {} : { background: editForm.name ? getAvatarGradient(editForm.name) : '#e5e7eb' }">
+            <img v-if="editForm.avatar" :src="editForm.avatar" :alt="editForm.name" class="avatar-img" />
+            <span v-else-if="editForm.name">{{ editForm.name.charAt(0) }}</span>
             <el-icon v-else><User /></el-icon>
+          </div>
+          <div class="avatar-upload-section">
+            <el-button size="small" @click="triggerAvatarUpload">
+              <el-icon><Upload /></el-icon>
+              上传头像
+            </el-button>
+            <el-button v-if="editForm.avatar" size="small" type="danger" plain @click="editForm.avatar = ''">
+              移除头像
+            </el-button>
+            <input
+              ref="avatarInput"
+              type="file"
+              accept="image/*"
+              style="display: none"
+              @change="handleAvatarUpload"
+            />
           </div>
           <div class="color-picker-section">
             <label>主题色</label>
@@ -191,8 +208,16 @@
                 />
               </div>
               <div class="form-section">
-                <label>头像链接</label>
-                <el-input v-model="editForm.avatar" placeholder="头像图片URL（可选）" />
+                <label>头像</label>
+                <div class="avatar-input-group">
+                  <el-input v-model="editForm.avatar" placeholder="图片URL或上传本地图片" />
+                  <el-button size="small" @click="triggerAvatarUpload">
+                    <el-icon><Upload /></el-icon>
+                  </el-button>
+                </div>
+                <div v-if="editForm.avatar" class="avatar-preview-inline">
+                  <img :src="editForm.avatar" alt="预览" />
+                </div>
               </div>
               <div class="form-section">
                 <label>标签</label>
@@ -411,6 +436,7 @@ const isEditingCollection = ref(false)
 const activeTab = ref('basic')
 const importData = ref('')
 const editingCollectionId = ref<string | null>(null)
+const avatarInput = ref<HTMLInputElement | null>(null)
 
 const editForm = ref<Partial<Character>>({
   name: '',
@@ -608,6 +634,65 @@ function duplicateCharacter(id: string) {
 
 function toggleEnabled(id: string) {
   characterStore.toggleCharacterEnabled(id)
+}
+
+function triggerAvatarUpload() {
+  avatarInput.value?.click()
+}
+
+function handleAvatarUpload(event: Event) {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+
+  if (!file.type.startsWith('image/')) {
+    ElMessage.warning('请选择图片文件')
+    return
+  }
+
+  if (file.size > 2 * 1024 * 1024) {
+    ElMessage.warning('图片大小不能超过2MB')
+    return
+  }
+
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    const result = e.target?.result as string
+    if (result) {
+      const canvas = document.createElement('canvas')
+      const img = new Image()
+      img.onload = () => {
+        const maxSize = 256
+        let width = img.width
+        let height = img.height
+
+        if (width > height) {
+          if (width > maxSize) {
+            height = Math.round((height * maxSize) / width)
+            width = maxSize
+          }
+        } else {
+          if (height > maxSize) {
+            width = Math.round((width * maxSize) / height)
+            height = maxSize
+          }
+        }
+
+        canvas.width = width
+        canvas.height = height
+        const ctx = canvas.getContext('2d')
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height)
+          const compressed = canvas.toDataURL('image/jpeg', 0.8)
+          editForm.value.avatar = compressed
+        }
+      }
+      img.src = result
+    }
+  }
+  reader.readAsDataURL(file)
+
+  target.value = ''
 }
 
 function importCharacters() {
@@ -968,7 +1053,43 @@ function deleteCollection(id: string) {
   color: white;
   font-size: 48px;
   font-weight: 600;
-  margin: 0 auto 20px;
+  margin: 0 auto 12px;
+  overflow: hidden;
+}
+
+.avatar-preview .avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 24px;
+}
+
+.avatar-upload-section {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.avatar-input-group {
+  display: flex;
+  gap: 8px;
+}
+
+.avatar-input-group .el-input {
+  flex: 1;
+}
+
+.avatar-preview-inline {
+  margin-top: 8px;
+  text-align: center;
+}
+
+.avatar-preview-inline img {
+  max-width: 120px;
+  max-height: 120px;
+  border-radius: 12px;
+  object-fit: cover;
 }
 
 .color-picker-section {

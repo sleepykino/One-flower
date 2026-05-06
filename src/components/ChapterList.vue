@@ -17,10 +17,24 @@
           v-for="(chapter, index) in chapters"
           :key="chapter.id"
           class="chapter-card"
-          :class="{ 'is-current': chapter.id === currentChapterId }"
+          :class="{
+            'is-current': chapter.id === currentChapterId,
+            'drag-over': dragOverIndex === index,
+            'dragging': dragIndex === index
+          }"
           :style="{ '--card-color': getChapterColor(index) }"
           @click="selectChapter(chapter.id)"
+          draggable="true"
+          @dragstart="onDragStart($event, index)"
+          @dragover.prevent="onDragOver($event, index)"
+          @dragenter.prevent="dragOverIndex = index"
+          @dragleave="onDragLeave($event, index)"
+          @drop="onDrop($event, index)"
+          @dragend="onDragEnd"
         >
+          <div class="drag-handle" @click.stop>
+            <el-icon><Rank /></el-icon>
+          </div>
           <div class="chapter-number">{{ String(index + 1).padStart(2, '0') }}</div>
           <div class="chapter-info">
             <div class="chapter-title">{{ chapter.title }}</div>
@@ -86,7 +100,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Edit, Delete, MoreFilled, Notebook, Document, CopyDocument, Check } from '@element-plus/icons-vue'
+import { Plus, Edit, Delete, MoreFilled, Notebook, Document, CopyDocument, Check, Rank } from '@element-plus/icons-vue'
 
 interface Chapter {
   id: string
@@ -97,6 +111,8 @@ interface Chapter {
 
 const chapters = ref<Chapter[]>([])
 const currentChapterId = ref<string | null>(null)
+const dragIndex = ref<number | null>(null)
+const dragOverIndex = ref<number | null>(null)
 
 const totalWordCount = computed(() => {
   return chapters.value.reduce((sum, chapter) => sum + chapter.wordCount, 0)
@@ -263,6 +279,51 @@ function formatTime(id: string): string {
   return date.toLocaleDateString()
 }
 
+function onDragStart(event: DragEvent, index: number) {
+  dragIndex.value = index
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', String(index))
+  }
+}
+
+function onDragOver(event: DragEvent, index: number) {
+  event.preventDefault()
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = 'move'
+  }
+}
+
+function onDragLeave(event: DragEvent, index: number) {
+  if (dragOverIndex.value === index) {
+    dragOverIndex.value = null
+  }
+}
+
+function onDrop(event: DragEvent, index: number) {
+  event.preventDefault()
+  if (dragIndex.value === null || dragIndex.value === index) {
+    dragIndex.value = null
+    dragOverIndex.value = null
+    return
+  }
+
+  const fromIndex = dragIndex.value
+  const movedChapter = chapters.value[fromIndex]
+  chapters.value.splice(fromIndex, 1)
+  chapters.value.splice(index, 0, movedChapter)
+  saveChapters()
+  ElMessage.success('章节顺序已更新')
+
+  dragIndex.value = null
+  dragOverIndex.value = null
+}
+
+function onDragEnd() {
+  dragIndex.value = null
+  dragOverIndex.value = null
+}
+
 defineExpose({
   saveChapters,
   getCurrentChapter: () => chapters.value.find(c => c.id === currentChapterId.value)
@@ -334,6 +395,33 @@ defineExpose({
   align-items: center;
   gap: 16px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.chapter-card.dragging {
+  opacity: 0.5;
+  transform: scale(0.95);
+}
+
+.chapter-card.drag-over {
+  border-color: var(--primary-color, #6366f1);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+}
+
+.drag-handle {
+  cursor: grab;
+  color: var(--text-muted, #9ca3af);
+  font-size: 16px;
+  padding: 4px;
+  border-radius: 4px;
+  transition: color 0.2s;
+}
+
+.drag-handle:hover {
+  color: var(--primary-color, #6366f1);
+}
+
+.drag-handle:active {
+  cursor: grabbing;
 }
 
 .chapter-card:hover {

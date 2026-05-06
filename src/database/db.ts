@@ -8,6 +8,34 @@ export interface Setting {
   value: any
 }
 
+export interface VersionSnapshot {
+  id: string
+  chapterId: string
+  content: string
+  wordCount: number
+  title: string
+  createdAt: number
+}
+
+export interface WritingStat {
+  id: string
+  date: string
+  wordCount: number
+  duration: number
+  chaptersWorked: string[]
+}
+
+export interface WritingNote {
+  id: string
+  chapterId: string
+  type: 'idea' | 'note' | 'todo' | 'question' | 'revision'
+  title: string
+  content: string
+  selection?: string
+  createdAt: number
+  updatedAt: number
+}
+
 class NovelDatabase extends Dexie {
   chapters!: Table<Chapter, string>
   characters!: Table<Character, string>
@@ -19,6 +47,9 @@ class NovelDatabase extends Dexie {
   aiProviders!: Table<AIProvider, string>
   settings!: Table<Setting, string>
   maps!: Table<NovelMap, string>
+  versionSnapshots!: Table<VersionSnapshot, string>
+  writingStats!: Table<WritingStat, string>
+  writingNotes!: Table<WritingNote, string>
 
   constructor() {
     super('NovelDB')
@@ -37,6 +68,37 @@ class NovelDatabase extends Dexie {
     }).upgrade(async (tx) => {
       console.log('数据库版本升级，清除旧的 AI 提供商数据')
       await tx.table('aiProviders').clear()
+    })
+
+    this.version(5).stores({
+      chapters: 'id, parentId, level, wordCount, createdAt, updatedAt',
+      characters: 'id, name, enabled, collectionId, createdAt, updatedAt',
+      characterRelations: 'id, fromCharacterId, toCharacterId, relationType, createdAt, updatedAt',
+      worldBooks: 'id, name, enabled, collectionId, createdAt, updatedAt',
+      worldBookGroups: 'id, worldBookId, name, enabled, createdAt, updatedAt',
+      worldBookEntries: 'id, groupId, key, enabled, priority, createdAt, updatedAt',
+      collections: 'id, type, name, createdAt, updatedAt',
+      aiProviders: 'id',
+      settings: 'key',
+      maps: 'id, type, name, createdAt, updatedAt',
+      versionSnapshots: 'id, chapterId, createdAt',
+      writingStats: 'id, date'
+    })
+
+    this.version(6).stores({
+      chapters: 'id, parentId, level, wordCount, createdAt, updatedAt',
+      characters: 'id, name, enabled, collectionId, createdAt, updatedAt',
+      characterRelations: 'id, fromCharacterId, toCharacterId, relationType, createdAt, updatedAt',
+      worldBooks: 'id, name, enabled, collectionId, createdAt, updatedAt',
+      worldBookGroups: 'id, worldBookId, name, enabled, createdAt, updatedAt',
+      worldBookEntries: 'id, groupId, key, enabled, priority, createdAt, updatedAt',
+      collections: 'id, type, name, createdAt, updatedAt',
+      aiProviders: 'id',
+      settings: 'key',
+      maps: 'id, type, name, createdAt, updatedAt',
+      versionSnapshots: 'id, chapterId, createdAt',
+      writingStats: 'id, date',
+      writingNotes: 'id, chapterId, type, createdAt, updatedAt'
     })
   }
 }

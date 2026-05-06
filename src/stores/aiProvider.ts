@@ -26,8 +26,8 @@ const DEFAULT_PROVIDERS: AIProvider[] = [
     apiKey: '',
     enabled: true,
     models: [
-      { id: 'deepseek-', name: 'DeepSeek Chat', providerId: 'deepseek', maxTokens: 8192 },
-      { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner', providerId: 'deepseek', maxTokens: 8192 }
+      { id: 'deepseek-v4-flash', name: 'deepseek-v4-flash', providerId: 'deepseek', maxTokens: 8192 },
+      { id: 'deepseek-v4-pro', name: 'deepseek-v4-pro', providerId: 'deepseek', maxTokens: 8192 }
     ]
   },
   {

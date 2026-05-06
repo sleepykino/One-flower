@@ -87,9 +87,59 @@
         @change="handleFileSelect"
         accept=".txt,.md"
       />
+
+      <div style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
+        <el-button size="small" @click="focusMode.toggleFocusMode()" :type="focusMode.isFocusMode.value ? 'primary' : 'default'" title="专注模式 (Ctrl+Shift+F)">
+          <el-icon><FullScreen /></el-icon>
+          {{ focusMode.isFocusMode.value ? '退出专注' : '专注' }}
+        </el-button>
+        <el-button size="small" @click="showOutline = !showOutline" :type="showOutline ? 'primary' : 'default'" title="大纲导航">
+          <el-icon><List /></el-icon>
+          大纲
+        </el-button>
+        <el-button size="small" @click="showNotes = !showNotes" :type="showNotes ? 'primary' : 'default'" title="写作笔记">
+          <el-icon><Memo /></el-icon>
+          笔记
+        </el-button>
+        <el-button size="small" @click="showSearchReplace = !showSearchReplace" :type="showSearchReplace ? 'primary' : 'default'">
+          <el-icon><Search /></el-icon>
+          搜索
+        </el-button>
+        <el-button size="small" @click="openVersionHistory">
+          <el-icon><Clock /></el-icon>
+          历史
+        </el-button>
+        <span v-if="autoSaveLastSavedAt" class="auto-save-status">
+          {{ autoSaveIsSaving ? '保存中...' : '已自动保存' }}
+        </span>
+      </div>
     </div>
-    <div class="editor-content">
-      <div ref="quillEditor" class="quill-editor"></div>
+    <SearchReplace
+      v-if="showSearchReplace"
+      @close="showSearchReplace = false"
+      @go-to-chapter="handleGoToChapter"
+      @replace-in-chapter="handleReplaceInChapter"
+    />
+    <div class="editor-body-wrapper">
+      <div class="editor-content">
+        <div ref="quillEditor" class="quill-editor"></div>
+      </div>
+      <transition name="outline-slide">
+        <OutlinePanel
+          v-if="showOutline"
+          ref="outlinePanelRef"
+          :editor-element="editorContainerRef"
+          @close="showOutline = false"
+        />
+      </transition>
+      <transition name="outline-slide">
+        <NotesPanel
+          v-if="showNotes"
+          ref="notesPanelRef"
+          :chapter-id="currentChapterId"
+          @close="showNotes = false"
+        />
+      </transition>
     </div>
     <div class="word-count">
       字数统计: {{ wordCount }} 字
@@ -343,32 +393,73 @@
         </span>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="versionHistoryVisible"
+      title="版本历史"
+      width="600px"
+    >
+      <div v-if="versionSnapshots.length === 0" class="no-versions">
+        <el-icon style="font-size: 48px; color: #dcdfe6;"><Clock /></el-icon>
+        <p>暂无历史版本</p>
+        <span>编辑过程中会自动创建版本快照</span>
+      </div>
+      <div v-else class="version-list">
+        <div
+          v-for="snapshot in versionSnapshots"
+          :key="snapshot.id"
+          class="version-item"
+        >
+          <div class="version-info">
+            <div class="version-title">{{ snapshot.title }}</div>
+            <div class="version-meta">
+              <span>{{ new Date(snapshot.createdAt).toLocaleString() }}</span>
+              <span>{{ snapshot.wordCount }} 字</span>
+            </div>
+          </div>
+          <div class="version-actions">
+            <el-button size="small" type="primary" @click="restoreVersionSnapshot(snapshot.id)">
+              恢复
+            </el-button>
+            <el-button size="small" type="danger" @click="deleteVersionSnapshot(snapshot.id)">
+              删除
+            </el-button>
+          </div>
+        </div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, reactive, watch, computed } from 'vue'
+import { ref, onMounted, reactive, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Document, MagicStick, Download, Upload, ArrowDown, Notebook,
-  Edit, Brush, Refresh, Plus
+  Edit, Brush, Refresh, Plus, Search, Clock, FullScreen, List, Memo
 } from '@element-plus/icons-vue'
 import Quill from 'quill'
 import {
   continueNovel,
-  getDefaultModel,
   getAllAvailableModels,
   smartContextCrop,
   generateCandidates,
   polishText,
   analyzeWritingStyle,
-  generateStylePrompt,
-  type ContinuationCandidate
+  generateStylePrompt
 } from '@/services/aiService'
 import { useSettingsStore } from '@/stores/settings'
 import { useCharacterStore } from '@/stores/character'
 import { useWorldBookStore } from '@/stores/worldBook'
 import { useAIProviderStore } from '@/stores/aiProvider'
+import { useAutoSave } from '@/composables/useAutoSave'
+import { useFocusMode } from '@/composables/useFocusMode'
+import { useShortcuts } from '@/composables/useShortcuts'
+import { useWritingStatsStore } from '@/stores/writingStats'
+import { type VersionSnapshot } from '@/database'
+import SearchReplace from '@/components/SearchReplace.vue'
+import OutlinePanel from '@/components/OutlinePanel.vue'
+import NotesPanel from '@/components/NotesPanel.vue'
 import {
   exportToTxt,
   exportToMarkdown,
@@ -378,14 +469,29 @@ import {
   readFileAsText,
   type Chapter
 } from '@/utils/exportImport'
-import type { ContinuationLengthType, ContinuationDirection, PolishingType } from '@/types'
+import type { ContinuationLengthType, ContinuationDirection, PolishingType, ContinuationCandidate } from '@/types'
 
 const settingsStore = useSettingsStore()
 const characterStore = useCharacterStore()
 const worldBookStore = useWorldBookStore()
 const aiProviderStore = useAIProviderStore()
+const autoSave = useAutoSave()
+const autoSaveLastSavedAt = computed(() => autoSave.lastSavedAt.value)
+const autoSaveIsSaving = computed(() => autoSave.isAutoSaving.value)
+const focusMode = useFocusMode()
+const writingStatsStore = useWritingStatsStore()
+
+useShortcuts([
+  { key: 's', ctrl: true, description: '保存文档', handler: () => saveDocument(), global: true },
+  { key: 'f', ctrl: true, shift: true, description: '专注模式', handler: () => focusMode.toggleFocusMode(), global: true },
+  { key: 'h', ctrl: true, shift: true, description: '切换大纲', handler: () => { showOutline.value = !showOutline.value }, global: true },
+  { key: 'n', ctrl: true, shift: true, description: '切换笔记', handler: () => { showNotes.value = !showNotes.value }, global: true },
+  { key: 'g', ctrl: true, shift: true, description: '搜索替换', handler: () => { showSearchReplace.value = !showSearchReplace.value }, global: true },
+  { key: 'Escape', description: '退出专注模式', handler: () => { if (focusMode.isFocusMode.value) focusMode.exitFocusMode() } },
+])
 
 let currentChapter: any = null
+const currentChapterId = computed(() => currentChapter?.id || '')
 
 const quillEditor = ref<HTMLElement | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -393,6 +499,16 @@ let quill: Quill | null = null
 let importType = ''
 
 const wordCount = ref(0)
+const showSearchReplace = ref(false)
+const showOutline = ref(false)
+const showNotes = ref(false)
+const versionHistoryVisible = ref(false)
+const versionSnapshots = ref<VersionSnapshot[]>([])
+const outlinePanelRef = ref()
+const notesPanelRef = ref()
+const editorContainerRef = ref<HTMLElement | null>(null)
+
+const lastVersionTime = ref(0)
 
 const continuationDialogVisible = ref(false)
 const continuationTab = ref('settings')
@@ -403,8 +519,6 @@ const selectedCandidateIndex = ref(-1)
 const polishingDialogVisible = ref(false)
 const isPolishing = ref(false)
 const polishingResult = ref('')
-
-const aiModels = computed(() => getAllAvailableModels())
 
 const continuationForm = reactive({
   prompt: '',
@@ -471,8 +585,6 @@ const enabledProviders = computed(() => {
   return aiProviderStore.allProviders.filter(p => p.enabled && p.apiKey)
 })
 
-const selectedModel = computed(() => aiProviderStore.selectedModel)
-
 const enabledCharactersCount = computed(() => {
   return characterStore.enabledCharacters.length
 })
@@ -486,8 +598,10 @@ const matchedEntriesCount = computed(() => {
 onMounted(() => {
   characterStore.loadCharactersFromStorage()
   worldBookStore.loadWorldBooksFromStorage()
+  writingStatsStore.loadStats()
 
   if (quillEditor.value) {
+    editorContainerRef.value = quillEditor.value.closest('.editor-container') as HTMLElement
     quill = new Quill(quillEditor.value, {
       theme: 'snow',
       placeholder: '开始编写你的小说...',
@@ -506,6 +620,7 @@ onMounted(() => {
     
     window.addEventListener('chapter-changed', (event: any) => {
       if (currentChapter && quill) {
+        const prevWordCount = currentChapter.wordCount
         currentChapter.content = quill.root.innerHTML
         currentChapter.wordCount = quill.getText().replace(/\s/g, '').length
         
@@ -515,12 +630,20 @@ onMounted(() => {
           chapters[index] = currentChapter
           localStorage.setItem('chapters', JSON.stringify(chapters))
         }
+
+        const wordsAdded = currentChapter.wordCount - prevWordCount
+        if (wordsAdded > 0 && currentChapter.id) {
+          writingStatsStore.recordWordCount(wordsAdded, currentChapter.id)
+        }
       }
       
       currentChapter = event.detail
       if (quill) {
         quill.root.innerHTML = currentChapter.content || ''
         updateWordCount()
+        autoSave.init(quill, currentChapter.id)
+        autoSave.updateChapterId(currentChapter.id)
+        writingStatsStore.startNewSession()
       }
     })
     
@@ -528,7 +651,16 @@ onMounted(() => {
     
     quill.on('text-change', () => {
       updateWordCount()
+      autoSave.markDirty()
+
+      const now = Date.now()
+      if (now - lastVersionTime.value > 5 * 60 * 1000) {
+        lastVersionTime.value = now
+        autoSave.createVersionSnapshot()
+      }
     })
+
+    autoSave.startAutoSave()
   }
 })
 
@@ -854,6 +986,82 @@ const insertCandidate = () => {
   continuationDialogVisible.value = false
   ElMessage.success('已插入选中的候选')
 }
+
+const openVersionHistory = async () => {
+  if (!currentChapter?.id) {
+    ElMessage.warning('请先选择一个章节')
+    return
+  }
+  versionSnapshots.value = await autoSave.getVersionSnapshots(currentChapter.id)
+  versionHistoryVisible.value = true
+}
+
+const restoreVersionSnapshot = async (snapshotId: string) => {
+  try {
+    await ElMessageBox.confirm('恢复此版本将替换当前内容，确定要继续吗？', '恢复确认', {
+      confirmButtonText: '确定恢复',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+
+    const snapshot = await autoSave.restoreVersion(snapshotId)
+    if (snapshot && quill) {
+      await autoSave.createVersionSnapshot()
+      quill.root.innerHTML = snapshot.content
+      updateWordCount()
+      ElMessage.success('已恢复到历史版本')
+      versionHistoryVisible.value = false
+    }
+  } catch {
+    // cancelled
+  }
+}
+
+const deleteVersionSnapshot = async (snapshotId: string) => {
+  await autoSave.deleteVersion(snapshotId)
+  versionSnapshots.value = versionSnapshots.value.filter(s => s.id !== snapshotId)
+  ElMessage.success('版本已删除')
+}
+
+const handleGoToChapter = (chapterId: string) => {
+  const chapters = JSON.parse(localStorage.getItem('chapters') || '[]')
+  const chapter = chapters.find((c: any) => c.id === chapterId)
+  if (chapter) {
+    window.dispatchEvent(new CustomEvent('chapter-changed', { detail: chapter }))
+  }
+}
+
+const handleReplaceInChapter = async (chapterId: string, matches: any[], replaceText: string) => {
+  const chapters = JSON.parse(localStorage.getItem('chapters') || '[]')
+  const chapterIndex = chapters.findIndex((c: any) => c.id === chapterId)
+  if (chapterIndex === -1) return
+
+  const chapter = chapters[chapterIndex]
+  let content = chapter.content || ''
+  const plainText = content.replace(/<[^>]*>/g, '')
+
+  try {
+    const flags = 'gi'
+    const pattern = matches[0]?.context ? searchQueryRef.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : ''
+    if (!pattern) return
+    const regex = new RegExp(pattern, flags)
+    const newPlainText = plainText.replace(regex, replaceText)
+    content = content.replace(plainText, newPlainText)
+    chapter.content = content
+    chapter.wordCount = newPlainText.replace(/\s/g, '').length
+    chapters[chapterIndex] = chapter
+    localStorage.setItem('chapters', JSON.stringify(chapters))
+
+    if (currentChapter?.id === chapterId && quill) {
+      quill.root.innerHTML = content
+      updateWordCount()
+    }
+  } catch (e) {
+    console.error('替换失败:', e)
+  }
+}
+
+const searchQueryRef = ref('')
 </script>
 
 <style scoped>
@@ -873,10 +1081,39 @@ const insertCandidate = () => {
   align-items: center;
 }
 
+.editor-body-wrapper {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
 .editor-content {
   flex: 1;
   padding: 15px;
   overflow: auto;
+}
+
+.outline-slide-enter-active,
+.outline-slide-leave-active {
+  transition: all 0.3s ease;
+}
+
+.outline-slide-enter-from,
+.outline-slide-leave-to {
+  width: 0;
+  opacity: 0;
+}
+
+.outline-slide-enter-to,
+.outline-slide-leave-from {
+  width: 240px;
+  opacity: 1;
+}
+
+:deep(.heading-highlight) {
+  background-color: rgba(99, 102, 241, 0.15);
+  border-radius: 4px;
+  transition: background-color 0.3s ease;
 }
 
 .quill-editor {
@@ -901,6 +1138,70 @@ const insertCandidate = () => {
   color: #909399;
   text-align: right;
   background-color: #f5f7fa;
+}
+
+.auto-save-status {
+  font-size: 12px;
+  color: #909399;
+  white-space: nowrap;
+}
+
+.no-versions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 20px;
+  color: #909399;
+}
+
+.no-versions p {
+  margin: 16px 0 4px;
+  font-size: 16px;
+}
+
+.no-versions span {
+  font-size: 13px;
+}
+
+.version-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.version-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-radius: 8px;
+  border: 1px solid #ebeef5;
+  transition: background 0.2s;
+}
+
+.version-item:hover {
+  background: #f5f7fa;
+}
+
+.version-title {
+  font-weight: 500;
+  font-size: 14px;
+  color: #303133;
+}
+
+.version-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
+}
+
+.version-actions {
+  display: flex;
+  gap: 4px;
 }
 
 .dialog-footer {
