@@ -2,6 +2,9 @@ import axios from 'axios'
 import { useAIProviderStore } from '@/stores/aiProvider'
 import { useSettingsStore } from '@/stores/settings'
 import type { Character, WorldBookEntry, AIModel, ContinuationLengthConfig, ContinuationDirectionConfig, ContinuationCandidate, PolishingRequest, PolishingType, StyleAnalysis } from '@/types'
+import { streamChatCompletion, createAbortController, type StreamCallbacks, type StreamOptions } from './streamService'
+
+export { createAbortController, type StreamCallbacks }
 
 export interface ContinuationRequest {
   prompt: string
@@ -304,6 +307,7 @@ export async function continueNovel(request: ContinuationRequest): Promise<Conti
       case 'deepseek':
       case 'openai':
       case 'xai':
+      case 'nalang':
         result = await callOpenAICompatibleApi(
           request.prompt,
           provider.baseUrl,
@@ -499,6 +503,7 @@ export async function polishText(request: PolishingRequest): Promise<Continuatio
       case 'deepseek':
       case 'openai':
       case 'xai':
+      case 'nalang':
         result = await callOpenAICompatibleApi(
           prompt,
           provider.baseUrl,
@@ -605,4 +610,128 @@ export function generateStylePrompt(analysis: StyleAnalysis): string {
   }
 
   return prompt
+}
+
+type ProviderType = 'glm' | 'deepseek' | 'openai' | 'anthropic' | 'xai' | 'custom'
+
+function getProviderTypeForStream(type: string): 'openai' | 'anthropic' | 'custom' {
+  if (type === 'anthropic') return 'anthropic'
+  if (type === 'custom') return 'custom'
+  return 'openai'
+}
+
+export async function continueNovelStream(
+  request: ContinuationRequest,
+  callbacks: StreamCallbacks,
+  abortController: AbortController
+): Promise<string> {
+  const aiProviderStore = useAIProviderStore()
+  const settingsStore = useSettingsStore()
+
+  let model: AIModel | undefined = request.model
+  let provider = model ? aiProviderStore.getProviderById(model.providerId) : aiProviderStore.selectedProvider
+
+  if (!model && aiProviderStore.selectedModel) {
+    model = aiProviderStore.selectedModel
+    provider = aiProviderStore.getProviderById(model.providerId)
+  }
+
+  if (!model || !provider) {
+    callbacks.onError('请先选择AI模型')
+    return ''
+  }
+
+  if (!provider.apiKey) {
+    callbacks.onError(`请先配置${provider.name}的API Key`)
+    return ''
+  }
+
+  const useCharacters = request.useCharacters !== undefined ? request.useCharacters : true
+  const useWorldBook = request.useWorldBook !== undefined ? request.useWorldBook : true
+
+  const temperature = request.temperature ?? settingsStore.glmTemperature
+  const maxTokens = request.maxTokens
+  const systemPrompt = buildSystemPrompt(
+    request.stylePrompt || settingsStore.stylePrompt,
+    request.characters,
+    request.worldBookEntries,
+    useCharacters,
+    useWorldBook
+  )
+
+  const messages: { role: string; content: string }[] = []
+  if (systemPrompt) {
+    messages.push({ role: 'system', content: systemPrompt })
+  }
+  messages.push({ role: 'user', content: request.prompt })
+
+  const streamOptions: StreamOptions = {
+    baseUrl: provider.baseUrl,
+    apiKey: provider.apiKey,
+    modelId: model.id,
+    messages,
+    temperature,
+    maxTokens,
+    extraHeaders: provider.headers,
+    providerType: getProviderTypeForStream(provider.type),
+    requestBody: provider.bodyTemplate
+  }
+
+  return streamChatCompletion(streamOptions, callbacks, abortController)
+}
+
+export async function polishTextStream(
+  request: PolishingRequest,
+  callbacks: StreamCallbacks,
+  abortController: AbortController
+): Promise<string> {
+  const aiProviderStore = useAIProviderStore()
+
+  let model = request.model || aiProviderStore.selectedModel
+  const provider = model ? aiProviderStore.getProviderById(model.providerId) : aiProviderStore.selectedProvider
+
+  if (!model || !provider) {
+    callbacks.onError('请先选择AI模型')
+    return ''
+  }
+
+  if (!provider.apiKey) {
+    callbacks.onError(`请先配置${provider.name}的API Key`)
+    return ''
+  }
+
+  const polishingPrompts: Record<PolishingType, string> = {
+    polish: '请润色以下文本，保持原意不变，但让文笔更优美流畅：',
+    rewrite: '请改写以下文本，用不同的表达方式但保持核心内容不变：',
+    expand: '请扩写以下文本，丰富细节描写，让内容更生动具体：'
+  }
+
+  let prompt = polishingPrompts[request.type] || polishingPrompts.polish
+  prompt += `\n\n${request.text}`
+
+  if (request.instruction) {
+    prompt += `\n\n额外要求：${request.instruction}`
+  }
+
+  const temperature = request.temperature ?? 0.7
+  const maxTokens = Math.max(request.text.length * 2, 500)
+
+  const messages: { role: string; content: string }[] = [
+    { role: 'system', content: '你是一个专业的文字编辑，擅长润色、改写和扩写小说文本。' },
+    { role: 'user', content: prompt }
+  ]
+
+  const streamOptions: StreamOptions = {
+    baseUrl: provider.baseUrl,
+    apiKey: provider.apiKey,
+    modelId: model.id,
+    messages,
+    temperature,
+    maxTokens,
+    extraHeaders: provider.headers,
+    providerType: getProviderTypeForStream(provider.type),
+    requestBody: provider.bodyTemplate
+  }
+
+  return streamChatCompletion(streamOptions, callbacks, abortController)
 }

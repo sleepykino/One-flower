@@ -136,7 +136,7 @@ export interface StyleAnalysis {
   tone: string
 }
 
-export type AIProviderType = 'glm' | 'deepseek' | 'openai' | 'anthropic' | 'xai' | 'custom'
+export type AIProviderType = 'glm' | 'deepseek' | 'openai' | 'anthropic' | 'xai' | 'nalang' | 'custom'
 
 export interface AIProvider {
   id: string

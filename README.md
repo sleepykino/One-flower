@@ -444,9 +444,4 @@ npm run type-check
 - [ ] 地图元素分组与对齐
 
 
-## 致谢
-
-- UI 框架: [Element Plus](https://element-plus.org/)
-- 富文本编辑器: [Quill](https://quilljs.com/)
-- 数据库: [Dexie.js](https://dexie.org/)
 

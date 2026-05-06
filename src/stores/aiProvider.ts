@@ -70,6 +70,24 @@ const DEFAULT_PROVIDERS: AIProvider[] = [
     models: [
       { id: 'grok-beta', name: 'Grok Beta', providerId: 'xai', maxTokens: 8192 }
     ]
+  },
+  {
+    id: 'nalang',
+    name: '纳澜AI (Nalang)',
+    type: 'nalang',
+    baseUrl: 'https://www.gpt4novel.com/api/xiaoshuoai/ext/v1/chat/completions',
+    apiKey: '',
+    enabled: false,
+    models: [
+      { id: 'nalang-max-0826', name: 'Nalang Max 32K', providerId: 'nalang', maxTokens: 8192 },
+      { id: 'nalang-max-0826-16k', name: 'Nalang Max 16K', providerId: 'nalang', maxTokens: 8192 },
+      { id: 'nalang-max-0826-10k', name: 'Nalang Max 10K', providerId: 'nalang', maxTokens: 8192 },
+      { id: 'nalang-xl-0826', name: 'Nalang XL 32K', providerId: 'nalang', maxTokens: 8192 },
+      { id: 'nalang-xl-0826-16k', name: 'Nalang XL 16K', providerId: 'nalang', maxTokens: 8192 },
+      { id: 'nalang-xl-0826-10k', name: 'Nalang XL 10K', providerId: 'nalang', maxTokens: 8192 },
+      { id: 'nalang-medium-0826', name: 'Nalang Medium 32K', providerId: 'nalang', maxTokens: 8192 },
+      { id: 'nalang-turbo-0826', name: 'Nalang Turbo 32K', providerId: 'nalang', maxTokens: 8192 }
+    ]
   }
 ]
 

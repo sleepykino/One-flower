@@ -230,6 +230,12 @@
             </el-form-item>
 
             <el-divider>高级选项</el-divider>
+            <el-form-item label="流式输出">
+              <el-switch v-model="continuationForm.useStream" />
+              <span style="margin-left: 10px; color: var(--el-text-color-secondary); font-size: 12px;">
+                实时逐字显示AI生成内容，可随时停止
+              </span>
+            </el-form-item>
             <el-form-item label="多候选生成">
               <el-switch v-model="continuationForm.useCandidates" />
               <span style="margin-left: 10px; color: var(--el-text-color-secondary); font-size: 12px;">
@@ -305,12 +311,37 @@
             <div class="candidate-text">{{ candidates[selectedCandidateIndex]?.text }}</div>
           </div>
         </el-tab-pane>
+        <el-tab-pane v-if="isStreaming || streamingText" label="实时预览" name="stream">
+          <div class="stream-preview">
+            <div class="stream-status">
+              <span v-if="isStreaming" class="stream-indicator streaming">
+                <span class="dot"></span>
+                正在生成...
+              </span>
+              <span v-else class="stream-indicator done">
+                <span class="dot"></span>
+                生成完成
+              </span>
+              <el-button v-if="isStreaming" type="danger" size="small" @click="stopStreaming">
+                停止生成
+              </el-button>
+            </div>
+            <div class="stream-text-area">{{ streamingText }}<span v-if="isStreaming" class="stream-cursor">|</span></div>
+          </div>
+        </el-tab-pane>
       </el-tabs>
       <template #footer>
         <span class="dialog-footer">
           <el-button @click="continuationDialogVisible = false">取消</el-button>
           <el-button
-            v-if="continuationTab === 'settings'"
+            v-if="isStreaming"
+            type="danger"
+            @click="stopStreaming"
+          >
+            停止生成
+          </el-button>
+          <el-button
+            v-if="continuationTab === 'settings' && !isStreaming"
             type="primary"
             @click="continueWriting"
             :loading="isContinuing"
@@ -376,7 +407,25 @@
         </el-form-item>
       </el-form>
 
-      <div v-if="polishingResult" class="polishing-result">
+      <div v-if="isPolishStreaming || polishingStreamText" class="polishing-result">
+        <el-divider>实时润色</el-divider>
+        <div class="stream-status">
+          <span v-if="isPolishStreaming" class="stream-indicator streaming">
+            <span class="dot"></span>
+            正在生成...
+          </span>
+          <span v-else class="stream-indicator done">
+            <span class="dot"></span>
+            生成完成
+          </span>
+          <el-button v-if="isPolishStreaming" type="danger" size="small" @click="stopPolishStreaming">
+            停止生成
+          </el-button>
+        </div>
+        <div class="stream-text-area">{{ polishingStreamText }}<span v-if="isPolishStreaming" class="stream-cursor">|</span></div>
+      </div>
+
+      <div v-else-if="polishingResult" class="polishing-result">
         <el-divider>润色结果</el-divider>
         <div class="result-text">{{ polishingResult }}</div>
       </div>
@@ -384,10 +433,13 @@
       <template #footer>
         <span class="dialog-footer">
           <el-button @click="polishingDialogVisible = false">取消</el-button>
-          <el-button v-if="polishingResult" type="success" @click="insertPolishingResult">
+          <el-button v-if="isPolishStreaming" type="danger" @click="stopPolishStreaming">
+            停止生成
+          </el-button>
+          <el-button v-if="polishingResult && !isPolishStreaming" type="success" @click="insertPolishingResult">
             插入结果
           </el-button>
-          <el-button type="primary" @click="performPolishing" :loading="isPolishing">
+          <el-button v-if="!isPolishStreaming" type="primary" @click="performPolishing" :loading="isPolishing">
             开始{{ polishingTypeLabel }}
           </el-button>
         </span>
@@ -441,12 +493,15 @@ import {
 import Quill from 'quill'
 import {
   continueNovel,
+  continueNovelStream,
   getAllAvailableModels,
   smartContextCrop,
   generateCandidates,
   polishText,
+  polishTextStream,
   analyzeWritingStyle,
-  generateStylePrompt
+  generateStylePrompt,
+  createAbortController
 } from '@/services/aiService'
 import { useSettingsStore } from '@/stores/settings'
 import { useCharacterStore } from '@/stores/character'
@@ -515,10 +570,16 @@ const continuationTab = ref('settings')
 const isContinuing = ref(false)
 const candidates = ref<ContinuationCandidate[]>([])
 const selectedCandidateIndex = ref(-1)
+const streamingText = ref('')
+const isStreaming = ref(false)
+let streamAbortController: AbortController | null = null
 
 const polishingDialogVisible = ref(false)
 const isPolishing = ref(false)
 const polishingResult = ref('')
+const polishingStreamText = ref('')
+const isPolishStreaming = ref(false)
+let polishAbortController: AbortController | null = null
 
 const continuationForm = reactive({
   prompt: '',
@@ -531,6 +592,7 @@ const continuationForm = reactive({
   useCandidates: false,
   learnStyle: false,
   smartCrop: true,
+  useStream: true,
   selectedModelId: aiProviderStore.selectedModelId
 })
 
@@ -714,27 +776,57 @@ const performPolishing = async () => {
 
   isPolishing.value = true
   polishingResult.value = ''
+  polishingStreamText.value = ''
+  isPolishStreaming.value = true
+  polishAbortController = createAbortController()
 
   try {
     const selectedModelForPolishing = aiProviderStore.getModelById(polishingForm.selectedModelId)
-    const response = await polishText({
-      text: polishingForm.selectedText,
-      type: polishingForm.type,
-      instruction: polishingForm.instruction,
-      model: selectedModelForPolishing
-    })
 
-    if (response.success) {
-      polishingResult.value = response.text
-      ElMessage.success('润色成功')
-    } else {
-      ElMessage.error(`润色失败: ${response.error}`)
-    }
+    await polishTextStream(
+      {
+        text: polishingForm.selectedText,
+        type: polishingForm.type,
+        instruction: polishingForm.instruction,
+        model: selectedModelForPolishing
+      },
+      {
+        onToken: (token) => {
+          polishingStreamText.value += token
+        },
+        onDone: (fullResult) => {
+          isPolishStreaming.value = false
+          polishAbortController = null
+          if (fullResult) {
+            polishingResult.value = fullResult
+            ElMessage.success('润色完成')
+          }
+          polishingStreamText.value = ''
+        },
+        onError: (error) => {
+          isPolishStreaming.value = false
+          polishAbortController = null
+          if (polishingStreamText.value) {
+            polishingResult.value = polishingStreamText.value
+            polishingStreamText.value = ''
+            ElMessage.warning(`润色中断: ${error}，已保存部分结果`)
+          } else {
+            ElMessage.error(`润色失败: ${error}`)
+          }
+        }
+      },
+      polishAbortController
+    )
   } catch (error) {
     console.error('润色错误:', error)
+    if (polishingStreamText.value) {
+      polishingResult.value = polishingStreamText.value
+      polishingStreamText.value = ''
+    }
     ElMessage.error('润色过程中发生错误')
   } finally {
     isPolishing.value = false
+    isPolishStreaming.value = false
   }
 }
 
@@ -865,6 +957,37 @@ const handleFileSelect = async (event: Event) => {
   }
 }
 
+const stopStreaming = () => {
+  if (streamAbortController) {
+    streamAbortController.abort()
+    streamAbortController = null
+  }
+  isStreaming.value = false
+  if (streamingText.value) {
+    const currentLength = quill!.getLength()
+    quill!.setSelection(currentLength, 0)
+    quill!.insertText(currentLength, '\n\n' + streamingText.value)
+    streamingText.value = ''
+    ElMessage.success('续写已停止并插入已有内容')
+  }
+  isContinuing.value = false
+  continuationDialogVisible.value = false
+}
+
+const stopPolishStreaming = () => {
+  if (polishAbortController) {
+    polishAbortController.abort()
+    polishAbortController = null
+  }
+  isPolishStreaming.value = false
+  if (polishingStreamText.value) {
+    polishingResult.value = polishingStreamText.value
+    polishingStreamText.value = ''
+    ElMessage.success('润色已停止')
+  }
+  isPolishing.value = false
+}
+
 const continueWriting = async () => {
   if (!quill) return
 
@@ -943,6 +1066,61 @@ const continueWriting = async () => {
       } else {
         ElMessage.warning('未能生成候选，请尝试直接续写')
       }
+    } else if (continuationForm.useStream) {
+      streamingText.value = ''
+      isStreaming.value = true
+      continuationTab.value = 'stream'
+      streamAbortController = createAbortController()
+
+      const result = await continueNovelStream(
+        {
+          prompt: fullPrompt,
+          model: selectedModelForContinuation,
+          maxTokens: continuationForm.lengthType === 'words' ? continuationForm.lengthValue : 1000,
+          stylePrompt,
+          characters,
+          worldBookEntries,
+          useCharacters: continuationForm.useCharacters,
+          useWorldBook: continuationForm.useWorldBook,
+          lengthConfig,
+          directionConfig
+        },
+        {
+          onToken: (token) => {
+            streamingText.value += token
+          },
+          onDone: (fullResult) => {
+            isStreaming.value = false
+            streamAbortController = null
+            if (fullResult && quill) {
+              const currentLength = quill.getLength()
+              quill.setSelection(currentLength, 0)
+              quill.insertText(currentLength, '\n\n' + fullResult)
+              ElMessage.success('续写完成')
+            }
+            streamingText.value = ''
+            continuationDialogVisible.value = false
+          },
+          onError: (error) => {
+            isStreaming.value = false
+            streamAbortController = null
+            if (streamingText.value) {
+              const currentLength = quill!.getLength()
+              quill!.setSelection(currentLength, 0)
+              quill!.insertText(currentLength, '\n\n' + streamingText.value)
+              streamingText.value = ''
+              ElMessage.warning(`续写中断: ${error}，已插入部分内容`)
+            } else {
+              ElMessage.error(`续写失败: ${error}`)
+            }
+          }
+        },
+        streamAbortController
+      )
+
+      if (!isStreaming.value) {
+        // stream completed
+      }
     } else {
       const response = await continueNovel({
         prompt: fullPrompt,
@@ -972,6 +1150,7 @@ const continueWriting = async () => {
     ElMessage.error('续写过程中发生错误')
   } finally {
     isContinuing.value = false
+    isStreaming.value = false
   }
 }
 
@@ -1285,5 +1464,80 @@ const searchQueryRef = ref('')
   border: 1px solid #7dd3fc;
   max-height: 300px;
   overflow-y: auto;
+}
+
+.stream-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stream-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.stream-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.stream-indicator .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.stream-indicator.streaming .dot {
+  background-color: #6366f1;
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+.stream-indicator.streaming {
+  color: #6366f1;
+}
+
+.stream-indicator.done .dot {
+  background-color: #10b981;
+}
+
+.stream-indicator.done {
+  color: #10b981;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.8); }
+}
+
+.stream-text-area {
+  padding: 16px;
+  background: var(--bg-secondary, #f3f1ee);
+  border-radius: 8px;
+  border: 1px solid var(--border-color, #e5e7eb);
+  line-height: 1.8;
+  font-size: 14px;
+  color: var(--text-primary, #1f2937);
+  max-height: 400px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'Noto Serif SC', serif;
+}
+
+.stream-cursor {
+  animation: blink-cursor 0.8s step-end infinite;
+  color: var(--primary-color, #6366f1);
+  font-weight: 300;
+}
+
+@keyframes blink-cursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
 }
 </style>
