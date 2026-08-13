@@ -12,10 +12,8 @@ const DEFAULT_PROVIDERS: AIProvider[] = [
     apiKey: '',
     enabled: true,
     models: [
-      { id: 'glm-4.7', name: 'glm-4.7', providerId: 'glm', maxTokens: 8192 },
-      { id: 'glm-4.6', name: 'glm-4.6', providerId: 'glm', maxTokens: 8192 },
-      { id: 'glm-4.5', name: 'glm-4.5', providerId: 'glm', maxTokens: 8192 },
-      { id: 'glm-4-flash', name: 'GLM-4-Flash', providerId: 'glm', maxTokens: 8192 }
+      { id: 'glm-5.3', name: 'glm-5.3', providerId: 'glm', maxTokens: 8192 },
+      { id: 'glm-5.2', name: 'glm-5.2', providerId: 'glm', maxTokens: 8192 },
     ]
   },
   {

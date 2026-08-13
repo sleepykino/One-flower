@@ -227,6 +227,7 @@ const providerTypeLabels: Record<AIProviderType, string> = {
   openai: 'OpenAI',
   anthropic: 'Anthropic',
   xai: 'xAI',
+  nalang: 'NLang',
   custom: '自定义'
 }
 
