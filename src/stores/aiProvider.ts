@@ -36,10 +36,11 @@ const DEFAULT_PROVIDERS: AIProvider[] = [
     apiKey: '',
     enabled: false,
     models: [
-      { id: 'gpt-4o', name: 'GPT-4o', providerId: 'openai', maxTokens: 8192 },
-      { id: 'gpt-4o-mini', name: 'GPT-4o Mini', providerId: 'openai', maxTokens: 8192 },
-      { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', providerId: 'openai', maxTokens: 8192 },
-      { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', providerId: 'openai', maxTokens: 4096 }
+      { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol（旗舰）', providerId: 'openai', maxTokens: 8192 },
+      { id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra（均衡）', providerId: 'openai', maxTokens: 8192 },
+      { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna（高性价比）', providerId: 'openai', maxTokens: 8192 },
+      { id: 'gpt-5.5', name: 'GPT-5.5', providerId: 'openai', maxTokens: 8192 },
+      { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini', providerId: 'openai', maxTokens: 8192 }
     ]
   },
   {
@@ -53,9 +54,10 @@ const DEFAULT_PROVIDERS: AIProvider[] = [
       'anthropic-version': '2023-06-01'
     },
     models: [
-      { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', providerId: 'anthropic', maxTokens: 8192 },
-      { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', providerId: 'anthropic', maxTokens: 8192 },
-      { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', providerId: 'anthropic', maxTokens: 8192 }
+      { id: 'claude-sonnet-5', name: 'Claude Sonnet 5（默认）', providerId: 'anthropic', maxTokens: 8192 },
+      { id: 'claude-opus-4-8', name: 'Claude Opus 4.8（旗舰）', providerId: 'anthropic', maxTokens: 8192 },
+      { id: 'claude-fable-5', name: 'Claude Fable 5（最强）', providerId: 'anthropic', maxTokens: 8192 },
+      { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5（快速）', providerId: 'anthropic', maxTokens: 8192 }
     ]
   },
   {
@@ -66,7 +68,9 @@ const DEFAULT_PROVIDERS: AIProvider[] = [
     apiKey: '',
     enabled: false,
     models: [
-      { id: 'grok-beta', name: 'Grok Beta', providerId: 'xai', maxTokens: 8192 }
+      { id: 'grok-4.6', name: 'Grok 4.6（旗舰）', providerId: 'xai', maxTokens: 8192 },
+      { id: 'grok-4.5', name: 'Grok 4.5', providerId: 'xai', maxTokens: 8192 },
+      { id: 'grok-4.3', name: 'Grok 4.3（均衡）', providerId: 'xai', maxTokens: 8192 }
     ]
   },
   {
