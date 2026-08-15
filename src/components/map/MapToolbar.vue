@@ -25,6 +25,9 @@
       <button class="btn" title="随机生成地图 (G)" @click="$emit('generate')">
         <span class="ic">✨</span> 随机生成
       </button>
+      <button class="btn" title="AI 生成地图" @click="$emit('ai-generate')">
+        <span class="ic">🤖</span> AI 生成
+      </button>
       <button class="btn ghost" title="清空画布" @click="$emit('clear')">
         <span class="ic">🗑</span> 清空
       </button>
@@ -64,6 +67,7 @@ const emit = defineEmits<{
   (e: 'save'): void
   (e: 'export'): void
   (e: 'generate'): void
+  (e: 'ai-generate'): void
   (e: 'clear'): void
 }>()
 

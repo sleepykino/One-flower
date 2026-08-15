@@ -14,6 +14,7 @@
       @save="saveCurrentMap"
       @export="showExportDialog = true"
       @generate="showGenerateDialog = true"
+      @ai-generate="showAIDialog = true"
       @clear="clearMap"
     />
 
@@ -113,6 +114,7 @@
 
     <ExportDialog v-model="showExportDialog" :map="currentMap" :canvas-ref="canvasRef" />
     <GenerateDialog v-model="showGenerateDialog" @generate="handleGenerate" />
+    <AIGenerateDialog v-model="showAIDialog" @generate="handleAIGenerate" />
   </div>
 </template>
 
@@ -122,12 +124,13 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useMapStore } from '@/stores/map'
 import type { MapTool } from '@/types/map'
 import { TILE_SETS } from '@/types/map'
-import { generateTerrainMap, generateDungeon, hashSeed } from '@/utils/mapGenerator'
+import { generateTerrainMap, generateDungeon, hashSeed, getPreset } from '@/utils/mapGenerator'
 import MapToolbar from './MapToolbar.vue'
 import MapCanvas from './MapCanvas.vue'
 import TerrainPanel from './TerrainPanel.vue'
 import ExportDialog from './ExportDialog.vue'
-import GenerateDialog from './GenerateDialog.vue'
+import GenerateDialog, { type GenerateParams } from './GenerateDialog.vue'
+import AIGenerateDialog, { type AIGenerateResult } from './AIGenerateDialog.vue'
 
 const mapStore = useMapStore()
 
@@ -136,6 +139,7 @@ const currentTool = ref<MapTool>('tile-brush')
 const zoom = ref(100)
 const showExportDialog = ref(false)
 const showGenerateDialog = ref(false)
+const showAIDialog = ref(false)
 const canvasRef = ref<InstanceType<typeof MapCanvas> | null>(null)
 
 const brushSize = ref(2)
@@ -258,42 +262,72 @@ function handleCommitTileHistory() {
 }
 
 /* ===== 随机生成 ===== */
-function handleGenerate(params: {
-  seed: string; seaLevel: number; roughness: number; octaves: number; roomCount: number;
-  tileSetId: string; tileWidth: number; tileHeight: number
-}) {
-  if (!currentMap.value) return
-
-  /* 尺寸/风格与当前不同则调整 */
-  if (!currentMap.value.tileData) {
-    mapStore.initTileData(currentMap.value.id, params.tileWidth, params.tileHeight, params.tileSetId)
+function prepareTileData(tileSetId: string, tileWidth: number, tileHeight: number) {
+  const map = currentMap.value!
+  if (!map.tileData) {
+    mapStore.initTileData(map.id, tileWidth, tileHeight, tileSetId)
   } else {
-    const td = currentMap.value.tileData
-    if (td.tileWidth !== params.tileWidth || td.tileHeight !== params.tileHeight) {
-      mapStore.resizeTileData(currentMap.value.id, params.tileWidth, params.tileHeight)
+    const td = map.tileData
+    if (td.tileWidth !== tileWidth || td.tileHeight !== tileHeight) {
+      mapStore.resizeTileData(map.id, tileWidth, tileHeight)
     }
-    if (td.tileSetId !== params.tileSetId) {
-      mapStore.updateTileData(currentMap.value.id, { tileSetId: params.tileSetId })
+    if (td.tileSetId !== tileSetId) {
+      mapStore.updateTileData(map.id, { tileSetId })
     }
     td.stamps = []
     td.labels = []
   }
-
-  currentTileSetId.value = params.tileSetId
+  currentTileSetId.value = tileSetId
   currentTile.value = 0
+}
+
+function handleGenerate(params: GenerateParams) {
+  if (!currentMap.value) return
+
+  prepareTileData(params.tileSetId, params.tileWidth, params.tileHeight)
 
   const seedNum = params.seed ? hashSeed(params.seed) : Math.floor(Math.random() * 1e9)
-  const tiles = params.tileSetId === 'trpg'
+  const preset = getPreset(params.presetId)
+  const tiles = params.presetId === 'dungeon'
     ? generateDungeon(seedNum, params.tileWidth, params.tileHeight, params.roomCount)
-    : generateTerrainMap(seedNum, params.tileWidth, params.tileHeight, params.seaLevel, params.roughness, params.octaves, params.tileSetId)
+    : generateTerrainMap({
+        seed: seedNum,
+        width: params.tileWidth,
+        height: params.tileHeight,
+        preset,
+        seaLevel: params.seaLevel
+      })
 
   mapStore.updateTileData(currentMap.value.id, { tiles })
   if (currentMap.value.tileData) currentMap.value.tileData.tiles = tiles
   mapStore.commitTileHistory(currentMap.value.id)
   nextTickRender()
 
-  statusMsg.value = `已生成 ${TILE_SETS[params.tileSetId]?.name}（种子 ${seedNum}）`
+  statusMsg.value = `已生成「${preset.name}」（种子 ${seedNum}）`
   ElMessage.success('地图已生成')
+}
+
+/* ===== AI 生成 ===== */
+function handleAIGenerate(result: AIGenerateResult) {
+  if (!currentMap.value) return
+
+  prepareTileData(result.tileSetId, result.tileWidth, result.tileHeight)
+
+  mapStore.updateTileData(currentMap.value.id, {
+    tiles: result.tiles,
+    stamps: result.stamps,
+    labels: result.labels
+  })
+  const td = currentMap.value.tileData
+  if (td) {
+    td.tiles = result.tiles
+    td.stamps = result.stamps
+    td.labels = result.labels
+  }
+  mapStore.commitTileHistory(currentMap.value.id)
+  nextTickRender()
+
+  statusMsg.value = `AI 已生成 ${result.tileWidth} × ${result.tileHeight} 地图`
 }
 
 function nextTickRender() {

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>沙之地图 · Map Editor</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- 顶部工具栏 -->
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">◈</span>
+        <span class="title">沙之地图</span>
+        <span class="subtitle">Map Editor</span>
+      </div>
+
+      <div class="top-group">
+        <label class="field">
+          <span class="field-label">风格</span>
+          <select id="styleSelect">
+            <option value="fantasy">奇幻世界</option>
+            <option value="trpg">跑团地牢</option>
+            <option value="terrain">像素地形</option>
+            <option value="island">孤岛海域</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">尺寸</span>
+          <select id="sizeSelect">
+            <option value="48">48 × 48</option>
+            <option value="80" selected>80 × 80</option>
+            <option value="128">128 × 128</option>
+            <option value="192">192 × 192</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="top-group">
+        <button class="btn" id="generateBtn" title="随机生成地图 (G)">
+          <span class="ic">✨</span> 随机生成
+        </button>
+        <button class="btn ghost" id="clearBtn" title="清空画布">
+          <span class="ic">🗑</span> 清空
+        </button>
+      </div>
+
+      <div class="top-group">
+        <button class="btn ghost" id="undoBtn" title="撤销 (Ctrl+Z)">↶</button>
+        <button class="btn ghost" id="redoBtn" title="重做 (Ctrl+Y)">↷</button>
+      </div>
+
+      <div class="top-group right">
+        <button class="btn ghost" id="saveBtn" title="保存到本地">💾 存档</button>
+        <button class="btn ghost" id="loadBtn" title="读取本地存档">📂 读档</button>
+        <button class="btn primary" id="exportBtn" title="导出 PNG">⬇ 导出 PNG</button>
+      </div>
+    </header>
+
+    <div class="main">
+      <!-- 左侧工具栏 -->
+      <aside class="sidebar left">
+        <div class="tool-group" id="toolGroup">
+          <button class="tool active" data-tool="brush" title="画笔 (B)"><span class="ti">🖌</span><span class="tn">画笔</span></button>
+          <button class="tool" data-tool="eraser" title="橡皮擦 (E)"><span class="ti">🩹</span><span class="tn">橡皮</span></button>
+          <button class="tool" data-tool="fill" title="油漆桶 (F)"><span class="ti">🪣</span><span class="tn">填充</span></button>
+          <button class="tool" data-tool="line" title="直线 (L)"><span class="ti">／</span><span class="tn">直线</span></button>
+          <button class="tool" data-tool="rect" title="矩形 (R)"><span class="ti">▭</span><span class="tn">矩形</span></button>
+          <button class="tool" data-tool="picker" title="取色器 (I)"><span class="ti">💧</span><span class="tn">取色</span></button>
+          <button class="tool" data-tool="stamp" title="图章 (S)"><span class="ti">⭐</span><span class="tn">图章</span></button>
+          <button class="tool" data-tool="pan" title="平移 (空格/H)"><span class="ti">✋</span><span class="tn">平移</span></button>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="panel-section">
+          <div class="section-title">笔刷</div>
+          <div class="brush-size">
+            <input type="range" id="brushSize" min="1" max="12" value="2" />
+            <span class="size-val" id="brushSizeVal">2</span>
+          </div>
+          <div class="brush-shape">
+            <label><input type="radio" name="bshape" value="square" checked /> 方形</label>
+            <label><input type="radio" name="bshape" value="circle" /> 圆形</label>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="panel-section">
+          <div class="section-title">视图</div>
+          <label class="check"><input type="checkbox" id="gridToggle" checked /> 显示网格</label>
+          <label class="check"><input type="checkbox" id="contourToggle" /> 等高线</label>
+          <div class="zoom-row">
+            <button class="btn ghost sm" id="zoomOut">－</button>
+            <span class="zoom-val" id="zoomVal">100%</span>
+            <button class="btn ghost sm" id="zoomIn">＋</button>
+            <button class="btn ghost sm" id="zoomFit" title="适应窗口">⤢</button>
+          </div>
+        </div>
+      </aside>
+
+      <!-- 中央画布区 -->
+      <section class="canvas-area" id="canvasArea">
+        <div class="canvas-viewport" id="viewport">
+          <div class="canvas-wrap" id="canvasWrap">
+            <canvas id="mapCanvas" class="layer"></canvas>
+            <canvas id="gridCanvas" class="layer"></canvas>
+            <canvas id="overlayCanvas" class="layer overlay-interactive"></canvas>
+          </div>
+        </div>
+
+        <!-- 生成参数浮层 -->
+        <div class="floating-panel" id="genPanel">
+          <div class="fp-header">
+            <span>生成参数</span>
+            <button class="fp-close" id="genPanelClose">✕</button>
+          </div>
+          <div class="fp-body">
+            <label class="field">
+              <span class="field-label">种子</span>
+              <input type="text" id="seedInput" placeholder="随机留空" />
+            </label>
+            <label class="field">
+              <span class="field-label">海平面 <span id="seaVal">0.45</span></span>
+              <input type="range" id="seaLevel" min="0" max="100" value="45" />
+            </label>
+            <label class="field">
+              <span class="field-label">粗糙度 <span id="roughVal">0.55</span></span>
+              <input type="range" id="roughness" min="0" max="100" value="55" />
+            </label>
+            <label class="field">
+              <span class="field-label">细节层数 <span id="octVal">6</span></span>
+              <input type="range" id="octaves" min="1" max="8" value="6" />
+            </label>
+            <label class="field">
+              <span class="field-label">地牢房数 <span id="roomVal">8</span></span>
+              <input type="range" id="roomCount" min="3" max="20" value="8" />
+            </label>
+            <button class="btn primary full" id="doGenerate">生成</button>
+            <button class="btn ghost full" id="reseedBtn">🎲 换个种子</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 右侧调色板/图章面板 -->
+      <aside class="sidebar right" id="palettePanel">
+        <div class="panel-section">
+          <div class="section-title" id="paletteTitle">地形调色板</div>
+          <div class="palette-grid" id="paletteGrid"></div>
+          <div class="current-tile" id="currentTile">
+            <span class="ct-swatch" id="ctSwatch"></span>
+            <span class="ct-name" id="ctName">深海</span>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="panel-section" id="stampSection">
+          <div class="section-title">图章</div>
+          <div class="stamp-grid" id="stampGrid"></div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="panel-section">
+          <div class="section-title">图层</div>
+          <div class="layer-list" id="layerList">
+            <label class="check"><input type="checkbox" id="layerTerrain" checked /> 地形层</label>
+            <label class="check"><input type="checkbox" id="layerGrid" checked /> 网格层</label>
+            <label class="check"><input type="checkbox" id="layerLabel" checked /> 标注层</label>
+          </div>
+          <label class="field label-input">
+            <span class="field-label">添加文字</span>
+            <div class="label-row">
+              <input type="text" id="labelText" placeholder="城市名..." />
+              <button class="btn ghost sm" id="addLabelBtn">＋</button>
+            </div>
+          </label>
+        </div>
+      </aside>
+    </div>
+
+    <!-- 底部状态栏 -->
+    <footer class="statusbar">
+      <span id="statusCoords">坐标：—</span>
+      <span id="statusSize">80 × 80</span>
+      <span id="statusTool">画笔</span>
+      <span class="status-right" id="statusMsg">就绪</span>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
