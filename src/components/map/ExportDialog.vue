@@ -119,8 +119,31 @@ function exportAsJson() {
 
 async function exportAsImage() {
   if (!props.map) return
-  
+
   const scale = getScale()
+
+  /* 瓦片地图：使用画布合成结果导出（含地形/网格/标注） */
+  const composite = props.canvasRef?.getCompositeCanvas?.()
+  if (props.map.tileData && composite) {
+    const canvas = document.createElement('canvas')
+    canvas.width = composite.width * scale
+    canvas.height = composite.height * scale
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    ctx.imageSmoothingEnabled = false
+    ctx.drawImage(composite, 0, 0, canvas.width, canvas.height)
+
+    const mimeType = form.format === 'jpg' ? 'image/jpeg' : 'image/png'
+    const quality = form.format === 'jpg' ? 0.9 : undefined
+    canvas.toBlob((blob) => {
+      if (blob) {
+        downloadBlob(blob, `${form.filename}.${form.format}`)
+      }
+    }, mimeType, quality)
+    return
+  }
+
+  /* 矢量地图：原有绘制逻辑 */
   const canvas = document.createElement('canvas')
   canvas.width = props.map.width * scale
   canvas.height = props.map.height * scale
@@ -161,22 +184,90 @@ async function exportAsImage() {
   }, mimeType, quality)
 }
 
-function drawGrid(ctx: CanvasRenderingContext2D, map: NovelMap) {
-  ctx.strokeStyle = 'rgba(128, 128, 128, 0.3)'
-  ctx.lineWidth = 1
-  
-  for (let x = 0; x <= map.width; x += map.gridSize) {
-    ctx.beginPath()
-    ctx.moveTo(x, 0)
-    ctx.lineTo(x, map.height)
-    ctx.stroke()
+function parseGridColor(color: string, opacity: number): string {
+  if (color.startsWith('#')) {
+    let r = 128, g = 128, b = 128
+    if (color.length === 4) {
+      r = parseInt(color[1] + color[1], 16)
+      g = parseInt(color[2] + color[2], 16)
+      b = parseInt(color[3] + color[3], 16)
+    } else if (color.length >= 7) {
+      r = parseInt(color.slice(1, 3), 16)
+      g = parseInt(color.slice(3, 5), 16)
+      b = parseInt(color.slice(5, 7), 16)
+    }
+    return `rgba(${r}, ${g}, ${b}, ${opacity})`
   }
-  
-  for (let y = 0; y <= map.height; y += map.gridSize) {
-    ctx.beginPath()
-    ctx.moveTo(0, y)
-    ctx.lineTo(map.width, y)
-    ctx.stroke()
+  const match = color.match(/rgba?\(([^)]+)\)/)
+  if (match) {
+    const parts = match[1].split(',').map(s => s.trim())
+    return `rgba(${parts[0]}, ${parts[1]}, ${parts[2]}, ${opacity})`
+  }
+  return `rgba(128, 128, 128, ${opacity})`
+}
+
+function drawGrid(ctx: CanvasRenderingContext2D, map: NovelMap) {
+  if (map.gridType === 'none') return
+
+  const color = parseGridColor(map.gridColor, map.gridOpacity)
+  ctx.strokeStyle = color
+  ctx.fillStyle = color
+  ctx.lineWidth = 1
+
+  const gridSize = map.gridSize
+
+  switch (map.gridType) {
+    case 'square': {
+      for (let x = 0; x <= map.width; x += gridSize) {
+        ctx.beginPath()
+        ctx.moveTo(x, 0)
+        ctx.lineTo(x, map.height)
+        ctx.stroke()
+      }
+      for (let y = 0; y <= map.height; y += gridSize) {
+        ctx.beginPath()
+        ctx.moveTo(0, y)
+        ctx.lineTo(map.width, y)
+        ctx.stroke()
+      }
+      break
+    }
+    case 'hex': {
+      const hexWidth = gridSize
+      const hexHeight = gridSize * Math.sqrt(3) / 2
+      const size = hexWidth / 2
+      const colStep = hexWidth * 3 / 4
+
+      for (let col = 0; col * colStep <= map.width + hexWidth; col++) {
+        const cx = col * colStep
+        const yOffset = (col % 2) * hexHeight / 2
+        for (let row = 0; row * hexHeight + yOffset <= map.height + hexHeight; row++) {
+          const cy = row * hexHeight + yOffset
+          ctx.beginPath()
+          for (let i = 0; i < 6; i++) {
+            const angle = (Math.PI / 3) * i
+            const px = cx + size * Math.cos(angle)
+            const py = cy + size * Math.sin(angle)
+            if (i === 0) ctx.moveTo(px, py)
+            else ctx.lineTo(px, py)
+          }
+          ctx.closePath()
+          ctx.stroke()
+        }
+      }
+      break
+    }
+    case 'dot': {
+      const dotRadius = Math.max(1, gridSize / 15)
+      for (let x = 0; x <= map.width; x += gridSize) {
+        for (let y = 0; y <= map.height; y += gridSize) {
+          ctx.beginPath()
+          ctx.arc(x, y, dotRadius, 0, Math.PI * 2)
+          ctx.fill()
+        }
+      }
+      break
+    }
   }
 }
 

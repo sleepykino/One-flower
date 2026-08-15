@@ -1,1308 +1,596 @@
 <template>
-  <div class="map-canvas-wrapper" ref="wrapperRef">
-    <canvas ref="canvasRef" @mousedown="onMouseDown" @mousemove="onMouseMove" @mouseup="onMouseUp" @mouseleave="onMouseUp" @wheel="onWheel" @contextmenu.prevent="onContextMenu" />
-    
-    <div v-if="!map" class="empty-state">
-      <el-empty description="请选择或创建一个地图" />
-    </div>
-
-    <div v-if="showContextMenu" class="context-menu" :style="{ left: contextMenuPos.x + 'px', top: contextMenuPos.y + 'px' }">
-      <div class="menu-item" @click="copySelected">
-        <el-icon><DocumentCopy /></el-icon>
-        复制
-      </div>
-      <div class="menu-item" @click="pasteElements">
-        <el-icon><Document /></el-icon>
-        粘贴
-      </div>
-      <div class="menu-item" @click="deleteSelected">
-        <el-icon><Delete /></el-icon>
-        删除
-      </div>
-      <el-divider margin="5px" />
-      <div class="menu-item" @click="selectAllElements">
-        全选
-      </div>
+  <div ref="viewportRef" class="canvas-viewport">
+    <div ref="wrapRef" class="canvas-wrap" :class="{ 'pan-mode': isPanMode, panning }">
+      <canvas ref="mapCanvasRef" class="layer" />
+      <canvas ref="gridCanvasRef" class="layer" />
+      <canvas
+        ref="overlayCanvasRef"
+        class="layer overlay-interactive"
+        @pointerdown="onPointerDown"
+        @contextmenu="onContextMenu"
+      />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { DocumentCopy, Document, Delete } from '@element-plus/icons-vue'
-import type { NovelMap, MapElement, MapTool, MapAsset, Point, MarkerData, PathData, ShapeData, BrushConfig, FillConfig, SelectionRect, ResizeHandleType } from '@/types/map'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import type { MapTool } from '@/types/map'
+import { TILE_SETS } from '@/types/map'
 
 const props = defineProps<{
-  map: NovelMap | null
+  map: any | null
   tool: MapTool
-  selectedElementIds: string[]
-  selectedLayerId: string | null
-  selectedAsset: MapAsset | null
-  brushConfig: BrushConfig
-  fillConfig: FillConfig
+  currentTile: number
+  currentStamp: string
+  brushSize: number
+  brushShape: 'square' | 'circle'
+  showGrid: boolean
+  showContour: boolean
+  layerVisible: { terrain: boolean; grid: boolean; label: boolean }
 }>()
 
 const emit = defineEmits<{
-  (e: 'select-element', id: string, addToSelection: boolean): void
-  (e: 'update-element', id: string, updates: Partial<MapElement>, skipHistory?: boolean): void
-  (e: 'add-element', element: Omit<MapElement, 'id'>): void
-  (e: 'add-elements', elements: Omit<MapElement, 'id'>[]): void
-  (e: 'delete-elements', ids: string[]): void
   (e: 'update:zoom', zoom: number): void
-  (e: 'commit-drag', updates: Record<string, Partial<MapElement>>): void
-  (e: 'select-elements-in-rect', rect: SelectionRect): void
+  (e: 'hover-coords', coords: { x: number; y: number } | null): void
+  (e: 'commit-tile-history'): void
+  (e: 'add-tile-label', x: number, y: number, text: string): void
+  (e: 'tile-picked', tileId: number): void
 }>()
 
-const wrapperRef = ref<HTMLDivElement | null>(null)
-const canvasRef = ref<HTMLCanvasElement | null>(null)
-let ctx: CanvasRenderingContext2D | null = null
+/* ===== 常量 ===== */
+const ZOOM_STEPS = [3, 4, 6, 8, 10, 12, 16, 20, 24, 32]
+const BASE_TILE = 8
 
-const zoom = ref(1)
-const panX = ref(0)
-const panY = ref(0)
-const isPanning = ref(false)
-const isDrawing = ref(false)
-const lastPanPoint = ref<Point | null>(null)
-const currentPath = ref<Point[]>([])
-const dragStartPoint = ref<Point | null>(null)
-const dragElements = ref<Record<string, { startX: number; startY: number }>>({})
-const isDragging = ref(false)
+/* ===== DOM 引用 ===== */
+const viewportRef = ref<HTMLDivElement | null>(null)
+const wrapRef = ref<HTMLDivElement | null>(null)
+const mapCanvasRef = ref<HTMLCanvasElement | null>(null)
+const gridCanvasRef = ref<HTMLCanvasElement | null>(null)
+const overlayCanvasRef = ref<HTMLCanvasElement | null>(null)
 
-const isSelecting = ref(false)
-const selectionStart = ref<Point | null>(null)
-const selectionEnd = ref<Point | null>(null)
+let mapCtx: CanvasRenderingContext2D | null = null
+let gridCtx: CanvasRenderingContext2D | null = null
+let overlayCtx: CanvasRenderingContext2D | null = null
 
-const isBrushDrawing = ref(false)
-const brushLastPoint = ref<Point | null>(null)
-const brushPendingElements = ref<Omit<MapElement, 'id'>[]>([])
+/* 低分辨率离屏画布（每 tile 1 像素） */
+const offCanvas = document.createElement('canvas')
+const offCtx = offCanvas.getContext('2d')
 
-const isFillDrawing = ref(false)
-const fillStartPoint = ref<Point | null>(null)
-const fillCurrentPoint = ref<Point | null>(null)
+/* ===== 状态 ===== */
+const tileSize = ref(BASE_TILE)
+const drawing = ref(false)
+const lastTile = ref<[number, number] | null>(null)
+const panning = ref(false)
+const spaceDown = ref(false)
+const pendingLabel = ref<string | null>(null)
+const preview = ref<{ tool: string; x0: number; y0: number; x1: number; y1: number } | null>(null)
+let panStart: { x: number; y: number; sx: number; sy: number } | null = null
 
-const isResizing = ref(false)
-const resizeHandle = ref<ResizeHandleType | null>(null)
-const resizeElement = ref<MapElement | null>(null)
-const resizeStartPoint = ref<Point | null>(null)
-const resizeStartState = ref<{ x: number; y: number; width?: number; height?: number; markerSize?: number } | null>(null)
+const isPanMode = computed(() => props.tool === 'pan' || spaceDown.value)
+const tileData = computed(() => props.map?.tileData ?? null)
 
-const showContextMenu = ref(false)
-const contextMenuPos = ref({ x: 0, y: 0 })
-const clipboard = ref<Omit<MapElement, 'id'>[]>([])
+/* 颜色查找缓存 */
+const rgbCache: Record<string, { r: number; g: number; b: number }> = {}
 
-function initCanvas() {
-  if (!canvasRef.value || !wrapperRef.value) return
-  
-  const rect = wrapperRef.value.getBoundingClientRect()
-  canvasRef.value.width = rect.width
-  canvasRef.value.height = rect.height
-  
-  ctx = canvasRef.value.getContext('2d')
-  render()
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const h = hex.replace('#', '')
+  return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) }
 }
 
-function render() {
-  if (!ctx || !canvasRef.value || !props.map) {
-    if (ctx && canvasRef.value) {
-      ctx.fillStyle = '#1a1a2e'
-      ctx.fillRect(0, 0, canvasRef.value.width, canvasRef.value.height)
+function tileRGB(tileSetId: string, id: number) {
+  const key = tileSetId + '_' + id
+  if (rgbCache[key]) return rgbCache[key]
+  const t = TILE_SETS[tileSetId]?.tiles.find(x => x.id === id)
+  const c = t ? hexToRgb(t.color) : { r: 0, g: 0, b: 0 }
+  rgbCache[key] = c
+  return c
+}
+
+/* ===== 画布尺寸设置 ===== */
+function setupCanvas() {
+  const td = tileData.value
+  if (!td) return
+  const w = td.tileWidth * tileSize.value
+  const h = td.tileHeight * tileSize.value
+  for (const c of [mapCanvasRef.value, gridCanvasRef.value, overlayCanvasRef.value]) {
+    if (!c) continue
+    c.width = w
+    c.height = h
+    c.style.width = w + 'px'
+    c.style.height = h + 'px'
+  }
+  if (wrapRef.value) {
+    wrapRef.value.style.width = w + 'px'
+    wrapRef.value.style.height = h + 'px'
+  }
+  offCanvas.width = td.tileWidth
+  offCanvas.height = td.tileHeight
+  if (mapCtx) mapCtx.imageSmoothingEnabled = false
+}
+
+/* ===== 渲染 ===== */
+function renderAll() {
+  renderMap()
+  renderGrid()
+  renderOverlay()
+}
+
+function renderMap() {
+  const td = tileData.value
+  if (!mapCtx || !td) return
+  const w = td.tileWidth, h = td.tileHeight, ts = tileSize.value
+  mapCtx.clearRect(0, 0, mapCanvasRef.value!.width, mapCanvasRef.value!.height)
+  if (!props.layerVisible.terrain) return
+
+  /* 低分辨率 ImageData + GPU 缩放 */
+  const img = offCtx!.createImageData(w, h)
+  const data = img.data
+  for (let i = 0; i < w * h; i++) {
+    const col = tileRGB(td.tileSetId, td.tiles[i])
+    const o = i * 4
+    data[o] = col.r; data[o + 1] = col.g; data[o + 2] = col.b; data[o + 3] = 255
+  }
+  offCtx!.putImageData(img, 0, 0)
+  mapCtx.imageSmoothingEnabled = false
+  mapCtx.drawImage(offCanvas, 0, 0, w, h, 0, 0, w * ts, h * ts)
+
+  if (props.showContour) drawContours()
+}
+
+/* 边缘描边：相邻瓦片不同画暗线 */
+function drawContours() {
+  const td = tileData.value
+  if (!mapCtx || !td) return
+  const w = td.tileWidth, h = td.tileHeight, ts = tileSize.value
+  mapCtx.save()
+  mapCtx.strokeStyle = 'rgba(0,0,0,0.28)'
+  mapCtx.lineWidth = 1
+  mapCtx.beginPath()
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const id = td.tiles[y * w + x]
+      if (x + 1 < w && td.tiles[y * w + x + 1] !== id) {
+        mapCtx.moveTo((x + 1) * ts, y * ts)
+        mapCtx.lineTo((x + 1) * ts, (y + 1) * ts)
+      }
+      if (y + 1 < h && td.tiles[(y + 1) * w + x] !== id) {
+        mapCtx.moveTo(x * ts, (y + 1) * ts)
+        mapCtx.lineTo((x + 1) * ts, (y + 1) * ts)
+      }
     }
+  }
+  mapCtx.stroke()
+  mapCtx.restore()
+}
+
+function renderGrid() {
+  const td = tileData.value
+  if (!gridCtx || !td) return
+  const w = td.tileWidth, h = td.tileHeight, ts = tileSize.value
+  gridCtx.clearRect(0, 0, gridCanvasRef.value!.width, gridCanvasRef.value!.height)
+  if (!props.showGrid || !props.layerVisible.grid) return
+
+  gridCtx.save()
+  gridCtx.strokeStyle = TILE_SETS[td.tileSetId]?.gridColor || 'rgba(0,0,0,0.08)'
+  gridCtx.lineWidth = 1
+  gridCtx.beginPath()
+  for (let x = 0; x <= w; x++) {
+    gridCtx.moveTo(x * ts + 0.5, 0)
+    gridCtx.lineTo(x * ts + 0.5, h * ts)
+  }
+  for (let y = 0; y <= h; y++) {
+    gridCtx.moveTo(0, y * ts + 0.5)
+    gridCtx.lineTo(w * ts, y * ts + 0.5)
+  }
+  gridCtx.stroke()
+  gridCtx.restore()
+}
+
+function renderOverlay() {
+  const td = tileData.value
+  if (!overlayCtx || !td) return
+  const ts = tileSize.value
+  overlayCtx.clearRect(0, 0, overlayCanvasRef.value!.width, overlayCanvasRef.value!.height)
+  if (!props.layerVisible.label) return
+
+  /* 图章 */
+  overlayCtx.save()
+  overlayCtx.font = `${Math.floor(ts * 1.1)}px serif`
+  overlayCtx.textAlign = 'center'
+  overlayCtx.textBaseline = 'middle'
+  for (const s of td.stamps) {
+    overlayCtx.fillText(s.emoji, (s.x + 0.5) * ts, (s.y + 0.5) * ts)
+  }
+  overlayCtx.restore()
+
+  /* 文字标注（白底黑字带边框） */
+  overlayCtx.save()
+  overlayCtx.font = `${Math.max(11, ts + 3)}px sans-serif`
+  overlayCtx.textAlign = 'center'
+  overlayCtx.textBaseline = 'middle'
+  for (const l of td.labels) {
+    const cx = (l.x + 0.5) * ts, cy = (l.y + 0.5) * ts
+    const tw = overlayCtx.measureText(l.text).width
+    overlayCtx.fillStyle = 'rgba(255,255,255,0.85)'
+    overlayCtx.fillRect(cx - tw / 2 - 4, cy - 9, tw + 8, 18)
+    overlayCtx.strokeStyle = 'rgba(0,0,0,0.3)'
+    overlayCtx.lineWidth = 1
+    overlayCtx.strokeRect(cx - tw / 2 - 4, cy - 9, tw + 8, 18)
+    overlayCtx.fillStyle = '#1f2430'
+    overlayCtx.fillText(l.text, cx, cy)
+  }
+  overlayCtx.restore()
+
+  /* 直线/矩形预览 */
+  if (preview.value) {
+    const p = preview.value
+    overlayCtx.save()
+    overlayCtx.globalAlpha = 0.6
+    const t = TILE_SETS[td.tileSetId]?.tiles.find(x => x.id === props.currentTile)
+    overlayCtx.fillStyle = t?.color || '#e94560'
+    const pts = shapePoints(p.tool, p.x0, p.y0, p.x1, p.y1)
+    for (const [px, py] of pts) {
+      overlayCtx.fillRect(px * ts, py * ts, ts, ts)
+    }
+    overlayCtx.restore()
+  }
+}
+
+/* ===== 绘制操作（直接修改瓦片数据，提交时快照） ===== */
+function getBgTileId(): number {
+  const td = tileData.value
+  if (!td) return 0
+  return TILE_SETS[td.tileSetId]?.bgTile ?? 0
+}
+
+function paintAt(x: number, y: number, tileId?: number) {
+  const td = tileData.value
+  if (!td) return
+  const size = props.brushSize
+  const id = tileId ?? (props.tool === 'tile-eraser' ? getBgTileId() : props.currentTile)
+  const half = Math.floor(size / 2)
+  const r2 = (size / 2) ** 2
+  const { tileWidth: w, tileHeight: h, tiles } = td
+  for (let dy = -half; dy < -half + size; dy++) {
+    for (let dx = -half; dx < -half + size; dx++) {
+      if (props.brushShape === 'circle' && (dx + 0.5) ** 2 + (dy + 0.5) ** 2 > r2) continue
+      const px = x + dx, py = y + dy
+      if (px < 0 || py < 0 || px >= w || py >= h) continue
+      tiles[py * w + px] = id
+    }
+  }
+}
+
+function floodFill(x: number, y: number) {
+  const td = tileData.value
+  if (!td) return
+  const { tileWidth: w, tileHeight: h, tiles } = td
+  if (x < 0 || y < 0 || x >= w || y >= h) return
+  const target = tiles[y * w + x]
+  const replace = props.currentTile
+  if (target === replace) return
+  const stack: [number, number][] = [[x, y]]
+  while (stack.length) {
+    const [cx, cy] = stack.pop()!
+    if (cx < 0 || cy < 0 || cx >= w || cy >= h) continue
+    const i = cy * w + cx
+    if (tiles[i] !== target) continue
+    tiles[i] = replace
+    stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1])
+  }
+}
+
+function shapePoints(tool: string, x0: number, y0: number, x1: number, y1: number): [number, number][] {
+  const pts: [number, number][] = []
+  if (tool === 'tile-rect') {
+    const xa = Math.min(x0, x1), xb = Math.max(x0, x1)
+    const ya = Math.min(y0, y1), yb = Math.max(y0, y1)
+    for (let x = xa; x <= xb; x++) { pts.push([x, ya]); pts.push([x, yb]) }
+    for (let y = ya; y <= yb; y++) { pts.push([xa, y]); pts.push([xb, y]) }
+    return pts
+  }
+  let dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0)
+  let sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1
+  let err = dx - dy, x = x0, y = y0
+  while (true) {
+    pts.push([x, y])
+    if (x === x1 && y === y1) break
+    const e2 = 2 * err
+    if (e2 > -dy) { err -= dy; x += sx }
+    if (e2 < dx) { err += dx; y += sy }
+  }
+  return pts
+}
+
+function applyShapePoints(pts: [number, number][], tileId: number) {
+  const td = tileData.value
+  if (!td) return
+  const { tileWidth: w, tileHeight: h, tiles } = td
+  for (const [px, py] of pts) {
+    if (px < 0 || py < 0 || px >= w || py >= h) continue
+    tiles[py * w + px] = tileId
+  }
+}
+
+/* ===== 指针交互 ===== */
+function getTile(e: PointerEvent | MouseEvent): [number, number] {
+  const rect = overlayCanvasRef.value!.getBoundingClientRect()
+  const x = Math.floor((e.clientX - rect.left) / tileSize.value)
+  const y = Math.floor((e.clientY - rect.top) / tileSize.value)
+  return [x, y]
+}
+
+function onPointerDown(e: PointerEvent) {
+  const td = tileData.value
+  if (!td) return
+
+  /* 平移：pan 工具 / 中键 / 空格 */
+  if (e.button === 1 || isPanMode.value) {
+    panning.value = true
+    panStart = { x: e.clientX, y: e.clientY, sx: viewportRef.value!.scrollLeft, sy: viewportRef.value!.scrollTop }
+    e.preventDefault()
+    return
+  }
+  if (e.button !== 0) return
+
+  const [x, y] = getTile(e)
+  if (x < 0 || y < 0 || x >= td.tileWidth || y >= td.tileHeight) return
+
+  /* 待放置文字 */
+  if (pendingLabel.value !== null) {
+    emit('add-tile-label', x, y, pendingLabel.value)
+    pendingLabel.value = null
+    emit('commit-tile-history')
+    renderOverlay()
     return
   }
 
-  const canvas = canvasRef.value
-  ctx.save()
-  
-  ctx.fillStyle = '#1a1a2e'
-  ctx.fillRect(0, 0, canvas.width, canvas.height)
-  
-  ctx.translate(panX.value, panY.value)
-  ctx.scale(zoom.value, zoom.value)
-  
-  ctx.fillStyle = props.map.backgroundColor
-  ctx.fillRect(0, 0, props.map.width, props.map.height)
-  
-  if (props.map.gridVisible) {
-    drawGrid()
-  }
-  
-  const sortedLayers = [...props.map.layers].sort((a, b) => a.zIndex - b.zIndex)
-  for (const layer of sortedLayers) {
-    if (!layer.visible) continue
-    
-    ctx.globalAlpha = layer.opacity
-    for (const element of layer.elements) {
-      drawElement(element)
+  drawing.value = true
+  lastTile.value = [x, y]
+
+  switch (props.tool) {
+    case 'tile-brush':
+    case 'tile-eraser':
+      paintAt(x, y)
+      renderMap(); renderOverlay()
+      break
+    case 'tile-fill':
+      floodFill(x, y)
+      renderMap()
+      emit('commit-tile-history')
+      drawing.value = false
+      break
+    case 'tile-picker': {
+      const id = td.tiles[y * td.tileWidth + x]
+      emit('tile-picked', id)
+      drawing.value = false
+      break
     }
-  }
-  
-  ctx.globalAlpha = 1
-
-  for (const el of brushPendingElements.value) {
-    drawElement({ ...el, id: '__pending__' } as MapElement)
-  }
-  
-  if (isDrawing.value && currentPath.value.length > 0 && props.tool === 'path') {
-    drawCurrentPath()
-  }
-
-  if (isSelecting.value && selectionStart.value && selectionEnd.value) {
-    drawSelectionRect()
-  }
-
-  if (isFillDrawing.value && fillStartPoint.value && fillCurrentPoint.value) {
-    drawFillPreview()
-  }
-
-  if (props.tool === 'select' && props.selectedElementIds.length === 1) {
-    const element = findElementById(props.selectedElementIds[0])
-    if (element) {
-      drawResizeHandles(element)
-    }
-  }
-  
-  ctx.restore()
-  
-  emit('update:zoom', zoom.value)
-}
-
-function drawGrid() {
-  if (!ctx || !props.map) return
-  
-  ctx.strokeStyle = 'rgba(128, 128, 128, 0.2)'
-  ctx.lineWidth = 1 / zoom.value
-  
-  const gridSize = props.map.gridSize
-  
-  for (let x = 0; x <= props.map.width; x += gridSize) {
-    ctx.beginPath()
-    ctx.moveTo(x, 0)
-    ctx.lineTo(x, props.map.height)
-    ctx.stroke()
-  }
-  
-  for (let y = 0; y <= props.map.height; y += gridSize) {
-    ctx.beginPath()
-    ctx.moveTo(0, y)
-    ctx.lineTo(props.map.width, y)
-    ctx.stroke()
+    case 'tile-stamp':
+      if (!td.stamps.some(s => s.x === x && s.y === y)) {
+        td.stamps.push({ x, y, emoji: props.currentStamp })
+        renderOverlay()
+        emit('commit-tile-history')
+      }
+      drawing.value = false
+      break
+    case 'tile-line':
+    case 'tile-rect':
+      preview.value = { tool: props.tool, x0: x, y0: y, x1: x, y1: y }
+      renderOverlay()
+      break
   }
 }
 
-function drawElement(element: MapElement) {
-  if (!ctx) return
-  
-  const isSelected = props.selectedElementIds.includes(element.id)
-  
-  if (element.type === 'path') {
-    ctx.save()
-    ctx.globalAlpha *= element.opacity
-    drawPath(element.data as PathData, isSelected)
-    ctx.restore()
-    return
-  }
-  
-  ctx.save()
-  ctx.translate(element.x, element.y)
-  ctx.rotate((element.rotation * Math.PI) / 180)
-  ctx.globalAlpha *= element.opacity
-  
-  switch (element.type) {
-    case 'marker':
-      drawMarker(element.data as MarkerData, isSelected)
-      break
-    case 'shape':
-      drawShape(element.data as ShapeData, element.width, element.height, isSelected)
-      break
-    case 'text':
-      drawText(element.data as any)
-      break
-    case 'image':
-      drawImage(element.data as any)
-      break
-  }
-  
-  ctx.restore()
-}
-
-function drawMarker(data: MarkerData, isSelected: boolean) {
-  if (!ctx) return
-  
-  const size = data.size
-  
-  ctx.font = `${size}px Arial`
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.fillText(data.icon, 0, 0)
-  
-  if (data.labelVisible && data.label) {
-    ctx.font = '14px Arial'
-    ctx.fillStyle = '#333'
-    ctx.fillText(data.label, 0, size / 2 + 15)
-  }
-  
-  if (isSelected) {
-    ctx.strokeStyle = '#e94560'
-    ctx.lineWidth = 2 / zoom.value
-    ctx.setLineDash([5 / zoom.value, 5 / zoom.value])
-    ctx.strokeRect(-size / 2 - 5, -size / 2 - 5, size + 10, size + 10)
-    ctx.setLineDash([])
-  }
-}
-
-function drawPath(data: PathData, isSelected: boolean) {
-  if (!ctx || data.points.length < 2) return
-  
-  ctx.beginPath()
-  ctx.strokeStyle = data.strokeColor
-  ctx.lineWidth = data.strokeWidth
-  ctx.setLineDash(data.strokeDash)
-  
-  if (data.smooth && data.points.length > 2) {
-    ctx.moveTo(data.points[0].x, data.points[0].y)
-    for (let i = 1; i < data.points.length - 1; i++) {
-      const xc = (data.points[i].x + data.points[i + 1].x) / 2
-      const yc = (data.points[i].y + data.points[i + 1].y) / 2
-      ctx.quadraticCurveTo(data.points[i].x, data.points[i].y, xc, yc)
-    }
-    const lastPoint = data.points[data.points.length - 1]
-    ctx.lineTo(lastPoint.x, lastPoint.y)
+function onWindowPointerMove(e: PointerEvent) {
+  const td = tileData.value
+  if (!td) return
+  const [x, y] = getTile(e)
+  if (x >= 0 && y >= 0 && x < td.tileWidth && y < td.tileHeight) {
+    emit('hover-coords', { x, y })
   } else {
-    ctx.moveTo(data.points[0].x, data.points[0].y)
-    for (let i = 1; i < data.points.length; i++) {
-      ctx.lineTo(data.points[i].x, data.points[i].y)
-    }
-  }
-  
-  if (data.fillColor && data.fillColor !== 'transparent') {
-    ctx.fillStyle = data.fillColor
-    ctx.fill()
-  }
-  
-  ctx.stroke()
-  ctx.setLineDash([])
-  
-  if (data.arrow === 'start' || data.arrow === 'both') {
-    drawArrow(data.points[0], data.points[1], data.strokeColor)
-  }
-  if (data.arrow === 'end' || data.arrow === 'both') {
-    const len = data.points.length
-    drawArrow(data.points[len - 1], data.points[len - 2], data.strokeColor)
-  }
-  
-  if (isSelected) {
-    ctx.fillStyle = '#e94560'
-    for (const point of data.points) {
-      ctx.beginPath()
-      ctx.arc(point.x, point.y, 6 / zoom.value, 0, Math.PI * 2)
-      ctx.fill()
-    }
-  }
-}
-
-function drawArrow(point: Point, prevPoint: Point, color: string) {
-  if (!ctx) return
-  
-  const angle = Math.atan2(point.y - prevPoint.y, point.x - prevPoint.x)
-  const arrowSize = 10 / zoom.value
-  
-  ctx.save()
-  ctx.fillStyle = color
-  ctx.translate(point.x, point.y)
-  ctx.rotate(angle)
-  
-  ctx.beginPath()
-  ctx.moveTo(0, 0)
-  ctx.lineTo(-arrowSize, -arrowSize / 2)
-  ctx.lineTo(-arrowSize, arrowSize / 2)
-  ctx.closePath()
-  ctx.fill()
-  
-  ctx.restore()
-}
-
-function drawShape(data: ShapeData, width?: number, height?: number, isSelected?: boolean) {
-  if (!ctx) return
-  
-  ctx.fillStyle = data.fillColor
-  ctx.strokeStyle = data.strokeColor
-  ctx.lineWidth = data.strokeWidth
-  
-  const w = width || 100
-  const h = height || 100
-  
-  switch (data.shapeType) {
-    case 'rectangle':
-      ctx.fillRect(-w / 2, -h / 2, w, h)
-      ctx.strokeRect(-w / 2, -h / 2, w, h)
-      break
-    case 'circle':
-      ctx.beginPath()
-      ctx.arc(0, 0, Math.min(w, h) / 2, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.stroke()
-      break
-    case 'ellipse':
-      ctx.beginPath()
-      ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.stroke()
-      break
-    case 'polygon':
-      if (data.points && data.points.length >= 3) {
-        ctx.beginPath()
-        ctx.moveTo(data.points[0].x, data.points[0].y)
-        for (let i = 1; i < data.points.length; i++) {
-          ctx.lineTo(data.points[i].x, data.points[i].y)
-        }
-        ctx.closePath()
-        ctx.fill()
-        ctx.stroke()
-      }
-      break
-  }
-  
-  if (isSelected) {
-    ctx.strokeStyle = '#e94560'
-    ctx.lineWidth = 2 / zoom.value
-    ctx.setLineDash([5 / zoom.value, 5 / zoom.value])
-    ctx.strokeRect(-w / 2 - 5, -h / 2 - 5, w + 10, h + 10)
-    ctx.setLineDash([])
-  }
-}
-
-function drawText(data: any) {
-  if (!ctx) return
-  
-  ctx.font = `${data.italic ? 'italic ' : ''}${data.bold ? 'bold ' : ''}${data.fontSize}px ${data.fontFamily}`
-  ctx.fillStyle = data.color
-  ctx.textAlign = data.align
-  ctx.textBaseline = 'top'
-  ctx.fillText(data.content, 0, 0)
-}
-
-function drawImage(data: any) {
-}
-
-function drawCurrentPath() {
-  if (!ctx || currentPath.value.length < 2) return
-  
-  ctx.save()
-  ctx.strokeStyle = '#e94560'
-  ctx.lineWidth = 3
-  ctx.setLineDash([5, 5])
-  
-  ctx.beginPath()
-  ctx.moveTo(currentPath.value[0].x, currentPath.value[0].y)
-  for (let i = 1; i < currentPath.value.length; i++) {
-    ctx.lineTo(currentPath.value[i].x, currentPath.value[i].y)
-  }
-  ctx.stroke()
-  
-  ctx.restore()
-}
-
-function drawSelectionRect() {
-  if (!ctx || !selectionStart.value || !selectionEnd.value) return
-  
-  const x = Math.min(selectionStart.value.x, selectionEnd.value.x)
-  const y = Math.min(selectionStart.value.y, selectionEnd.value.y)
-  const w = Math.abs(selectionEnd.value.x - selectionStart.value.x)
-  const h = Math.abs(selectionEnd.value.y - selectionStart.value.y)
-  
-  ctx.save()
-  ctx.fillStyle = 'rgba(233, 69, 96, 0.1)'
-  ctx.fillRect(x, y, w, h)
-  ctx.strokeStyle = '#e94560'
-  ctx.lineWidth = 2 / zoom.value
-  ctx.setLineDash([6 / zoom.value, 4 / zoom.value])
-  ctx.strokeRect(x, y, w, h)
-  ctx.setLineDash([])
-  ctx.restore()
-}
-
-function drawFillPreview() {
-  if (!ctx || !fillStartPoint.value || !fillCurrentPoint.value) return
-  
-  const x = Math.min(fillStartPoint.value.x, fillCurrentPoint.value.x)
-  const y = Math.min(fillStartPoint.value.y, fillCurrentPoint.value.y)
-  const w = Math.abs(fillCurrentPoint.value.x - fillStartPoint.value.x)
-  const h = Math.abs(fillCurrentPoint.value.y - fillStartPoint.value.y)
-  
-  ctx.save()
-  ctx.fillStyle = 'rgba(99, 102, 241, 0.15)'
-  ctx.fillRect(x, y, w, h)
-  ctx.strokeStyle = '#6366f1'
-  ctx.lineWidth = 2 / zoom.value
-  ctx.setLineDash([8 / zoom.value, 4 / zoom.value])
-  ctx.strokeRect(x, y, w, h)
-  ctx.setLineDash([])
-  ctx.restore()
-}
-
-function drawResizeHandles(element: MapElement) {
-  if (!ctx) return
-
-  const bounds = getElementBounds(element)
-  const handleSize = 8 / zoom.value
-  
-  const handles: { type: ResizeHandleType; x: number; y: number }[] = [
-    { type: 'nw', x: bounds.x - 5, y: bounds.y - 5 },
-    { type: 'n', x: bounds.x + bounds.width / 2, y: bounds.y - 5 },
-    { type: 'ne', x: bounds.x + bounds.width + 5, y: bounds.y - 5 },
-    { type: 'w', x: bounds.x - 5, y: bounds.y + bounds.height / 2 },
-    { type: 'e', x: bounds.x + bounds.width + 5, y: bounds.y + bounds.height / 2 },
-    { type: 'sw', x: bounds.x - 5, y: bounds.y + bounds.height + 5 },
-    { type: 's', x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height + 5 },
-    { type: 'se', x: bounds.x + bounds.width + 5, y: bounds.y + bounds.height + 5 }
-  ]
-
-  ctx.fillStyle = '#ffffff'
-  ctx.strokeStyle = '#e94560'
-  ctx.lineWidth = 2 / zoom.value
-
-  for (const handle of handles) {
-    ctx.beginPath()
-    ctx.rect(handle.x - handleSize / 2, handle.y - handleSize / 2, handleSize, handleSize)
-    ctx.fill()
-    ctx.stroke()
-  }
-}
-
-function getElementBounds(element: MapElement): { x: number; y: number; width: number; height: number } {
-  let halfW = 25
-  let halfH = 25
-
-  if (element.type === 'marker') {
-    const size = (element.data as MarkerData).size
-    halfW = size / 2 + 5
-    halfH = size / 2 + 5
-  } else if (element.type === 'shape') {
-    halfW = (element.width || 100) / 2 + 5
-    halfH = (element.height || 100) / 2 + 5
-  } else if (element.type === 'text') {
-    halfW = 75
-    halfH = 15
+    emit('hover-coords', null)
   }
 
-  return {
-    x: element.x - halfW,
-    y: element.y - halfH,
-    width: halfW * 2,
-    height: halfH * 2
-  }
-}
-
-function screenToCanvas(screenX: number, screenY: number): Point {
-  if (!canvasRef.value) return { x: 0, y: 0 }
-  
-  const rect = canvasRef.value.getBoundingClientRect()
-  return {
-    x: (screenX - rect.left - panX.value) / zoom.value,
-    y: (screenY - rect.top - panY.value) / zoom.value
-  }
-}
-
-function findElementAt(point: Point): MapElement | null {
-  if (!props.map) return null
-  
-  for (let i = props.map.layers.length - 1; i >= 0; i--) {
-    const layer = props.map.layers[i]
-    if (!layer.visible || layer.locked) continue
-    
-    for (let j = layer.elements.length - 1; j >= 0; j--) {
-      const element = layer.elements[j]
-      if (isPointInElement(point, element)) {
-        return element
-      }
-    }
-  }
-  
-  return null
-}
-
-function isPointInElement(point: Point, element: MapElement): boolean {
-  if (element.type === 'path') {
-    const pathData = element.data as PathData
-    for (const p of pathData.points) {
-      const dist = Math.sqrt((point.x - p.x) ** 2 + (point.y - p.y) ** 2)
-      if (dist <= pathData.strokeWidth / 2 + 8) return true
-    }
-    return false
-  }
-
-  const dx = point.x - element.x
-  const dy = point.y - element.y
-  
-  if (element.type === 'shape') {
-    const w = (element.width || 100) / 2 + 5
-    const h = (element.height || 100) / 2 + 5
-    return Math.abs(dx) <= w && Math.abs(dy) <= h
-  }
-
-  const size = element.type === 'marker' ? (element.data as MarkerData).size : 50
-  
-  return Math.abs(dx) <= size / 2 + 10 && Math.abs(dy) <= size / 2 + 10
-}
-
-function findResizeHandleAt(point: Point, element: MapElement): ResizeHandleType | null {
-  const bounds = getElementBounds(element)
-  const handleSize = 12 / zoom.value
-  const tolerance = handleSize / 2
-
-  const handles: { type: ResizeHandleType; x: number; y: number }[] = [
-    { type: 'nw', x: bounds.x - 5, y: bounds.y - 5 },
-    { type: 'n', x: bounds.x + bounds.width / 2, y: bounds.y - 5 },
-    { type: 'ne', x: bounds.x + bounds.width + 5, y: bounds.y - 5 },
-    { type: 'w', x: bounds.x - 5, y: bounds.y + bounds.height / 2 },
-    { type: 'e', x: bounds.x + bounds.width + 5, y: bounds.y + bounds.height / 2 },
-    { type: 'sw', x: bounds.x - 5, y: bounds.y + bounds.height + 5 },
-    { type: 's', x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height + 5 },
-    { type: 'se', x: bounds.x + bounds.width + 5, y: bounds.y + bounds.height + 5 }
-  ]
-
-  for (const handle of handles) {
-    if (Math.abs(point.x - handle.x) <= tolerance && Math.abs(point.y - handle.y) <= tolerance) {
-      return handle.type
-    }
-  }
-
-  return null
-}
-
-function findElementsInRect(rect: SelectionRect): string[] {
-  if (!props.map) return []
-  
-  const ids: string[] = []
-  const minX = rect.x
-  const minY = rect.y
-  const maxX = rect.x + rect.width
-  const maxY = rect.y + rect.height
-  
-  for (const layer of props.map.layers) {
-    if (!layer.visible || layer.locked) continue
-    
-    for (const element of layer.elements) {
-      if (isElementInRect(element, minX, minY, maxX, maxY)) {
-        ids.push(element.id)
-      }
-    }
-  }
-  
-  return ids
-}
-
-function isElementInRect(element: MapElement, minX: number, minY: number, maxX: number, maxY: number): boolean {
-  if (element.type === 'path') {
-    const pathData = element.data as PathData
-    return pathData.points.some(p => p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY)
-  }
-
-  const elX = element.x
-  const elY = element.y
-  const halfW = (element.width || (element.type === 'marker' ? (element.data as MarkerData).size : 50)) / 2
-  const halfH = (element.height || (element.type === 'marker' ? (element.data as MarkerData).size : 50)) / 2
-
-  return (elX - halfW) >= minX && (elX + halfW) <= maxX &&
-         (elY - halfH) >= minY && (elY + halfH) <= maxY
-}
-
-function createBrushMarker(point: Point): Omit<MapElement, 'id'> | null {
-  if (!props.selectedAsset) return null
-
-  const config = props.brushConfig
-  const offsetX = config.randomness > 0 ? (Math.random() - 0.5) * config.randomness * 2 : 0
-  const offsetY = config.randomness > 0 ? (Math.random() - 0.5) * config.randomness * 2 : 0
-  const size = Math.round(32 * config.sizeScale)
-
-  return {
-    type: 'marker',
-    x: point.x + offsetX,
-    y: point.y + offsetY,
-    rotation: 0,
-    opacity: 1,
-    data: {
-      name: props.selectedAsset.name,
-      description: '',
-      icon: props.selectedAsset.icon,
-      color: props.selectedAsset.color,
-      size,
-      label: '',
-      labelVisible: false
-    }
-  }
-}
-
-function generateFillElements(startPoint: Point, endPoint: Point): Omit<MapElement, 'id'>[] {
-  if (!props.selectedAsset) return []
-
-  const config = props.fillConfig
-  const x = Math.min(startPoint.x, endPoint.x)
-  const y = Math.min(startPoint.y, endPoint.y)
-  const w = Math.abs(endPoint.x - startPoint.x)
-  const h = Math.abs(endPoint.y - startPoint.y)
-
-  if (w < 20 || h < 20) return []
-
-  const elements: Omit<MapElement, 'id'>[] = []
-  const markerSize = Math.round(24 * config.sizeScale)
-  const spacing = Math.max(markerSize * 1.5, 30) / config.density
-
-  for (let px = x + spacing / 2; px < x + w; px += spacing) {
-    for (let py = y + spacing / 2; py < y + h; py += spacing) {
-      const offsetX = config.randomness > 0 ? (Math.random() - 0.5) * config.randomness * spacing * 0.5 : 0
-      const offsetY = config.randomness > 0 ? (Math.random() - 0.5) * config.randomness * spacing * 0.5 : 0
-
-      elements.push({
-        type: 'marker',
-        x: px + offsetX,
-        y: py + offsetY,
-        rotation: 0,
-        opacity: 0.7 + Math.random() * 0.3,
-        data: {
-          name: props.selectedAsset.name,
-          description: '',
-          icon: props.selectedAsset.icon,
-          color: props.selectedAsset.color,
-          size: markerSize,
-          label: '',
-          labelVisible: false
-        }
-      })
-    }
-  }
-
-  return elements
-}
-
-function onMouseDown(e: MouseEvent) {
-  showContextMenu.value = false
-  const point = screenToCanvas(e.clientX, e.clientY)
-  
-  if (props.tool === 'pan' || e.button === 1) {
-    isPanning.value = true
-    lastPanPoint.value = { x: e.clientX, y: e.clientY }
+  /* 视口滚动平移 */
+  if (panning.value && panStart) {
+    viewportRef.value!.scrollLeft = panStart.sx - (e.clientX - panStart.x)
+    viewportRef.value!.scrollTop = panStart.sy - (e.clientY - panStart.y)
     return
   }
-  
-  if (props.tool === 'select') {
-    if (props.selectedElementIds.length === 1) {
-      const element = findElementById(props.selectedElementIds[0])
-      if (element) {
-        const handle = findResizeHandleAt(point, element)
-        if (handle) {
-          isResizing.value = true
-          resizeHandle.value = handle
-          resizeElement.value = element
-          resizeStartPoint.value = point
-          resizeStartState.value = {
-            x: element.x,
-            y: element.y,
-            width: element.width,
-            height: element.height,
-            markerSize: element.type === 'marker' ? (element.data as MarkerData).size : undefined
-          }
-          return
-        }
-      }
-    }
 
-    const element = findElementAt(point)
-    if (element) {
-      if (!props.selectedElementIds.includes(element.id)) {
-        emit('select-element', element.id, e.shiftKey)
-      }
+  if (!drawing.value) return
 
-      dragStartPoint.value = point
-      isDragging.value = false
-      dragElements.value = {}
-      for (const id of props.selectedElementIds) {
-        const el = findElementById(id)
-        if (el) {
-          dragElements.value[id] = { startX: el.x, startY: el.y }
-        }
+  if (props.tool === 'tile-brush' || props.tool === 'tile-eraser') {
+    /* Bresenham 插值连线，避免快速移动留空 */
+    if (lastTile.value) {
+      const pts = shapePoints('line', lastTile.value[0], lastTile.value[1], x, y)
+      for (const [px, py] of pts) {
+        if (px >= 0 && py >= 0 && px < td.tileWidth && py < td.tileHeight) paintAt(px, py)
       }
     } else {
-      emit('select-element', '', false)
-      isSelecting.value = true
-      selectionStart.value = point
-      selectionEnd.value = point
+      paintAt(x, y)
     }
-    return
-  }
-  
-  if (props.tool === 'marker' && props.selectedAsset) {
-    emit('add-element', {
-      type: 'marker',
-      x: point.x,
-      y: point.y,
-      rotation: 0,
-      opacity: 1,
-      data: {
-        name: props.selectedAsset.name,
-        description: '',
-        icon: props.selectedAsset.icon,
-        color: props.selectedAsset.color,
-        size: 32,
-        label: props.selectedAsset.name,
-        labelVisible: true
-      }
-    })
-    return
-  }
-
-  if (props.tool === 'brush' && props.selectedAsset) {
-    isBrushDrawing.value = true
-    brushLastPoint.value = point
-    brushPendingElements.value = []
-    const marker = createBrushMarker(point)
-    if (marker) {
-      brushPendingElements.value.push(marker)
-    }
-    render()
-    return
-  }
-
-  if (props.tool === 'fill' && props.selectedAsset) {
-    isFillDrawing.value = true
-    fillStartPoint.value = point
-    fillCurrentPoint.value = point
-    render()
-    return
-  }
-  
-  if (props.tool === 'path') {
-    isDrawing.value = true
-    currentPath.value = [point]
-    return
-  }
-  
-  if (props.tool === 'shape') {
-    isFillDrawing.value = true
-    fillStartPoint.value = point
-    fillCurrentPoint.value = point
-    render()
-    return
-  }
-  
-  if (props.tool === 'text') {
-    emit('add-element', {
-      type: 'text',
-      x: point.x,
-      y: point.y,
-      rotation: 0,
-      opacity: 1,
-      data: {
-        content: '双击编辑文字',
-        fontSize: 16,
-        fontFamily: 'Arial',
-        color: '#333333',
-        bold: false,
-        italic: false,
-        align: 'left'
-      }
-    })
-    return
-  }
-  
-  if (props.tool === 'eraser') {
-    const element = findElementAt(point)
-    if (element) {
-      emit('delete-elements', [element.id])
-    }
-    return
+    lastTile.value = [x, y]
+    renderMap(); renderOverlay()
+  } else if (preview.value) {
+    preview.value.x1 = x
+    preview.value.y1 = y
+    renderOverlay()
   }
 }
 
-function onMouseMove(e: MouseEvent) {
-  if (isPanning.value && lastPanPoint.value) {
-    panX.value += e.clientX - lastPanPoint.value.x
-    panY.value += e.clientY - lastPanPoint.value.y
-    lastPanPoint.value = { x: e.clientX, y: e.clientY }
-    render()
+function onWindowPointerUp() {
+  if (panning.value) {
+    panning.value = false
+    panStart = null
     return
   }
+  if (!drawing.value) return
+  drawing.value = false
 
-  if (isResizing.value && resizeElement.value && resizeStartPoint.value && resizeStartState.value) {
-    const point = screenToCanvas(e.clientX, e.clientY)
-    const dx = point.x - resizeStartPoint.value.x
-    const dy = point.y - resizeStartPoint.value.y
-    const handle = resizeHandle.value
-
-    let newX = resizeStartState.value.x
-    let newY = resizeStartState.value.y
-    let newWidth = resizeStartState.value.width
-    let newHeight = resizeStartState.value.height
-    let newMarkerSize = resizeStartState.value.markerSize
-
-    if (resizeElement.value.type === 'marker' && newMarkerSize !== undefined) {
-      const scale = Math.max(0.3, 1 + (dx + dy) / 100)
-      newMarkerSize = Math.round(newMarkerSize * scale)
-      emit('update-element', resizeElement.value.id, {
-        data: { ...resizeElement.value.data, size: newMarkerSize }
-      }, true)
-    } else if (resizeElement.value.type === 'shape' || resizeElement.value.type === 'text') {
-      const updates: Partial<MapElement> = {}
-
-      if (handle?.includes('e') && newWidth !== undefined) {
-        newWidth = Math.max(20, newWidth + dx)
-        updates.width = newWidth
-      }
-      if (handle?.includes('w') && newWidth !== undefined) {
-        newWidth = Math.max(20, newWidth - dx)
-        newX = resizeStartState.value.x + dx
-        updates.x = newX
-        updates.width = newWidth
-      }
-      if (handle?.includes('s') && newHeight !== undefined) {
-        newHeight = Math.max(20, newHeight + dy)
-        updates.height = newHeight
-      }
-      if (handle?.includes('n') && newHeight !== undefined) {
-        newHeight = Math.max(20, newHeight - dy)
-        newY = resizeStartState.value.y + dy
-        updates.y = newY
-        updates.height = newHeight
-      }
-
-      if (Object.keys(updates).length > 0) {
-        emit('update-element', resizeElement.value.id, updates, true)
-      }
-    }
-
-    render()
-    return
+  if (preview.value) {
+    const p = preview.value
+    applyShapePoints(shapePoints(p.tool, p.x0, p.y0, p.x1, p.y1), props.currentTile)
+    preview.value = null
+    renderMap(); renderOverlay()
+    emit('commit-tile-history')
+  } else if (props.tool === 'tile-brush' || props.tool === 'tile-eraser') {
+    emit('commit-tile-history')
   }
-  
-  if (isDrawing.value && props.tool === 'path') {
-    const point = screenToCanvas(e.clientX, e.clientY)
-    currentPath.value.push(point)
-    render()
-    return
-  }
-
-  if (isBrushDrawing.value && props.tool === 'brush' && brushLastPoint.value) {
-    const point = screenToCanvas(e.clientX, e.clientY)
-    const config = props.brushConfig
-    const spacing = Math.max(config.spacing, 10)
-
-    const dx = point.x - brushLastPoint.value.x
-    const dy = point.y - brushLastPoint.value.y
-    const dist = Math.sqrt(dx * dx + dy * dy)
-
-    if (dist >= spacing) {
-      const steps = Math.floor(dist / spacing)
-      for (let i = 1; i <= steps; i++) {
-        const t = i / steps
-        const ix = brushLastPoint.value.x + dx * t
-        const iy = brushLastPoint.value.y + dy * t
-        const marker = createBrushMarker({ x: ix, y: iy })
-        if (marker) {
-          brushPendingElements.value.push(marker)
-        }
-      }
-      brushLastPoint.value = point
-      render()
-    }
-    return
-  }
-
-  if (isFillDrawing.value && (props.tool === 'fill' || props.tool === 'shape') && fillStartPoint.value) {
-    fillCurrentPoint.value = screenToCanvas(e.clientX, e.clientY)
-    render()
-    return
-  }
-
-  if (isSelecting.value && selectionStart.value) {
-    selectionEnd.value = screenToCanvas(e.clientX, e.clientY)
-    render()
-    return
-  }
-  
-  if (dragStartPoint.value && props.selectedElementIds.length > 0) {
-    const point = screenToCanvas(e.clientX, e.clientY)
-    const dx = point.x - dragStartPoint.value.x
-    const dy = point.y - dragStartPoint.value.y
-
-    if (!isDragging.value && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) {
-      isDragging.value = true
-    }
-
-    if (isDragging.value && props.map) {
-      const updates: Record<string, Partial<MapElement>> = {}
-      for (const layer of props.map.layers) {
-        for (const element of layer.elements) {
-          if (props.selectedElementIds.includes(element.id)) {
-            const start = dragElements.value[element.id]
-            if (start) {
-              updates[element.id] = {
-                x: start.startX + dx,
-                y: start.startY + dy
-              }
-            }
-          }
-        }
-      }
-      
-      for (const [id, update] of Object.entries(updates)) {
-        emit('update-element', id, update, true)
-      }
-    }
-    render()
-  }
+  lastTile.value = null
 }
 
-function onMouseUp(e: MouseEvent) {
-  if (isPanning.value) {
-    isPanning.value = false
-    lastPanPoint.value = null
-    return
-  }
-
-  if (isResizing.value) {
-    isResizing.value = false
-    resizeHandle.value = null
-    resizeElement.value = null
-    resizeStartPoint.value = null
-    resizeStartState.value = null
-    return
-  }
-  
-  if (isDrawing.value && props.tool === 'path' && currentPath.value.length > 1) {
-    emit('add-element', {
-      type: 'path',
-      x: 0,
-      y: 0,
-      rotation: 0,
-      opacity: 1,
-      data: {
-        points: currentPath.value,
-        strokeColor: '#333333',
-        strokeWidth: 3,
-        strokeDash: [],
-        fillColor: 'transparent',
-        arrow: 'none',
-        smooth: false
-      }
-    })
-    currentPath.value = []
-    isDrawing.value = false
-    return
-  }
-
-  if (isBrushDrawing.value && props.tool === 'brush') {
-    if (brushPendingElements.value.length > 0) {
-      emit('add-elements', brushPendingElements.value)
-    }
-    isBrushDrawing.value = false
-    brushLastPoint.value = null
-    brushPendingElements.value = []
-    render()
-    return
-  }
-
-  if (isFillDrawing.value && props.tool === 'fill' && fillStartPoint.value && fillCurrentPoint.value) {
-    const elements = generateFillElements(fillStartPoint.value, fillCurrentPoint.value)
-    if (elements.length > 0) {
-      emit('add-elements', elements)
-    }
-    isFillDrawing.value = false
-    fillStartPoint.value = null
-    fillCurrentPoint.value = null
-    render()
-    return
-  }
-
-  if (isFillDrawing.value && props.tool === 'shape' && fillStartPoint.value && fillCurrentPoint.value) {
-    const x = (fillStartPoint.value.x + fillCurrentPoint.value.x) / 2
-    const y = (fillStartPoint.value.y + fillCurrentPoint.value.y) / 2
-    const w = Math.abs(fillCurrentPoint.value.x - fillStartPoint.value.x)
-    const h = Math.abs(fillCurrentPoint.value.y - fillStartPoint.value.y)
-
-    if (w > 5 && h > 5) {
-      emit('add-element', {
-        type: 'shape',
-        x,
-        y,
-        width: w,
-        height: h,
-        rotation: 0,
-        opacity: 1,
-        data: {
-          shapeType: 'rectangle',
-          strokeColor: '#333333',
-          strokeWidth: 2,
-          fillColor: '#cccccc'
-        }
-      })
-    }
-    isFillDrawing.value = false
-    fillStartPoint.value = null
-    fillCurrentPoint.value = null
-    render()
-    return
-  }
-
-  if (isSelecting.value && selectionStart.value && selectionEnd.value) {
-    const x = Math.min(selectionStart.value.x, selectionEnd.value.x)
-    const y = Math.min(selectionStart.value.y, selectionEnd.value.y)
-    const w = Math.abs(selectionEnd.value.x - selectionStart.value.x)
-    const h = Math.abs(selectionEnd.value.y - selectionStart.value.y)
-
-    if (w > 5 && h > 5) {
-      const ids = findElementsInRect({ x, y, width: w, height: h })
-      for (const id of ids) {
-        if (!props.selectedElementIds.includes(id)) {
-          emit('select-element', id, true)
-        }
-      }
-    }
-
-    isSelecting.value = false
-    selectionStart.value = null
-    selectionEnd.value = null
-    render()
-    return
-  }
-
-  if (isDragging.value && dragStartPoint.value && props.map) {
-    const point = screenToCanvas(e.clientX, e.clientY)
-    const dx = point.x - dragStartPoint.value.x
-    const dy = point.y - dragStartPoint.value.y
-
-    const updates: Record<string, Partial<MapElement>> = {}
-    for (const id of props.selectedElementIds) {
-      const start = dragElements.value[id]
-      if (start) {
-        updates[id] = {
-          x: start.startX + dx,
-          y: start.startY + dy
-        }
-      }
-    }
-    emit('commit-drag', updates)
-  }
-
-  dragStartPoint.value = null
-  dragElements.value = {}
-  isDragging.value = false
-}
-
+/* 右键擦除 */
 function onContextMenu(e: MouseEvent) {
-  const point = screenToCanvas(e.clientX, e.clientY)
-  
-  if (props.selectedElementIds.length === 0) {
-    const element = findElementAt(point)
-    if (element) {
-      emit('select-element', element.id, false)
-    }
-  }
-
-  if (props.selectedElementIds.length > 0) {
-    contextMenuPos.value = { x: e.clientX, y: e.clientY }
-    showContextMenu.value = true
-  }
-}
-
-function copySelected() {
-  clipboard.value = []
-  for (const id of props.selectedElementIds) {
-    const element = findElementById(id)
-    if (element) {
-      const copy: Omit<MapElement, 'id'> = {
-        type: element.type,
-        x: element.x + 20,
-        y: element.y + 20,
-        rotation: element.rotation,
-        opacity: element.opacity,
-        data: JSON.parse(JSON.stringify(element.data))
-      }
-      if (element.width !== undefined) copy.width = element.width
-      if (element.height !== undefined) copy.height = element.height
-      clipboard.value.push(copy)
-    }
-  }
-  showContextMenu.value = false
-}
-
-function pasteElements() {
-  if (clipboard.value.length > 0) {
-    emit('add-elements', clipboard.value)
-  }
-  showContextMenu.value = false
-}
-
-function deleteSelected() {
-  if (props.selectedElementIds.length > 0) {
-    emit('delete-elements', props.selectedElementIds)
-  }
-  showContextMenu.value = false
-}
-
-function selectAllElements() {
-  if (props.map) {
-    const allIds: string[] = []
-    for (const layer of props.map.layers) {
-      if (!layer.locked) {
-        for (const el of layer.elements) {
-          allIds.push(el.id)
-        }
-      }
-    }
-    for (const id of allIds) {
-      emit('select-element', id, true)
-    }
-  }
-  showContextMenu.value = false
-}
-
-function findElementById(id: string): MapElement | null {
-  if (!props.map) return null
-  for (const layer of props.map.layers) {
-    const el = layer.elements.find(e => e.id === id)
-    if (el) return el
-  }
-  return null
-}
-
-function resetView() {
-  if (!props.map || !canvasRef.value) return
-  
-  zoom.value = 1
-  panX.value = (canvasRef.value.width - props.map.width) / 2
-  panY.value = (canvasRef.value.height - props.map.height) / 2
-  render()
-}
-
-function onWheel(e: WheelEvent) {
   e.preventDefault()
-  
-  const delta = e.deltaY > 0 ? 0.9 : 1.1
-  const newZoom = Math.max(0.1, Math.min(5, zoom.value * delta))
-  
-  if (canvasRef.value) {
-    const rect = canvasRef.value.getBoundingClientRect()
-    const mouseX = e.clientX - rect.left
-    const mouseY = e.clientY - rect.top
-    
-    panX.value = mouseX - (mouseX - panX.value) * (newZoom / zoom.value)
-    panY.value = mouseY - (mouseY - panY.value) * (newZoom / zoom.value)
-  }
-  
-  zoom.value = newZoom
-  render()
+  const td = tileData.value
+  if (!td) return
+  const [x, y] = getTile(e)
+  if (x < 0 || y < 0 || x >= td.tileWidth || y >= td.tileHeight) return
+  paintAt(x, y, getBgTileId())
+  renderMap()
+  emit('commit-tile-history')
 }
 
-function handleDocumentClick(e: MouseEvent) {
-  if (showContextMenu.value) {
-    const wrapper = wrapperRef.value
-    if (wrapper && !wrapper.contains(e.target as Node)) {
-      showContextMenu.value = false
-    }
+/* ===== 键盘（空格平移） ===== */
+function onKeyDown(e: KeyboardEvent) {
+  if (e.target instanceof HTMLElement && ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return
+  if (e.code === 'Space') {
+    spaceDown.value = true
+    e.preventDefault()
   }
 }
-
-function handleKeydown(e: KeyboardEvent) {
-  if (e.ctrlKey || e.metaKey) {
-    switch (e.key.toLowerCase()) {
-      case 'c':
-        e.preventDefault()
-        copySelected()
-        break
-      case 'v':
-        e.preventDefault()
-        pasteElements()
-        break
-      case 'a':
-        e.preventDefault()
-        selectAllElements()
-        break
-    }
-  } else {
-    if (e.key === 'Delete' || e.key === 'Backspace') {
-      e.preventDefault()
-      deleteSelected()
-    }
-  }
+function onKeyUp(e: KeyboardEvent) {
+  if (e.code === 'Space') spaceDown.value = false
 }
 
-watch(() => props.map, () => {
-  nextTick(() => {
-    render()
-  })
-}, { deep: true })
+/* ===== 缩放 ===== */
+function setZoom(ts: number) {
+  tileSize.value = ts
+  setupCanvas()
+  renderAll()
+  emit('update:zoom', Math.round((ts / BASE_TILE) * 100))
+}
+function zoomIn() {
+  const i = ZOOM_STEPS.indexOf(tileSize.value)
+  const ni = Math.min(ZOOM_STEPS.length - 1, (i < 0 ? 4 : i) + 1)
+  setZoom(ZOOM_STEPS[ni])
+}
+function zoomOut() {
+  const i = ZOOM_STEPS.indexOf(tileSize.value)
+  const ni = Math.max(0, (i < 0 ? 4 : i) - 1)
+  setZoom(ZOOM_STEPS[ni])
+}
+function fitZoom() {
+  const td = tileData.value
+  if (!td || !viewportRef.value) return
+  const vw = viewportRef.value.clientWidth - 40
+  const vh = viewportRef.value.clientHeight - 40
+  let best = ZOOM_STEPS[0]
+  for (const ts of ZOOM_STEPS) {
+    if (td.tileWidth * ts <= vw && td.tileHeight * ts <= vh) best = ts
+  }
+  setZoom(best)
+}
 
-watch(() => props.selectedElementIds, () => {
-  render()
-}, { deep: true })
+/* ===== 监听 ===== */
+watch(() => props.map?.id, () => {
+  nextTick(() => { setupCanvas(); renderAll(); fitZoom() })
+})
+watch(() => [tileData.value?.tileWidth, tileData.value?.tileHeight, tileData.value?.tileSetId], () => {
+  nextTick(() => { setupCanvas(); renderAll() })
+})
+watch(() => props.showGrid, () => renderGrid())
+watch(() => props.showContour, () => renderMap())
+watch(() => props.layerVisible, () => renderAll(), { deep: true })
+watch(() => props.currentTile, () => { if (preview.value) renderOverlay() })
 
 onMounted(() => {
-  initCanvas()
-  window.addEventListener('resize', initCanvas)
-  document.addEventListener('click', handleDocumentClick)
-  window.addEventListener('keydown', handleKeydown)
+  mapCtx = mapCanvasRef.value?.getContext('2d') ?? null
+  gridCtx = gridCanvasRef.value?.getContext('2d') ?? null
+  overlayCtx = overlayCanvasRef.value?.getContext('2d') ?? null
+
+  window.addEventListener('pointermove', onWindowPointerMove)
+  window.addEventListener('pointerup', onWindowPointerUp)
+  window.addEventListener('keydown', onKeyDown)
+  window.addEventListener('keyup', onKeyUp)
+
+  nextTick(() => { setupCanvas(); renderAll(); fitZoom() })
 })
 
 onUnmounted(() => {
-  window.removeEventListener('resize', initCanvas)
-  document.removeEventListener('click', handleDocumentClick)
-  window.removeEventListener('keydown', handleKeydown)
+  window.removeEventListener('pointermove', onWindowPointerMove)
+  window.removeEventListener('pointerup', onWindowPointerUp)
+  window.removeEventListener('keydown', onKeyDown)
+  window.removeEventListener('keyup', onKeyUp)
 })
 
+/* ===== 对外接口 ===== */
+function setPendingTileLabel(text: string) {
+  pendingLabel.value = text
+}
+
+/* 合成三层画布用于导出 */
+function getCompositeCanvas(): HTMLCanvasElement | null {
+  const mapC = mapCanvasRef.value
+  const gridC = gridCanvasRef.value
+  const overlayC = overlayCanvasRef.value
+  if (!mapC) return null
+  const out = document.createElement('canvas')
+  out.width = mapC.width
+  out.height = mapC.height
+  const ctx = out.getContext('2d')!
+  ctx.drawImage(mapC, 0, 0)
+  if (props.showGrid && props.layerVisible.grid && gridC) ctx.drawImage(gridC, 0, 0)
+  if (props.layerVisible.label && overlayC) ctx.drawImage(overlayC, 0, 0)
+  return out
+}
+
 defineExpose({
-  resetView,
-  render
+  setZoom,
+  zoomIn,
+  zoomOut,
+  fitZoom,
+  renderAll,
+  setPendingTileLabel,
+  getCompositeCanvas
 })
 </script>
 
 <style scoped>
-.map-canvas-wrapper {
+.canvas-viewport {
   width: 100%;
   height: 100%;
+  overflow: auto;
   position: relative;
-  overflow: hidden;
-}
-
-canvas {
-  display: block;
-  cursor: crosshair;
-}
-
-.empty-state {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-}
-
-.context-menu {
-  position: fixed;
-  background: #16213e;
-  border: 1px solid #0f3460;
-  border-radius: 6px;
-  padding: 5px 0;
-  z-index: 1000;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  min-width: 140px;
-}
-
-.menu-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  color: #e0e0e0;
-  font-size: 13px;
-  cursor: pointer;
-  transition: background 0.15s;
+  justify-content: center;
+  padding: 20px;
+  background:
+    linear-gradient(45deg, #e8ebf0 25%, transparent 25%),
+    linear-gradient(-45deg, #e8ebf0 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #e8ebf0 75%),
+    linear-gradient(-45deg, transparent 75%, #e8ebf0 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-color: #dde1e8;
 }
+.canvas-viewport::-webkit-scrollbar { width: 10px; height: 10px; }
+.canvas-viewport::-webkit-scrollbar-track { background: rgba(0,0,0,0.05); }
+.canvas-viewport::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 5px; }
 
-.menu-item:hover {
-  background: #0f3460;
-  color: #ffffff;
+.canvas-wrap {
+  position: relative;
+  flex-shrink: 0;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.18), 0 0 0 1px rgba(0,0,0,0.1);
+  background: #fff;
 }
-
-.menu-item .el-icon {
-  font-size: 14px;
-}
+.layer { position: absolute; top: 0; left: 0; image-rendering: pixelated; }
+.layer:first-child { position: relative; }
+.overlay-interactive { cursor: crosshair; }
+.canvas-wrap.panning .overlay-interactive { cursor: grabbing; }
+.canvas-wrap.pan-mode .overlay-interactive { cursor: grab; }
 </style>

@@ -33,6 +33,7 @@
           <div class="map-name">{{ map.name }}</div>
           <div class="map-meta">
             <span class="map-type">{{ getTypeName(map.type) }}</span>
+            <span class="map-style">{{ getStyleIcon(map.style) }} {{ getStyleName(map.style) }}</span>
             <span class="map-date">{{ formatDate(map.updatedAt) }}</span>
           </div>
         </div>
@@ -98,11 +99,38 @@
         <el-form-item label="背景颜色">
           <el-color-picker v-model="newMapForm.backgroundColor" />
         </el-form-item>
+        <el-form-item label="地图风格">
+          <div class="style-grid">
+            <div
+              v-for="style in MAP_STYLES"
+              :key="style.id"
+              class="style-card"
+              :class="{ active: newMapForm.style === style.id }"
+              @click="selectStyle(style.id)"
+            >
+              <span class="style-icon">{{ style.icon }}</span>
+              <span class="style-name">{{ style.name }}</span>
+            </div>
+          </div>
+        </el-form-item>
         <el-form-item label="显示网格">
           <el-switch v-model="newMapForm.gridVisible" />
         </el-form-item>
+        <el-form-item label="网格类型" v-if="newMapForm.gridVisible">
+          <el-select v-model="newMapForm.gridType" style="width: 100%">
+            <el-option v-for="gt in GRID_TYPES" :key="gt.id" :label="gt.name" :value="gt.id">
+              <span>{{ gt.icon }} {{ gt.name }}</span>
+            </el-option>
+          </el-select>
+        </el-form-item>
         <el-form-item label="网格大小">
           <el-input-number v-model="newMapForm.gridSize" :min="10" :max="200" :step="10" />
+        </el-form-item>
+        <el-form-item label="网格颜色" v-if="newMapForm.gridVisible && newMapForm.gridType !== 'none'">
+          <el-color-picker v-model="newMapForm.gridColor" />
+        </el-form-item>
+        <el-form-item label="网格透明度" v-if="newMapForm.gridVisible && newMapForm.gridType !== 'none'">
+          <el-slider v-model="newMapForm.gridOpacity" :min="0" :max="1" :step="0.05" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -118,7 +146,8 @@ import { ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, MoreFilled, CopyDocument, Download, Delete } from '@element-plus/icons-vue'
 import { useMapStore } from '@/stores/map'
-import type { NovelMap } from '@/types/map'
+import type { NovelMap, MapStyle, GridType } from '@/types/map'
+import { MAP_STYLES, GRID_TYPES } from '@/types/map'
 
 const mapStore = useMapStore()
 
@@ -127,11 +156,15 @@ const showCreateDialog = ref(false)
 const newMapForm = ref({
   name: '',
   type: 'world' as NovelMap['type'],
+  style: 'fantasy' as MapStyle,
   width: 2000,
   height: 2000,
   backgroundColor: '#f5f5dc',
   gridVisible: true,
-  gridSize: 50
+  gridType: 'square' as GridType,
+  gridSize: 50,
+  gridColor: '#a08050',
+  gridOpacity: 0.3
 })
 
 const currentMapId = computed(() => mapStore.currentMapId)
@@ -167,6 +200,26 @@ function getTypeName(type: NovelMap['type']): string {
   return names[type] || '未知'
 }
 
+function selectStyle(styleId: MapStyle) {
+  newMapForm.value.style = styleId
+  const preset = MAP_STYLES.find(s => s.id === styleId)
+  if (preset) {
+    newMapForm.value.backgroundColor = preset.backgroundColor
+    newMapForm.value.gridColor = preset.gridColor
+    newMapForm.value.gridOpacity = preset.gridOpacity
+  }
+}
+
+function getStyleIcon(style: MapStyle): string {
+  const preset = MAP_STYLES.find(s => s.id === style)
+  return preset?.icon || '🗺️'
+}
+
+function getStyleName(style: MapStyle): string {
+  const preset = MAP_STYLES.find(s => s.id === style)
+  return preset?.name || '未知'
+}
+
 function formatDate(timestamp: number): string {
   const date = new Date(timestamp)
   return date.toLocaleDateString('zh-CN', {
@@ -185,11 +238,15 @@ function createNewMap() {
   newMapForm.value = {
     name: '',
     type: 'world',
+    style: 'fantasy',
     width: 2000,
     height: 2000,
     backgroundColor: '#f5f5dc',
     gridVisible: true,
-    gridSize: 50
+    gridType: 'square',
+    gridSize: 50,
+    gridColor: '#a08050',
+    gridOpacity: 0.3
   }
   showCreateDialog.value = true
 }
@@ -348,5 +405,52 @@ async function handleCommand(command: string, mapId: string) {
 
 :deep(.el-input__inner::placeholder) {
   color: #606060;
+}
+
+.style-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  width: 100%;
+}
+
+.style-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 5px;
+  background: #16213e;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.style-card:hover {
+  background: #1f2b47;
+}
+
+.style-card.active {
+  border-color: #e94560;
+  background: #1f2b47;
+}
+
+.style-icon {
+  font-size: 20px;
+  margin-bottom: 4px;
+}
+
+.style-name {
+  font-size: 11px;
+  color: #a0a0a0;
+  text-align: center;
+}
+
+.style-card.active .style-name {
+  color: #e0e0e0;
+}
+
+.map-style {
+  color: #a0a0a0;
 }
 </style>

@@ -1,245 +1,165 @@
 <template>
-  <div class="map-toolbar">
-    <div class="tool-group">
-      <el-tooltip content="选择 (V)" placement="bottom">
-        <el-button :type="tool === 'select' ? 'primary' : 'default'" @click="$emit('update:tool', 'select')">
-          <el-icon><Pointer /></el-icon>
-        </el-button>
-      </el-tooltip>
-      <el-tooltip content="平移 (H)" placement="bottom">
-        <el-button :type="tool === 'pan' ? 'primary' : 'default'" @click="$emit('update:tool', 'pan')">
-          <el-icon><Rank /></el-icon>
-        </el-button>
-      </el-tooltip>
-      <el-tooltip content="标记 (M)" placement="bottom">
-        <el-button :type="tool === 'marker' ? 'primary' : 'default'" @click="$emit('update:tool', 'marker')">
-          <el-icon><Location /></el-icon>
-        </el-button>
-      </el-tooltip>
-      <el-tooltip content="路径 (P)" placement="bottom">
-        <el-button :type="tool === 'path' ? 'primary' : 'default'" @click="$emit('update:tool', 'path')">
-          <el-icon><Connection /></el-icon>
-        </el-button>
-      </el-tooltip>
-      <el-tooltip content="形状 (S)" placement="bottom">
-        <el-button :type="tool === 'shape' ? 'primary' : 'default'" @click="$emit('update:tool', 'shape')">
-          <el-icon><Grid /></el-icon>
-        </el-button>
-      </el-tooltip>
-      <el-tooltip content="文字 (T)" placement="bottom">
-        <el-button :type="tool === 'text' ? 'primary' : 'default'" @click="$emit('update:tool', 'text')">
-          <el-icon><EditPen /></el-icon>
-        </el-button>
-      </el-tooltip>
-      <el-tooltip content="橡皮擦 (E)" placement="bottom">
-        <el-button :type="tool === 'eraser' ? 'primary' : 'default'" @click="$emit('update:tool', 'eraser')">
-          <el-icon><Delete /></el-icon>
-        </el-button>
-      </el-tooltip>
-      <el-tooltip content="笔刷 (B)" placement="bottom">
-        <el-button :type="tool === 'brush' ? 'primary' : 'default'" @click="$emit('update:tool', 'brush')">
-          <el-icon><Brush /></el-icon>
-        </el-button>
-      </el-tooltip>
-      <el-tooltip content="填充 (F)" placement="bottom">
-        <el-button :type="tool === 'fill' ? 'primary' : 'default'" @click="$emit('update:tool', 'fill')">
-          <el-icon><Pouring /></el-icon>
-        </el-button>
-      </el-tooltip>
+  <div class="topbar">
+    <div class="brand">
+      <span class="logo">◈</span>
+      <span class="title">地图工坊</span>
+      <span class="subtitle">Map Editor</span>
     </div>
 
-    <el-divider direction="vertical" />
-
-    <div class="tool-group">
-      <el-tooltip content="撤销 (Ctrl+Z)" placement="bottom">
-        <el-button :disabled="!canUndo" @click="$emit('undo')">
-          <el-icon><RefreshLeft /></el-icon>
-        </el-button>
-      </el-tooltip>
-      <el-tooltip content="重做 (Ctrl+Y)" placement="bottom">
-        <el-button :disabled="!canRedo" @click="$emit('redo')">
-          <el-icon><RefreshRight /></el-icon>
-        </el-button>
-      </el-tooltip>
+    <div class="top-group">
+      <label class="field">
+        <span class="field-label">风格</span>
+        <select :value="tileSetId" @change="$emit('update:tile-set-id', ($event.target as HTMLSelectElement).value)">
+          <option v-for="ts in tileSetList" :key="ts.id" :value="ts.id">{{ ts.name }}</option>
+        </select>
+      </label>
+      <label class="field">
+        <span class="field-label">尺寸</span>
+        <select :value="mapSize" @change="$emit('update:map-size', +($event.target as HTMLSelectElement).value)">
+          <option v-for="s in TILE_SIZES" :key="s.value" :value="s.value">{{ s.label }}</option>
+        </select>
+      </label>
     </div>
 
-    <el-divider direction="vertical" />
-
-    <div class="tool-group">
-      <el-tooltip content="AI 生成" placement="bottom">
-        <el-button type="success" @click="$emit('generate')">
-          <el-icon><MagicStick /></el-icon>
-          AI 生成
-        </el-button>
-      </el-tooltip>
+    <div class="top-group">
+      <button class="btn" title="随机生成地图 (G)" @click="$emit('generate')">
+        <span class="ic">✨</span> 随机生成
+      </button>
+      <button class="btn ghost" title="清空画布" @click="$emit('clear')">
+        <span class="ic">🗑</span> 清空
+      </button>
     </div>
 
-    <div class="toolbar-spacer"></div>
+    <div class="top-group">
+      <button class="btn ghost" :disabled="!canUndo" title="撤销 (Ctrl+Z)" @click="$emit('undo')">↶</button>
+      <button class="btn ghost" :disabled="!canRedo" title="重做 (Ctrl+Y)" @click="$emit('redo')">↷</button>
+    </div>
 
-    <div class="tool-group">
-      <el-tooltip content="保存 (Ctrl+S)" placement="bottom">
-        <el-button @click="$emit('save')">
-          <el-icon><DocumentChecked /></el-icon>
-          保存
-        </el-button>
-      </el-tooltip>
-      <el-tooltip content="导出" placement="bottom">
-        <el-button @click="$emit('export')">
-          <el-icon><Download /></el-icon>
-          导出
-        </el-button>
-      </el-tooltip>
+    <div class="top-group right">
+      <button class="btn ghost" title="保存 (Ctrl+S)" @click="$emit('save')">💾 保存</button>
+      <button class="btn primary" title="导出 PNG / JSON" @click="$emit('export')">⬇ 导出</button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
-import { 
-  Pointer, Rank, Location, Connection, Grid, EditPen, Delete,
-  RefreshLeft, RefreshRight, MagicStick, DocumentChecked, Download,
-  Brush, Pouring
-} from '@element-plus/icons-vue'
+import { onMounted, onUnmounted, computed } from 'vue'
 import type { MapTool } from '@/types/map'
+import { TILE_SETS, TILE_SIZES } from '@/types/map'
 
-defineProps<{
+const props = defineProps<{
   tool: MapTool
+  tileSetId: string
+  mapSize: number
   canUndo: boolean
   canRedo: boolean
 }>()
 
 const emit = defineEmits<{
+  (e: 'update:tile-set-id', id: string): void
+  (e: 'update:map-size', size: number): void
   (e: 'update:tool', tool: MapTool): void
   (e: 'undo'): void
   (e: 'redo'): void
-  (e: 'generate'): void
   (e: 'save'): void
   (e: 'export'): void
+  (e: 'generate'): void
+  (e: 'clear'): void
 }>()
 
+const tileSetList = computed(() => Object.values(TILE_SETS))
+
 function handleKeydown(e: KeyboardEvent) {
+  if (e.target instanceof HTMLElement && ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return
   if (e.ctrlKey || e.metaKey) {
     switch (e.key.toLowerCase()) {
-      case 'z':
-        e.preventDefault()
-        if (e.shiftKey) {
-          emit('redo')
-        } else {
-          emit('undo')
-        }
-        break
-      case 'y':
-        e.preventDefault()
-        emit('redo')
-        break
-      case 's':
-        e.preventDefault()
-        emit('save')
-        break
+      case 'z': e.preventDefault(); emit(e.shiftKey ? 'redo' : 'undo'); break
+      case 'y': e.preventDefault(); emit('redo'); break
+      case 's': e.preventDefault(); emit('save'); break
     }
   } else {
     switch (e.key.toLowerCase()) {
-      case 'v':
-        emit('update:tool', 'select')
-        break
-      case 'h':
-        emit('update:tool', 'pan')
-        break
-      case 'm':
-        emit('update:tool', 'marker')
-        break
-      case 'p':
-        emit('update:tool', 'path')
-        break
-      case 's':
-        emit('update:tool', 'shape')
-        break
-      case 't':
-        emit('update:tool', 'text')
-        break
-      case 'e':
-        emit('update:tool', 'eraser')
-        break
-      case 'b':
-        emit('update:tool', 'brush')
-        break
-      case 'f':
-        emit('update:tool', 'fill')
-        break
+      case 'h': emit('update:tool', 'pan'); break
+      case 'b': emit('update:tool', 'tile-brush'); break
+      case 'e': emit('update:tool', 'tile-eraser'); break
+      case 'f': emit('update:tool', 'tile-fill'); break
+      case 'l': emit('update:tool', 'tile-line'); break
+      case 'r': emit('update:tool', 'tile-rect'); break
+      case 'i': emit('update:tool', 'tile-picker'); break
+      case 's': emit('update:tool', 'tile-stamp'); break
+      case 'g': emit('generate'); break
     }
   }
 }
 
-onMounted(() => {
-  window.addEventListener('keydown', handleKeydown)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('keydown', handleKeydown)
-})
+onMounted(() => window.addEventListener('keydown', handleKeydown))
+onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
 </script>
 
 <style scoped>
-.map-toolbar {
+.topbar {
+  height: 50px;
+  background: #fff;
+  border-bottom: 1px solid #e2e6ec;
   display: flex;
   align-items: center;
-  padding: 10px 15px;
-  background: #16213e;
-  border-bottom: 1px solid #0f3460;
-  gap: 10px;
+  gap: 14px;
+  padding: 0 14px;
+  flex-shrink: 0;
 }
 
-.tool-group {
+.brand {
   display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 12px;
+  border-right: 1px solid #e2e6ec;
+  height: 100%;
+}
+.brand .logo { color: #3b82f6; font-size: 20px; line-height: 1; }
+.brand .title { font-weight: 700; font-size: 15px; letter-spacing: 0.5px; color: #1f2430; }
+.brand .subtitle { font-size: 11px; color: #8a93a3; text-transform: uppercase; letter-spacing: 1px; }
+
+.top-group { display: flex; align-items: center; gap: 8px; }
+.top-group.right { margin-left: auto; }
+
+.field { display: flex; align-items: center; gap: 6px; }
+.field-label { font-size: 11px; color: #5b6472; white-space: nowrap; }
+
+select {
+  font-size: 12px;
+  color: #1f2430;
+  background: #f7f8fa;
+  border: 1px solid #e2e6ec;
+  border-radius: 5px;
+  padding: 4px 8px;
+  outline: none;
+  transition: border-color 0.15s;
+  font-family: inherit;
+}
+select:focus { border-color: #3b82f6; background: #fff; }
+
+.btn {
+  font-size: 12px;
+  color: #1f2430;
+  background: #f7f8fa;
+  border: 1px solid #e2e6ec;
+  border-radius: 5px;
+  padding: 5px 11px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
   gap: 5px;
+  transition: all 0.12s;
+  white-space: nowrap;
+  font-family: inherit;
 }
-
-.toolbar-spacer {
-  flex: 1;
-}
-
-.el-divider {
-  margin: 0 10px;
-  border-color: #0f3460;
-}
-
-:deep(.el-button) {
-  background: #0f3460;
-  border-color: #0f3460;
-  color: #e0e0e0;
-}
-
-:deep(.el-button:hover) {
-  background: #1a3a5c;
-  border-color: #1a3a5c;
-  color: #ffffff;
-}
-
-:deep(.el-button.is-disabled) {
-  background: #0a0a15;
-  border-color: #0a0a15;
-  color: #606060;
-}
-
-:deep(.el-button--primary) {
-  background: #e94560;
-  border-color: #e94560;
-  color: #ffffff;
-}
-
-:deep(.el-button--primary:hover) {
-  background: #ff5a77;
-  border-color: #ff5a77;
-}
-
-:deep(.el-button--success) {
-  background: #00b894;
-  border-color: #00b894;
-  color: #ffffff;
-}
-
-:deep(.el-button--success:hover) {
-  background: #00d9a5;
-  border-color: #00d9a5;
-}
+.btn:hover { background: #fff; border-color: #cdd3dc; }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn.primary { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+.btn.primary:hover { background: #2563eb; border-color: #2563eb; }
+.btn.ghost { background: transparent; }
+.btn.ghost:hover { background: #f7f8fa; }
+.btn .ic { font-size: 13px; }
 </style>
