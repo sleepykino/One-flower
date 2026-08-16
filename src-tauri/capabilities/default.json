@@ -1,0 +1,16 @@
+{
+  "identifier": "default",
+  "description": "OneFlower 主窗口默认权限",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://**" },
+        { "url": "http://**" }
+      ]
+    }
+  ]
+}

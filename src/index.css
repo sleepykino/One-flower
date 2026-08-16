@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-ink-50 text-ink-900 antialiased;
+  font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+}
+
+/* ============ 编辑器排版 ============ */
+.novel-editor .ProseMirror {
+  @apply min-h-[60vh] outline-none px-1;
+  font-size: 16px;
+  line-height: 1.9;
+}
+
+.novel-editor .ProseMirror > * + * {
+  margin-top: 0.75em;
+}
+
+.novel-editor .ProseMirror h1 {
+  @apply text-2xl font-bold mt-6;
+}
+.novel-editor .ProseMirror h2 {
+  @apply text-xl font-bold mt-5;
+}
+.novel-editor .ProseMirror h3 {
+  @apply text-lg font-bold mt-4;
+}
+.novel-editor .ProseMirror blockquote {
+  @apply border-l-4 border-ink-300 pl-4 text-ink-600 italic;
+}
+.novel-editor .ProseMirror hr {
+  @apply border-ink-200 my-6;
+  border-top-width: 1px;
+}
+.novel-editor .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  @apply text-ink-300 float-left h-0 pointer-events-none;
+}
+
+/* 对白节点 */
+.novel-editor .ProseMirror p.dialogue {
+  @apply pl-6 border-l-2 border-emerald-300 text-emerald-900;
+}
+
+/* 角色提及 / 世界书引用 */
+.node-characterMention {
+  @apply inline-block rounded bg-violet-100 px-1 text-violet-700 text-[0.95em] mx-0.5;
+}
+.node-worldbookRef {
+  @apply inline-block rounded bg-sky-100 px-1 text-sky-700 text-[0.95em] mx-0.5;
+}
+
+/* AI 流式临时节点：灰色斜体 */
+.ai-temp-node {
+  @apply border-l-4 border-violet-300 bg-violet-50/60 pl-4 italic text-ink-500;
+  position: relative;
+}
+.ai-temp-node::before {
+  content: 'AI 生成中';
+  @apply absolute -top-0.5 right-0 rounded bg-violet-200 px-1.5 text-[10px] not-italic text-violet-600;
+}
+.ai-temp-node.done::before {
+  content: 'AI 生成';
+  @apply bg-amber-200 text-amber-700;
+}
+
+/* ============ 滚动条 ============ */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-ink-200 rounded;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-ink-300;
+}
+
+/* 版本 diff 视图 */
+.diff-add {
+  @apply bg-emerald-100 text-emerald-800;
+}
+.diff-remove {
+  @apply bg-red-100 text-red-800 line-through;
+}
