@@ -17,9 +17,15 @@ import { ExportService } from '../services/export/ExportService';
 import { MarkdownExporter } from '../services/export/MarkdownExporter';
 import { TxtExporter } from '../services/export/TxtExporter';
 import { EpubExporter } from '../services/export/EpubExporter';
+import { DocxExporter } from '../services/export/DocxExporter';
 import { ImportService } from '../services/import/ImportService';
 import { PromptAssembler } from '../services/ai/PromptAssembler';
 import { AIOrchestrator } from '../services/ai/AIOrchestrator';
+import { SummaryService } from '../services/summary/SummaryService';
+import { AppSettingsService } from '../services/settings/AppSettingsService';
+import { WorldbookRAGService } from '../services/worldbook/WorldbookRAGService';
+import { RelationshipService } from '../services/relationship/RelationshipService';
+import { WritingStatsService } from '../services/stats/WritingStatsService';
 import { createProvider } from '../services/ai/providers/LLMProvider';
 import type { LLMProvider } from '../services/ai/providers/LLMProvider';
 
@@ -37,6 +43,11 @@ export interface AppContext {
   importService: ImportService;
   promptAssembler: PromptAssembler;
   orchestrator: AIOrchestrator;
+  summaryService: SummaryService;
+  appSettings: AppSettingsService;
+  ragService: WorldbookRAGService;
+  relationshipService: RelationshipService;
+  statsService: WritingStatsService;
 }
 
 let ctx: AppContext | null = null;
@@ -84,13 +95,15 @@ export async function initApp(): Promise<AppContext> {
   const markdownExporter = new MarkdownExporter();
   const txtExporter = new TxtExporter();
   const epubExporter = new EpubExporter();
+  const docxExporter = new DocxExporter();
   const exportService = new ExportService(
     tauriBridge,
     db,
     chapterService,
     markdownExporter,
     txtExporter,
-    epubExporter
+    epubExporter,
+    docxExporter
   );
   const importService = new ImportService(tauriBridge, db, wq);
 
@@ -117,7 +130,15 @@ export async function initApp(): Promise<AppContext> {
     );
   };
 
-  const orchestrator = new AIOrchestrator(providerFactory, skillLoader, promptAssembler, tauriBridge);
+  const summaryService = new SummaryService(tauriBridge, db, wq, providerFactory, chapterService);
+  const appSettings = new AppSettingsService(db, wq);
+  const ragService = new WorldbookRAGService(tauriBridge, db, wq, providerFactory, appSettings);
+  const relationshipService = new RelationshipService(db, wq);
+  const statsService = new WritingStatsService(tauriBridge, db, wq);
+  const orchestrator = new AIOrchestrator(providerFactory, skillLoader, promptAssembler, tauriBridge, {
+    summaryService,
+    ragService
+  });
 
   ctx = {
     bridge: tauriBridge,
@@ -132,7 +153,12 @@ export async function initApp(): Promise<AppContext> {
     exportService,
     importService,
     promptAssembler,
-    orchestrator
+    orchestrator,
+    summaryService,
+    appSettings,
+    ragService,
+    relationshipService,
+    statsService
   };
   return ctx;
 }

@@ -1,4 +1,4 @@
--- 完整 Schema 参考（权威版本与 migrations/001_init.sql 一致）
+-- 完整 Schema 参考（权威版本与 migrations/001_init.sql + 002_p1_additions.sql 合并一致）
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS chapters (
   word_count INTEGER DEFAULT 0,
   content_path TEXT,
   summary TEXT,
+  summary_generated_at INTEGER,
+  summary_source_words INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
@@ -112,4 +114,58 @@ CREATE TABLE IF NOT EXISTS skills_cache (
   priority INTEGER DEFAULT 0,
   body TEXT,
   loaded_at INTEGER NOT NULL
+);
+
+-- ===== P1 新增（与 migrations/002_p1_additions.sql 一致） =====
+
+CREATE TABLE IF NOT EXISTS relationships (
+  id TEXT PRIMARY KEY,
+  book_id TEXT NOT NULL,
+  from_character_id TEXT NOT NULL,
+  to_character_id TEXT NOT NULL,
+  type TEXT NOT NULL,
+  description TEXT,
+  bidirectional INTEGER DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
+  FOREIGN KEY (from_character_id) REFERENCES characters(id) ON DELETE CASCADE,
+  FOREIGN KEY (to_character_id) REFERENCES characters(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_relationships_book ON relationships(book_id);
+CREATE INDEX IF NOT EXISTS idx_relationships_character ON relationships(from_character_id, to_character_id);
+
+CREATE TABLE IF NOT EXISTS writing_stats (
+  id TEXT PRIMARY KEY,
+  book_id TEXT NOT NULL,
+  date TEXT NOT NULL,
+  words_written INTEGER DEFAULT 0,
+  chapters_worked TEXT,
+  session_duration INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_stats_book_date ON writing_stats(book_id, date);
+
+CREATE TABLE IF NOT EXISTS writing_goals (
+  book_id TEXT PRIMARY KEY,
+  daily_target INTEGER DEFAULT 3000,
+  total_target INTEGER DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS worldbook_embeddings (
+  entry_id TEXT PRIMARY KEY,
+  book_id TEXT NOT NULL,
+  embedding TEXT NOT NULL,
+  dim INTEGER NOT NULL,
+  model TEXT,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (entry_id) REFERENCES worldbook_entries(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_embeddings_book ON worldbook_embeddings(book_id);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT
 );

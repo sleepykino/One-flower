@@ -1,7 +1,6 @@
 /**
  * 角色卡表单：JSON Schema 驱动动态渲染（react-hook-form + Zod）
- * 默认模板：姓名 / 外貌 / 性格 / 背景 / 关系 / 标签
- * 支持手动编辑 JSON Schema（P0 简版）
+ * 模板编辑升级为可视化构建器 SchemaBuilder（P1 Phase9）
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -9,14 +8,9 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { getAppContext } from '../../context/app-context';
-import { alertDialog } from '../../native/dialog';
 import type { Character, CharacterSchema } from '../../types';
-
-interface StringField {
-  key: string;
-  title: string;
-  required: boolean;
-}
+import { SchemaBuilder } from './SchemaBuilder';
+import { parseSchemaFields, type CardField } from './schemaFields';
 
 export function CharacterForm({
   bookId,
@@ -29,7 +23,6 @@ export function CharacterForm({
 }): JSX.Element {
   const [schema, setSchema] = useState<CharacterSchema | null>(null);
   const [schemaEditOpen, setSchemaEditOpen] = useState(false);
-  const [schemaDraft, setSchemaDraft] = useState('');
   const [tagsText, setTagsText] = useState('');
 
   useEffect(() => {
@@ -37,7 +30,6 @@ export function CharacterForm({
       const ctx = getAppContext();
       const s = await ctx.characterService.ensureDefaultSchema(bookId);
       setSchema(s);
-      setSchemaDraft(s.schemaJson);
       if (character) {
         try {
           setTagsText((JSON.parse(character.tags ?? '[]') as string[]).join('、'));
@@ -49,29 +41,18 @@ export function CharacterForm({
     void load();
   }, [bookId, character]);
 
-  const fields: StringField[] = useMemo(() => {
-    if (!schema) return [];
-    try {
-      const parsed = JSON.parse(schema.schemaJson) as {
-        properties?: Record<string, { type?: string; title?: string }>;
-        required?: string[];
-      };
-      return Object.entries(parsed.properties ?? {})
-        .filter(([, def]) => (def.type ?? 'string') === 'string')
-        .map(([key, def]) => ({
-          key,
-          title: def.title ?? key,
-          required: (parsed.required ?? []).includes(key)
-        }));
-    } catch {
-      return [];
-    }
-  }, [schema]);
+  const fields: CardField[] = useMemo(
+    () => (schema ? parseSchemaFields(schema.schemaJson) : []),
+    [schema]
+  );
 
   const initialData = useMemo((): Record<string, string> => {
     if (!character) return {};
     try {
-      return JSON.parse(character.data) as Record<string, string>;
+      const parsed = JSON.parse(character.data) as Record<string, unknown>;
+      return Object.fromEntries(
+        Object.entries(parsed).map(([k, v]) => [k, v == null ? '' : String(v)])
+      );
     } catch {
       return {};
     }
@@ -98,35 +79,26 @@ export function CharacterForm({
     const ctx = getAppContext();
     const name = values.name ?? character?.name ?? '';
     const tags = tagsText.split(/[、,，\s]+/).filter(Boolean);
+    // 数字字段把字符串值转回数字存储，与 Schema type 对齐
+    const data: Record<string, unknown> = { ...values };
+    for (const f of fields) {
+      if (f.kind === 'number') {
+        const v = values[f.key];
+        data[f.key] = v !== '' && v != null && !Number.isNaN(Number(v)) ? Number(v) : v;
+      }
+    }
     if (character) {
-      await ctx.characterService.update(character.id, {
-        name,
-        data: values,
-        tags
-      });
+      await ctx.characterService.update(character.id, { name, data, tags });
     } else {
       await ctx.characterService.create(bookId, {
         name,
-        data: values,
+        data,
         tags,
         schemaId: schema?.id ?? null
       });
     }
     onDone();
   });
-
-  const saveSchema = async (): Promise<void> => {
-    if (!schema) return;
-    try {
-      JSON.parse(schemaDraft);
-    } catch {
-      void alertDialog('JSON Schema 格式错误');
-      return;
-    }
-    await getAppContext().characterService.saveSchema(schema.id, schemaDraft);
-    setSchema({ ...schema, schemaJson: schemaDraft });
-    setSchemaEditOpen(false);
-  };
 
   return (
     <div className="flex h-full flex-col">
@@ -138,28 +110,20 @@ export function CharacterForm({
             className="text-xs text-violet-600 hover:underline"
             onClick={() => setSchemaEditOpen(!schemaEditOpen)}
           >
-            编辑模板 Schema
+            编辑模板
           </button>
         </div>
       </div>
 
-      {schemaEditOpen && (
-        <div className="border-b border-ink-200 bg-ink-50 p-2">
-          <textarea
-            value={schemaDraft}
-            onChange={(e) => setSchemaDraft(e.target.value)}
-            rows={8}
-            spellCheck={false}
-            className="w-full resize-none rounded border border-ink-200 p-2 font-mono text-xs outline-none focus:border-violet-400"
-          />
-          <button
-            type="button"
-            className="mt-1 rounded bg-violet-600 px-2 py-1 text-xs text-white hover:bg-violet-700"
-            onClick={() => void saveSchema()}
-          >
-            保存模板
-          </button>
-        </div>
+      {schemaEditOpen && schema && (
+        <SchemaBuilder
+          schema={schema}
+          onClose={() => setSchemaEditOpen(false)}
+          onSaved={(json) => {
+            setSchema({ ...schema, schemaJson: json });
+            setSchemaEditOpen(false);
+          }}
+        />
       )}
 
       <form onSubmit={(e) => void submit(e)} className="flex-1 overflow-y-auto p-3">
@@ -169,15 +133,34 @@ export function CharacterForm({
               {f.title}
               {f.required && <span className="text-red-500"> *</span>}
             </label>
-            {f.key === 'background' || f.key === 'relationships' || f.key === 'appearance' || f.key === 'personality' ? (
+            {f.kind === 'textarea' ? (
               <textarea
                 rows={3}
                 {...register(f.key)}
                 className="w-full resize-none rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400"
               />
+            ) : f.kind === 'select' ? (
+              <select
+                {...register(f.key)}
+                className="w-full rounded border border-ink-200 bg-white px-2 py-1 text-sm outline-none focus:border-violet-400"
+              >
+                {f.options.length === 0 && <option value="">（模板未配置候选项）</option>}
+                {f.options.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
+            ) : f.kind === 'number' ? (
+              <input
+                type="number"
+                {...register(f.key)}
+                className="w-full rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400"
+              />
             ) : (
               <input
                 {...register(f.key)}
+                placeholder={f.kind === 'tags' ? '多个标签用顿号分隔' : ''}
                 className="w-full rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400"
               />
             )}

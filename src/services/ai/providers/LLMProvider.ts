@@ -32,6 +32,14 @@ export interface LLMProvider {
   chat(messages: ChatMessage[], options: ChatOptions): Promise<ChatResponse>;
   stream(messages: ChatMessage[], options: ChatOptions): AsyncIterable<ChatChunk>;
   countTokens(text: string): number; // 近似估算即可
+  /** 向量嵌入（P1 世界书 RAG 用；Anthropic 无此能力，不实现） */
+  embed?(texts: string[], model: string): Promise<number[][]>;
+}
+
+/** 向量嵌入结果 */
+export interface EmbeddingVector {
+  values: number[];
+  model: string;
 }
 
 /** Provider 配置（存 SQLite，apiKey 存 keytar） */

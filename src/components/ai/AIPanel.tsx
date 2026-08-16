@@ -31,6 +31,8 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
   const [characters, setCharacters] = useState<Character[]>([]);
   const [selectedCharIds, setSelectedCharIds] = useState<string[]>([]);
   const [instruction, setInstruction] = useState('');
+  // 续写要求（可选）：引导续写方向，随提示词以【要求】段注入
+  const [continueReq, setContinueReq] = useState('');
   const [scene, setScene] = useState('');
   // 生成参数：单次回复 token 上限（约等于中文字数）与采样温度
   const [maxTokens, setMaxTokens] = useState(2048);
@@ -82,6 +84,7 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
           currentContent: api.getPlainText(),
           recentChapters: recent,
           selectedCharacterIds: selectedCharIds,
+          requirement: continueReq.trim() || undefined,
           maxTokens: tokenValue(),
           temperature: tempValue(),
           signal: controller.signal
@@ -104,6 +107,8 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
           scene,
           characterIds: selectedCharIds,
           recentChapters: recent,
+          maxTokens: tokenValue(),
+          temperature: tempValue(),
           signal: controller.signal
         });
       }
@@ -134,20 +139,26 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
   };
 
   const onContinue = async (): Promise<void> => {
-    // 继续补完：以已生成文本为上文再次续写
+    // 继续补完（P1-M8）：以已生成半截内容为上文再次调 LLM，结果合并进同一临时节点
     const { orchestrator } = getAppContext();
     const api = useEditorStore.getState().editorApi;
     if (!api || !currentChapterId) return;
+    // 必须在 startStream（会清空 generatedText）之前读取半截内容
+    const base = useAIStore.getState().generatedText;
     const controller = useAIStore.getState().startStream();
     try {
       const recent = await gatherRecent();
-      const base = useAIStore.getState().generatedText;
+      // 重新登记半截内容：多轮补完时 base 连续，"已生成 N 字"统计不回零
+      if (base) useAIStore.getState().appendText(base);
       const iterable = orchestrator.continueWriting({
         bookId,
         chapterId: currentChapterId,
-        currentContent: `${api.getPlainText()}\n\n${base}`,
+        currentContent: `${api.getPlainText()}${base ? `\n\n${base}` : ''}`,
         recentChapters: recent,
         selectedCharacterIds: selectedCharIds,
+        requirement: continueReq.trim() || undefined,
+        maxTokens: tokenValue(),
+        temperature: tempValue(),
         signal: controller.signal
       });
       for await (const chunk of iterable) {
@@ -160,8 +171,15 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
       useAIStore.getState().finishStream('done');
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      api.discardAITemp();
-      useAIStore.getState().finishStream('error', msg);
+      const aborted = controller.signal.aborted || msg.includes('Abort');
+      if (aborted) {
+        // 补完途中再次中断：保留合并后的半截内容，回到三选项
+        api.finishAITemp();
+        useAIStore.getState().finishStream('aborted');
+      } else {
+        api.discardAITemp();
+        useAIStore.getState().finishStream('error', msg);
+      }
     }
   };
 
@@ -221,6 +239,13 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
               当前：{currentChapter?.title ?? '未选择章节'} · 前情自动取最近 3 章
             </div>
             <CharPicker characters={characters} selected={selectedCharIds} onToggle={toggleChar} />
+            <textarea
+              rows={3}
+              value={continueReq}
+              onChange={(e) => setContinueReq(e.target.value)}
+              placeholder="续写要求（可选），如：主角识破陷阱，引出幕后黑手"
+              className="mt-2 mb-1 w-full resize-none rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400"
+            />
             <GenParams
               maxTokens={maxTokens}
               setMaxTokens={setMaxTokens}

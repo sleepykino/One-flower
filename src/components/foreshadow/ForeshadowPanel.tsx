@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react';
 import { getAppContext } from '../../context/app-context';
 import { useEditorStore } from '../../store/editorStore';
+import { ForeshadowTimeline } from './ForeshadowTimeline';
 import {
   FORESHADOWING_STATUS_LABEL,
   type Foreshadowing,
@@ -23,6 +24,7 @@ export function ForeshadowPanel({ bookId }: { bookId: string }): JSX.Element {
   const [description, setDescription] = useState('');
   const [planted, setPlanted] = useState('');
   const [resolved, setResolved] = useState('');
+  const [view, setView] = useState<'list' | 'timeline'>('list');
 
   const load = async (): Promise<void> => {
     const rows = await getAppContext().db.query<Record<string, unknown>>(
@@ -40,6 +42,8 @@ export function ForeshadowPanel({ bookId }: { bookId: string }): JSX.Element {
         createdAt: Number(r.created_at)
       }))
     );
+    // 通知章节树刷新伏笔标记（埋设绿点 / 回收蓝点）
+    window.dispatchEvent(new Event('novel-foreshadow-refresh'));
   };
 
   useEffect(() => {
@@ -88,9 +92,31 @@ export function ForeshadowPanel({ bookId }: { bookId: string }): JSX.Element {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-ink-200 px-3 py-2 text-sm font-medium">
-        伏笔追踪（{items.length}）
+      <div className="flex items-center gap-1 border-b border-ink-200 px-3 py-2 text-sm font-medium">
+        <span>伏笔追踪（{items.length}）</span>
+        <div className="ml-auto flex rounded border border-ink-200 text-[11px]">
+          <button
+            type="button"
+            className={`px-1.5 py-0.5 ${view === 'list' ? 'bg-violet-100 text-violet-700' : 'text-ink-500'}`}
+            onClick={() => setView('list')}
+          >
+            列表
+          </button>
+          <button
+            type="button"
+            className={`px-1.5 py-0.5 ${view === 'timeline' ? 'bg-violet-100 text-violet-700' : 'text-ink-500'}`}
+            onClick={() => setView('timeline')}
+          >
+            时间线
+          </button>
+        </div>
       </div>
+      {view === 'timeline' ? (
+        <div className="min-h-0 flex-1">
+          <ForeshadowTimeline bookId={bookId} />
+        </div>
+      ) : (
+        <>
       <div className="border-b border-ink-100 p-2">
         <input
           value={description}
@@ -137,7 +163,14 @@ export function ForeshadowPanel({ bookId }: { bookId: string }): JSX.Element {
           <div className="px-2 py-4 text-center text-xs text-ink-400">暂无伏笔记录。</div>
         )}
         {items.map((f) => (
-          <div key={f.id} className="group mb-1 rounded border border-ink-100 bg-white px-2 py-1.5">
+          <div
+            key={f.id}
+            className={`group mb-1 rounded border px-2 py-1.5 ${
+              f.status === 'planted'
+                ? 'border-amber-300 bg-amber-50/60 ring-1 ring-amber-200'
+                : 'border-ink-100 bg-white'
+            }`}
+          >
             <div className="flex items-center gap-1">
               <span className={`rounded px-1 text-[10px] ${STATUS_STYLE[f.status]}`}>
                 {FORESHADOWING_STATUS_LABEL[f.status]}
@@ -187,6 +220,8 @@ export function ForeshadowPanel({ bookId }: { bookId: string }): JSX.Element {
           </div>
         ))}
       </div>
+        </>
+      )}
     </div>
   );
 }

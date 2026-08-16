@@ -72,7 +72,7 @@ export class ChapterService {
     );
     if (!row) throw new Error('书籍不存在');
     const storageDir = String(row.storage_dir);
-    const contentPath = `${storageDir}/chapters/${id}.json`;
+    const contentPath = `${storageDir}/chapters/` + id + `.json`;
 
     await this.bridge.fs.writeFile(contentPath, JSON.stringify(emptyDoc(), null, 2));
 
@@ -235,6 +235,8 @@ export function rowToChapter(r: Row): Chapter {
     wordCount: Number(r.word_count ?? 0),
     contentPath: (r.content_path as string) ?? null,
     summary: (r.summary as string) ?? null,
+    summaryGeneratedAt: (r.summary_generated_at as number) ?? null,
+    summarySourceWords: (r.summary_source_words as number) ?? null,
     createdAt: Number(r.created_at),
     updatedAt: Number(r.updated_at)
   };

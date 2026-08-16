@@ -41,6 +41,8 @@ export interface ContinueParams {
   currentContent: string;
   recentChapters: ChapterContent[];
   selectedCharacterIds: string[];
+  /** 续写要求（可选），如"主角识破陷阱，引出幕后黑手" */
+  requirement?: string;
   /** 单次回复的 token 上限（约等于中文字数） */
   maxTokens?: number;
   /** 采样温度，默认 0.85 */
@@ -67,6 +69,10 @@ export interface DialogueParams {
   scene: string; // 场景描述
   characterIds: string[]; // 参与对话的角色
   recentChapters: ChapterContent[];
+  /** 单次回复的 token 上限（约等于中文字数），默认 4096 */
+  maxTokens?: number;
+  /** 采样温度，默认 0.9 */
+  temperature?: number;
   signal?: AbortSignal;
 }
 

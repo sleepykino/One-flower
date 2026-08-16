@@ -9,24 +9,36 @@ import { useEditorStore } from '../store/editorStore';
 import { NovelEditor } from '../components/editor/NovelEditor';
 import { ChapterTree } from '../components/chapter-tree/ChapterTree';
 import { AIPanel } from '../components/ai/AIPanel';
+import { ContextPanel } from '../components/ai/ContextPanel';
 import { CharacterList } from '../components/character-card/CharacterList';
 import { WorldbookPanel } from '../components/worldbook/WorldbookPanel';
 import { ForeshadowPanel } from '../components/foreshadow/ForeshadowPanel';
 import { VersionHistory } from '../components/version/VersionHistory';
 import { SkillPanel } from '../components/skill/SkillPanel';
+import { WritingStatsPanel } from '../components/stats/WritingStats';
 import { GlobalSearchModal } from '../components/search/GlobalSearch';
 import { ExportDialog } from '../components/export/ExportDialog';
 import { getAppContext } from '../context/app-context';
 
-type RightTab = 'ai' | 'characters' | 'worldbook' | 'foreshadow' | 'history' | 'skills';
+type RightTab =
+  | 'ai'
+  | 'context'
+  | 'characters'
+  | 'worldbook'
+  | 'foreshadow'
+  | 'history'
+  | 'skills'
+  | 'stats';
 
 const TABS: Array<{ key: RightTab; label: string }> = [
   { key: 'ai', label: 'AI' },
+  { key: 'context', label: '上下文' },
   { key: 'characters', label: '角色' },
   { key: 'worldbook', label: '世界书' },
   { key: 'foreshadow', label: '伏笔' },
   { key: 'history', label: '历史' },
-  { key: 'skills', label: 'Skill' }
+  { key: 'skills', label: 'Skill' },
+  { key: 'stats', label: '统计' }
 ];
 
 export function Editor(): JSX.Element {
@@ -50,6 +62,12 @@ export function Editor(): JSX.Element {
     void getAppContext()
       .bookService.get(bookId)
       .then((b) => setBookTitle(b?.title ?? ''));
+    // 写作统计：进入编辑器开启会话，离开时记录字数差 + 时长
+    const { statsService } = getAppContext();
+    void statsService.beginSession(bookId);
+    return () => {
+      void statsService.endSession(bookId);
+    };
   }, [bookId, setBookId, loadChapters]);
 
   // Ctrl+Shift+F 全局查找
@@ -172,11 +190,13 @@ export function Editor(): JSX.Element {
             </div>
             <div className="min-h-0 flex-1">
               {tab === 'ai' && <AIPanel bookId={bookId} />}
+              {tab === 'context' && <ContextPanel bookId={bookId} />}
               {tab === 'characters' && <CharacterList bookId={bookId} />}
               {tab === 'worldbook' && <WorldbookPanel bookId={bookId} />}
               {tab === 'foreshadow' && <ForeshadowPanel bookId={bookId} />}
               {tab === 'history' && <VersionHistory />}
               {tab === 'skills' && <SkillPanel bookId={bookId} />}
+              {tab === 'stats' && <WritingStatsPanel bookId={bookId} />}
             </div>
           </div>
         </aside>

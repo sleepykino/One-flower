@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSettingsStore } from '../store/settingsStore';
+import { getAppContext } from '../context/app-context';
 import { alertDialog, confirmDialog } from '../native/dialog';
 import type { ProviderConfig } from '../types';
 
@@ -34,10 +35,34 @@ export function Settings(): JSX.Element {
   } | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, string>>({});
+  const [embedConfigId, setEmbedConfigId] = useState('');
+  const [embedModel, setEmbedModel] = useState('');
+  const [embedSaved, setEmbedSaved] = useState(false);
 
   useEffect(() => {
     void loadConfigs();
   }, [loadConfigs]);
+
+  // 读取向量嵌入配置（app_settings）
+  useEffect(() => {
+    void (async () => {
+      const { appSettings } = getAppContext();
+      const [cid, model] = await Promise.all([
+        appSettings.get('embedding.providerConfigId'),
+        appSettings.get('embedding.model')
+      ]);
+      setEmbedConfigId(cid ?? '');
+      setEmbedModel(model ?? '');
+    })();
+  }, []);
+
+  const saveEmbedding = async (): Promise<void> => {
+    const { appSettings } = getAppContext();
+    await appSettings.set('embedding.providerConfigId', embedConfigId || null);
+    await appSettings.set('embedding.model', embedModel.trim() || null);
+    setEmbedSaved(true);
+    setTimeout(() => setEmbedSaved(false), 2000);
+  };
 
   const submit = async (): Promise<void> => {
     if (!editing) return;
@@ -217,6 +242,49 @@ export function Settings(): JSX.Element {
               </button>
             </div>
           ))}
+        </section>
+
+        <section className="mt-4 rounded-lg border border-ink-200 bg-white p-4">
+          <h2 className="mb-1 font-medium">向量嵌入（世界书 RAG）</h2>
+          <p className="mb-3 text-xs text-ink-400">
+            用于世界书条目向量化与检索。Anthropic 无 embeddings 接口，请选择 OpenAI 兼容或 Google 配置。
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="mb-1 block text-xs text-ink-500">Provider 配置</label>
+              <select
+                value={embedConfigId}
+                onChange={(e) => setEmbedConfigId(e.target.value)}
+                className="w-full rounded border border-ink-200 px-2 py-1 text-sm"
+              >
+                <option value="">跟随书籍 / 首组配置</option>
+                {configs.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}（{c.provider}）
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-ink-500">嵌入模型</label>
+              <input
+                value={embedModel}
+                onChange={(e) => setEmbedModel(e.target.value)}
+                placeholder="text-embedding-3-small"
+                className="w-full rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400"
+              />
+            </div>
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              className="rounded bg-violet-600 px-3 py-1 text-sm text-white hover:bg-violet-700"
+              onClick={() => void saveEmbedding()}
+            >
+              保存
+            </button>
+            {embedSaved && <span className="text-xs text-emerald-600">已保存</span>}
+          </div>
         </section>
 
         <section className="mt-4 rounded-lg border border-ink-200 bg-white p-4 text-sm text-ink-600">

@@ -12,6 +12,7 @@ const FORMAT_LABEL: Record<ExportFormat, string> = {
   markdown: 'Markdown (.md)',
   txt: '纯文本 (.txt)',
   epub: 'EPUB 电子书 (.epub)',
+  docx: 'Word 文档 (.docx)',
   backup: '备份包 (.zip)'
 };
 
@@ -29,7 +30,15 @@ export function ExportDialog({ bookId, onClose }: { bookId: string; onClose: () 
     setDone(null);
     try {
       const ext =
-        format === 'markdown' ? 'md' : format === 'txt' ? 'txt' : format === 'epub' ? 'epub' : 'zip';
+        format === 'markdown'
+          ? 'md'
+          : format === 'txt'
+            ? 'txt'
+            : format === 'epub'
+              ? 'epub'
+              : format === 'docx'
+                ? 'docx'
+                : 'zip';
       const defaultName =
         scope === 'book' ? `book.${ext}` : `${chapters.find((c) => c.id === chapterId)?.title ?? 'chapter'}.${ext}`;
       const path = await save({
@@ -108,7 +117,9 @@ export function ExportDialog({ bookId, onClose }: { bookId: string; onClose: () 
           <div className="mt-1 text-[11px] text-ink-400">
             {format === 'backup'
               ? '.zip 备份包（meta.json + chapters/），可用于迁移恢复'
-              : '阅读格式导出，含章节标题与目录'}
+              : format === 'docx'
+                ? 'Word 文档；全书导出含目录页、页眉书名与页脚页码（打开时按提示更新目录域）'
+                : '阅读格式导出，含章节标题与目录'}
           </div>
         </div>
 

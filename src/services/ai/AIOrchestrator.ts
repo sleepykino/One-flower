@@ -5,9 +5,12 @@
 
 import type { NativeBridge } from '../../native/NativeBridge';
 import type { SkillLoader } from '../skill/SkillLoader';
-import type { PromptAssembler } from './PromptAssembler';
+import type { PromptAssembler, PromptContext, TokenBreakdown } from './PromptAssembler';
+import { DEFAULT_TOKEN_BUDGET } from './PromptAssembler';
 import type { LLMProvider, ChatChunk } from './providers/LLMProvider';
 import { createProvider } from './providers/LLMProvider';
+import type { SummaryService } from '../summary/SummaryService';
+import type { WorldbookRAGService } from '../worldbook/WorldbookRAGService';
 import type {
   Character,
   CheckParams,
@@ -17,22 +20,105 @@ import type {
   RewriteParams
 } from './types';
 
+/** P1 依赖（可选注入，不破坏 P0 构造签名） */
+export interface OrchestratorDeps {
+  summaryService?: SummaryService;
+  ragService?: WorldbookRAGService;
+}
+
+/** 最近一次 AI 调用的上下文快照（ContextPanel 展示用） */
+export interface ContextSnapshot {
+  bookId: string;
+  mode: string;
+  ctx: PromptContext;
+  breakdown: TokenBreakdown[];
+  totalTokens: number;
+  at: number;
+}
+
 export class AIOrchestrator {
   private providerFactory: (configId: string) => Promise<LLMProvider>;
   private skillLoader: SkillLoader;
   private promptAssembler: PromptAssembler;
   private bridge: NativeBridge;
+  private deps: OrchestratorDeps;
+  private lastContext = new Map<string, ContextSnapshot>();
 
   constructor(
     providerFactory: (configId: string) => Promise<LLMProvider>,
     skillLoader: SkillLoader,
     promptAssembler: PromptAssembler,
-    bridge: NativeBridge
+    bridge: NativeBridge,
+    deps: OrchestratorDeps = {}
   ) {
     this.providerFactory = providerFactory;
     this.skillLoader = skillLoader;
     this.promptAssembler = promptAssembler;
     this.bridge = bridge;
+    this.deps = deps;
+  }
+
+  /** ContextPanel 用：取最近一次调用的上下文快照 */
+  getLastContext(bookId: string): ContextSnapshot | null {
+    return this.lastContext.get(bookId) ?? null;
+  }
+
+  /** 记录上下文快照（每次 assemble 后调用） */
+  private recordContext(bookId: string, ctx: PromptContext): void {
+    const breakdown = this.promptAssembler.inspect(ctx);
+    const totalTokens = breakdown.reduce((sum, b) => sum + b.tokens, 0);
+    this.lastContext.set(bookId, {
+      bookId,
+      mode: ctx.mode,
+      ctx,
+      breakdown,
+      totalTokens,
+      at: Date.now()
+    });
+  }
+
+  /** P1：摘要链 + 最近 2 章原文（服务不可用或失败时回退调用方传入的窗口） */
+  private async fetchRecentContext(
+    bookId: string,
+    chapterId: string,
+    fallback: ContinueParams['recentChapters']
+  ): Promise<{
+    summaryChain: Parameters<PromptAssembler['assemble']>[0]['summaryChain'];
+    recentChapters: ContinueParams['recentChapters'];
+  }> {
+    if (!this.deps.summaryService) {
+      return { summaryChain: undefined, recentChapters: fallback };
+    }
+    try {
+      const rc = await this.deps.summaryService.getRecentContext(
+        bookId,
+        chapterId,
+        DEFAULT_TOKEN_BUDGET.summaryChain
+      );
+      const recent = rc.recentChapters.length > 0 ? rc.recentChapters : fallback;
+      return {
+        summaryChain: rc.summaries.length > 0 ? rc.summaries : undefined,
+        recentChapters: recent
+      };
+    } catch (e) {
+      console.warn('[AI] 获取前情上下文失败，回退滑动窗口:', e);
+      return { summaryChain: undefined, recentChapters: fallback };
+    }
+  }
+
+  /** P1：世界书 RAG 检索 top-3（失败静默降级为空） */
+  private async fetchRag(
+    bookId: string,
+    query: string
+  ): Promise<Parameters<PromptAssembler['assemble']>[0]['worldbookEntries']> {
+    if (!this.deps.ragService || !query.trim()) return undefined;
+    try {
+      const hits = await this.deps.ragService.retrieve(query, bookId, 3);
+      return hits.length > 0 ? hits : undefined;
+    } catch (e) {
+      console.warn('[AI] 世界书 RAG 检索失败，已跳过:', e);
+      return undefined;
+    }
   }
 
   /** 读取书籍绑定的 provider（书籍未配置时取第一组配置） */
@@ -102,18 +188,32 @@ export class AIOrchestrator {
     const provider = await this.resolveProvider(params.bookId);
     const skills = await this.skillLoader.getEnabledForMode(params.bookId, 'continue');
     const characters = await this.loadCharacters(params.selectedCharacterIds);
-    const messages = this.promptAssembler.assemble({
+    // P1：摘要链 + 最近 2 章原文（失败回退滑动窗口）
+    const { summaryChain, recentChapters } = await this.fetchRecentContext(
+      params.bookId,
+      params.chapterId,
+      params.recentChapters
+    );
+    // P1：世界书 RAG 检索（query 取当前章末尾约 2000 字）
+    const ragQuery = params.currentContent.slice(-2000);
+    const worldbookEntries = await this.fetchRag(params.bookId, ragQuery);
+    const ctx: PromptContext = {
       mode: 'continue',
       systemInstruction: '',
       enabledSkills: skills,
       characters,
-      recentChapters: params.recentChapters,
+      worldbookEntries,
+      summaryChain,
+      recentChapters,
+      userInstruction: params.requirement,
       currentChapter: {
         id: params.chapterId,
         title: '',
         content: params.currentContent
       }
-    });
+    };
+    this.recordContext(params.bookId, ctx);
+    const messages = this.promptAssembler.assemble(ctx);
     const config = await this.modelOf(params.bookId);
     yield* provider.stream(messages, {
       model: config,
@@ -127,7 +227,7 @@ export class AIOrchestrator {
   async *rewrite(params: RewriteParams): AsyncIterable<ChatChunk> {
     const provider = await this.resolveProvider(params.bookId);
     const skills = await this.skillLoader.getEnabledForMode(params.bookId, 'rewrite');
-    const messages = this.promptAssembler.assemble({
+    const ctx: PromptContext = {
       mode: 'rewrite',
       systemInstruction: '',
       enabledSkills: skills,
@@ -135,7 +235,9 @@ export class AIOrchestrator {
       recentChapters: params.recentChapters,
       selectedText: params.selectedText,
       userInstruction: params.instruction
-    });
+    };
+    this.recordContext(params.bookId, ctx);
+    const messages = this.promptAssembler.assemble(ctx);
     yield* provider.stream(messages, {
       model: await this.modelOf(params.bookId),
       signal: params.signal,
@@ -149,19 +251,31 @@ export class AIOrchestrator {
     const provider = await this.resolveProvider(params.bookId);
     const skills = await this.skillLoader.getEnabledForMode(params.bookId, 'dialogue');
     const characters = await this.loadCharacters(params.characterIds);
-    const messages = this.promptAssembler.assemble({
+    // P1：摘要链 + 最近 2 章原文
+    const { summaryChain, recentChapters } = await this.fetchRecentContext(
+      params.bookId,
+      params.chapterId,
+      params.recentChapters
+    );
+    // P1：世界书 RAG 检索（query 取场景描述）
+    const worldbookEntries = await this.fetchRag(params.bookId, params.scene);
+    const ctx: PromptContext = {
       mode: 'dialogue',
       systemInstruction: '',
       enabledSkills: skills,
       characters,
-      recentChapters: params.recentChapters,
+      worldbookEntries,
+      summaryChain,
+      recentChapters,
       userInstruction: params.scene
-    });
+    };
+    this.recordContext(params.bookId, ctx);
+    const messages = this.promptAssembler.assemble(ctx);
     yield* provider.stream(messages, {
       model: await this.modelOf(params.bookId),
       signal: params.signal,
-      maxTokens: 4096,
-      temperature: 0.9
+      maxTokens: params.maxTokens ?? 4096,
+      temperature: params.temperature ?? 0.9
     });
   }
 
@@ -180,7 +294,7 @@ export class AIOrchestrator {
     );
     const worldbook = await this.loadWorldbook(params.bookId);
 
-    const messages = this.promptAssembler.assemble({
+    const checkCtx: PromptContext = {
       mode: 'check',
       systemInstruction: '',
       enabledSkills: skills, // 文风 Skill 的 applies_to 不含 check，此处为空
@@ -192,7 +306,9 @@ export class AIOrchestrator {
         title: '',
         content: params.chapterContent
       }
-    });
+    };
+    this.recordContext(params.bookId, checkCtx);
+    const messages = this.promptAssembler.assemble(checkCtx);
 
     const res = await provider.chat(messages, {
       model: await this.modelOf(params.bookId),

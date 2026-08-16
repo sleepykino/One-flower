@@ -26,6 +26,10 @@ export interface Chapter {
   wordCount: number;
   contentPath: string | null;
   summary: string | null;
+  /** 摘要生成时间（P1 摘要链） */
+  summaryGeneratedAt?: number | null;
+  /** 生成摘要时的章节字数（判断摘要是否过期） */
+  summarySourceWords?: number | null;
   createdAt: number;
   updatedAt: number;
 }

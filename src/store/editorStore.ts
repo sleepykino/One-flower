@@ -114,10 +114,12 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     if (!currentChapterId || !editorApi || !bookId) return;
     set({ saveState: 'saving' });
     try {
-      const { chapterService, versionStore } = getAppContext();
+      const { chapterService, versionStore, summaryService } = getAppContext();
       const doc = editorApi.getDoc();
       await chapterService.saveContent(currentChapterId, doc);
       await versionStore.saveVersion(currentChapterId, doc);
+      // 后台自动生成章节摘要（防抖，不阻塞编辑）
+      summaryService.scheduleAutoSummary(currentChapterId);
       // 更新章节字数
       const ch = await chapterService.get(currentChapterId);
       if (ch) {

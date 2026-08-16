@@ -6,6 +6,7 @@
 import type { ChatMessage } from './providers/LLMProvider';
 import type { AIMode, Character, ChapterContent, WorldbookEntryRef } from './types';
 import type { SkillManifest } from '../skill/types';
+import type { ChapterSummary } from '../summary/types';
 import { countTokens, truncateToTokenBudget } from '../../utils/tokens';
 
 export interface PromptContext {
@@ -13,8 +14,9 @@ export interface PromptContext {
   systemInstruction: string;
   enabledSkills: SkillManifest[]; // 已按 mode 过滤
   characters: Character[]; // 场景相关角色卡
-  worldbookEntries?: WorldbookEntryRef[]; // P0 可为空
-  recentChapters: ChapterContent[]; // 滑动窗口：最近 3 章
+  worldbookEntries?: WorldbookEntryRef[]; // P1：RAG 检索 top-K（check 模式为全量）
+  summaryChain?: ChapterSummary[]; // P1：前 N 章摘要链（远 -> 近）
+  recentChapters: ChapterContent[]; // 滑动窗口：最近 2 章原文
   currentChapter?: ChapterContent; // 续写模式用
   userInstruction?: string; // 改写/扩写时用户的要求
   selectedText?: string; // 改写/扩写选中的文本
@@ -25,7 +27,8 @@ export interface TokenBudget {
   skills: number; // ~2000
   characters: number; // ~1500
   worldbook: number; // ~1500 (P1)
-  recentChapters: number; // ~6000
+  summaryChain: number; // ~4000（P1，替代部分 recentChapters）
+  recentChapters: number; // ~3000（从 6000 缩减，摘要链分担）
   currentChapter: number; // ~3000
   userInstruction: number; // ~1000
   reserved: number; // 生成预留 ~8000
@@ -36,7 +39,8 @@ export const DEFAULT_TOKEN_BUDGET: TokenBudget = {
   skills: 2000,
   characters: 1500,
   worldbook: 1500,
-  recentChapters: 6000,
+  summaryChain: 4000,
+  recentChapters: 3000,
   currentChapter: 3000,
   userInstruction: 1000,
   reserved: 8000
@@ -95,7 +99,7 @@ export class PromptAssembler {
       userParts.push(`【角色设定】\n${charsAll}`);
     }
 
-    // ---- user：世界书（P0 check 模式注入全部；其余模式可空）----
+    // ---- user：世界书（P1：RAG 检索 top-K；check 模式为全量）----
     if (ctx.worldbookEntries && ctx.worldbookEntries.length > 0) {
       const wbAll = ctx.worldbookEntries
         .map((w) => `- [${w.category ?? '设定'}] ${w.title}: ${w.content}`)
@@ -105,7 +109,18 @@ export class PromptAssembler {
       );
     }
 
-    // ---- user：前情（滑动窗口，远 → 近）----
+    // ---- user：前情摘要链（P1，远 -> 近，替代部分 recentChapters）----
+    if (ctx.summaryChain && ctx.summaryChain.length > 0) {
+      const n = ctx.summaryChain.length;
+      const budgetPer = Math.floor(this.budget.summaryChain / n);
+      const parts = ctx.summaryChain.map((s, i) => {
+        const fit = truncateToTokenBudget(s.summary, Math.max(budgetPer, 100));
+        return `《${s.title || `第 ${n - i} 章`}》（摘要）：${fit.text}`;
+      });
+      userParts.push(`【前情摘要（远 -> 近）】\n${parts.join('\n')}`);
+    }
+
+    // ---- user：前情（滑动窗口，远 -> 近）----
     if (ctx.recentChapters.length > 0) {
       const budgetPerChapter = Math.floor(this.budget.recentChapters / ctx.recentChapters.length);
       const parts = ctx.recentChapters.map((c) => {
@@ -180,6 +195,18 @@ export class PromptAssembler {
       part: 'characters',
       tokens: countTokens(charsFit.text),
       truncated: charsFit.truncated
+    });
+    const wb = (ctx.worldbookEntries ?? [])
+      .map((w) => `${w.title}: ${w.content}`)
+      .join('\n');
+    const wbFit = truncateToTokenBudget(wb, this.budget.worldbook);
+    out.push({ part: 'worldbook', tokens: countTokens(wbFit.text), truncated: wbFit.truncated });
+    const chain = (ctx.summaryChain ?? []).map((s) => s.summary).join('\n');
+    const chainFit = truncateToTokenBudget(chain, this.budget.summaryChain);
+    out.push({
+      part: 'summaryChain',
+      tokens: countTokens(chainFit.text),
+      truncated: chainFit.truncated
     });
     const recent = ctx.recentChapters.map((c) => c.content).join('\n');
     const recentFit = truncateToTokenBudget(recent, this.budget.recentChapters);

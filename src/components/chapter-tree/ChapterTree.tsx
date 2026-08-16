@@ -2,8 +2,9 @@
  * 章节树：多级、拖拽排序（HTML5 DnD）、大纲编辑、状态切换、字数显示
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useEditorStore } from '../../store/editorStore';
+import { getAppContext } from '../../context/app-context';
 import { confirmDialog } from '../../native/dialog';
 import { CHAPTER_STATUS_LABEL, type Chapter, type ChapterStatus } from '../../types';
 
@@ -15,6 +16,7 @@ const STATUS_COLOR: Record<ChapterStatus, string> = {
 
 export function ChapterTree(): JSX.Element {
   const chapters = useEditorStore((s) => s.chapters);
+  const bookId = useEditorStore((s) => s.bookId);
   const currentChapterId = useEditorStore((s) => s.currentChapterId);
   const setCurrentChapter = useEditorStore((s) => s.setCurrentChapter);
   const createChapter = useEditorStore((s) => s.createChapter);
@@ -24,8 +26,74 @@ export function ChapterTree(): JSX.Element {
   const [outlineEditId, setOutlineEditId] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState('');
   const [newParent, setNewParent] = useState<string | null>(null);
+  const [batch, setBatch] = useState<{ done: number; total: number; running: boolean; errorCount: number } | null>(null);
+  /** 章节伏笔标记：埋设（绿）/ 回收（蓝）计数 */
+  const [foreshadowMarks, setForeshadowMarks] = useState<Map<string, { planted: number; resolved: number }>>(
+    new Map()
+  );
+
+  const loadForeshadowMarks = async (): Promise<void> => {
+    const bid = useEditorStore.getState().bookId;
+    if (!bid) {
+      setForeshadowMarks(new Map());
+      return;
+    }
+    const rows = await getAppContext().db.query<Record<string, unknown>>(
+      'SELECT planted_chapter_id, resolved_chapter_id FROM foreshadowings WHERE book_id = ? AND status != ?',
+      [bid, 'abandoned']
+    );
+    const m = new Map<string, { planted: number; resolved: number }>();
+    for (const r of rows) {
+      const p = (r.planted_chapter_id as string) ?? null;
+      const res = (r.resolved_chapter_id as string) ?? null;
+      if (p) {
+        const e = m.get(p) ?? { planted: 0, resolved: 0 };
+        e.planted += 1;
+        m.set(p, e);
+      }
+      if (res) {
+        const e = m.get(res) ?? { planted: 0, resolved: 0 };
+        e.resolved += 1;
+        m.set(res, e);
+      }
+    }
+    setForeshadowMarks(m);
+  };
+
+  useEffect(() => {
+    void loadForeshadowMarks();
+    const onRefresh = (): void => {
+      void loadForeshadowMarks();
+    };
+    window.addEventListener('novel-foreshadow-refresh', onRefresh);
+    return () => window.removeEventListener('novel-foreshadow-refresh', onRefresh);
+  }, [bookId]);
 
   const roots = chapters.filter((c) => c.parentId === null);
+
+  /** 批量补全全书摘要（导入旧书 / 首次启用摘要链） */
+  const runBatchSummaries = async (): Promise<void> => {
+    const bookId = useEditorStore.getState().bookId;
+    if (!bookId || batch?.running) return;
+    const { summaryService } = getAppContext();
+    const total = useEditorStore.getState().chapters.length;
+    setBatch({ done: 0, total, running: true, errorCount: 0 });
+    let done = 0;
+    let errorCount = 0;
+    try {
+      for await (const p of summaryService.generateAllSummaries(bookId)) {
+        if (p.status === 'done' || p.status === 'error') {
+          done += 1;
+          if (p.status === 'error') errorCount += 1;
+          setBatch({ done, total, running: true, errorCount });
+        }
+      }
+    } finally {
+      setBatch({ done, total, running: false, errorCount });
+      const b = useEditorStore.getState().bookId;
+      if (b) await useEditorStore.getState().loadChapters(b);
+    }
+  };
 
   const onDrop = async (): Promise<void> => {
     if (!dragId || !dropTarget || dragId === dropTarget.id) return;
@@ -58,6 +126,7 @@ export function ChapterTree(): JSX.Element {
   const renderNode = (chapter: Chapter, depth: number): JSX.Element => {
     const children = chapters.filter((c) => c.parentId === chapter.id);
     const isCurrent = chapter.id === currentChapterId;
+    const mark = foreshadowMarks.get(chapter.id);
     return (
       <div key={chapter.id}>
         <div
@@ -87,6 +156,22 @@ export function ChapterTree(): JSX.Element {
         >
           <span className="text-ink-400">{children.length > 0 ? '▾' : '·'}</span>
           <span className="flex-1 truncate">{chapter.title}</span>
+          {mark && mark.planted > 0 && (
+            <span
+              className="text-[10px] text-emerald-600"
+              title={`埋设伏笔 ${mark.planted} 处（详见伏笔追踪）`}
+            >
+              ●{mark.planted > 1 ? mark.planted : ''}
+            </span>
+          )}
+          {mark && mark.resolved > 0 && (
+            <span
+              className="text-[10px] text-blue-600"
+              title={`回收伏笔 ${mark.resolved} 处（详见伏笔追踪）`}
+            >
+              ●{mark.resolved > 1 ? mark.resolved : ''}
+            </span>
+          )}
           <span
             className={`rounded px-1 text-[10px] ${STATUS_COLOR[chapter.status]}`}
             title={CHAPTER_STATUS_LABEL[chapter.status]}
@@ -143,6 +228,22 @@ export function ChapterTree(): JSX.Element {
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-ink-200 px-3 py-2">
         <span className="text-sm font-medium">章节</span>
+        {batch ? (
+          <span className="text-[11px] text-ink-500">
+            摘要 {batch.done}/{batch.total}
+            {batch.errorCount > 0 ? `（失败 ${batch.errorCount}）` : ''}
+            {batch.running ? '…' : ' 完成'}
+          </span>
+        ) : (
+          <button
+            type="button"
+            title="为缺少摘要或内容已变更的章节批量生成摘要"
+            className="text-[11px] text-violet-600 hover:underline"
+            onClick={() => void runBatchSummaries()}
+          >
+            批量摘要
+          </button>
+        )}
       </div>
       <div className="flex-1 overflow-y-auto py-1">{roots.map((c) => renderNode(c, 0))}</div>
       <div className="border-t border-ink-200 p-2">
@@ -197,6 +298,27 @@ function OutlineEditor({ chapter, onDone }: { chapter: Chapter; onDone: () => vo
   const updateChapter = useEditorStore((s) => s.updateChapter);
   const [outline, setOutline] = useState(chapter.outline ?? '');
   const [status, setStatus] = useState<ChapterStatus>(chapter.status);
+  const [summaryBusy, setSummaryBusy] = useState(false);
+  const [summaryErr, setSummaryErr] = useState<string | null>(null);
+
+  const refreshChapters = async (): Promise<void> => {
+    const bookId = useEditorStore.getState().bookId;
+    if (bookId) await useEditorStore.getState().loadChapters(bookId);
+  };
+
+  const regenerateSummary = async (): Promise<void> => {
+    setSummaryBusy(true);
+    setSummaryErr(null);
+    try {
+      const { summaryService } = getAppContext();
+      await summaryService.regenerate(chapter.id);
+      await refreshChapters();
+    } catch (e) {
+      setSummaryErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSummaryBusy(false);
+    }
+  };
 
   return (
     <div className="mx-2 mb-2 rounded border border-violet-200 bg-violet-50/50 p-2">
@@ -207,6 +329,23 @@ function OutlineEditor({ chapter, onDone }: { chapter: Chapter; onDone: () => vo
         rows={3}
         className="w-full resize-none rounded border border-ink-200 px-2 py-1 text-xs outline-none focus:border-violet-400"
       />
+      <div className="mt-2 rounded border border-ink-200 bg-white/70 p-1.5">
+        <div className="flex items-center gap-1">
+          <span className="text-[11px] font-medium text-ink-500">AI 摘要（前情链）</span>
+          <button
+            type="button"
+            disabled={summaryBusy}
+            className="ml-auto text-[11px] text-violet-600 hover:underline disabled:text-ink-400"
+            onClick={() => void regenerateSummary()}
+          >
+            {summaryBusy ? '生成中…' : chapter.summary ? '重新生成' : '生成摘要'}
+          </button>
+        </div>
+        <div className="mt-0.5 line-clamp-4 text-[11px] leading-relaxed text-ink-600">
+          {chapter.summary ?? '尚未生成。章节保存后将自动在后台生成，用于 AI 前情上下文。'}
+        </div>
+        {summaryErr && <div className="mt-0.5 text-[11px] text-red-500">{summaryErr}</div>}
+      </div>
       <div className="mt-1 flex items-center gap-1">
         <select
           value={status}

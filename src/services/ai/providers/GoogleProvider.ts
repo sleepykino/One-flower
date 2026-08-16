@@ -118,4 +118,35 @@ export class GoogleProvider implements LLMProvider {
   countTokens(text: string): number {
     return countTokens(text);
   }
+
+  /** Gemini :batchEmbedContents（text-embedding-004 等） */
+  async embed(texts: string[], model: string): Promise<number[][]> {
+    const res = await tauriFetch(
+      `${this.baseUrl}/v1beta/models/${model}:batchEmbedContents`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': this.apiKey
+        },
+        body: JSON.stringify({
+          requests: texts.map((t) => ({
+            model: `models/${model}`,
+            content: { parts: [{ text: t }] }
+          }))
+        })
+      }
+    );
+    if (!res.ok) {
+      throw new Error(`Google Embedding 接口错误 ${res.status}: ${await res.text()}`);
+    }
+    const data = (await res.json()) as {
+      embeddings?: Array<{ values?: number[] }>;
+    };
+    const out = (data.embeddings ?? []).map((e) => e.values ?? []);
+    if (out.length !== texts.length || out.some((v) => v.length === 0)) {
+      throw new Error('Embedding 返回数量或维度异常');
+    }
+    return out;
+  }
 }

@@ -5,13 +5,17 @@
 
 import type { DatabaseAdapter, NativeBridge, Transaction } from '../native/NativeBridge';
 import initSql from './migrations/001_init.sql?raw';
+import p1Sql from './migrations/002_p1_additions.sql?raw';
 
 interface Migration {
   version: number;
   sql: string;
 }
 
-const MIGRATIONS: Migration[] = [{ version: 1, sql: initSql }];
+const MIGRATIONS: Migration[] = [
+  { version: 1, sql: initSql },
+  { version: 2, sql: p1Sql }
+];
 
 export class Database {
   private bridge: NativeBridge;

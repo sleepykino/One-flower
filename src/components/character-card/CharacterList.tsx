@@ -7,10 +7,12 @@ import { getAppContext } from '../../context/app-context';
 import { confirmDialog } from '../../native/dialog';
 import type { Character } from '../../types';
 import { CharacterForm } from './CharacterForm';
+import { RelationshipGraph } from '../relationship/RelationshipGraph';
 
 export function CharacterList({ bookId }: { bookId: string }): JSX.Element {
   const [characters, setCharacters] = useState<Character[]>([]);
   const [editing, setEditing] = useState<Character | 'new' | null>(null);
+  const [showGraph, setShowGraph] = useState(false);
 
   const load = async (): Promise<void> => {
     const ctx = getAppContext();
@@ -45,15 +47,53 @@ export function CharacterList({ bookId }: { bookId: string }): JSX.Element {
 
   return (
     <div className="flex h-full flex-col">
+      {showGraph && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-white">
+          <div className="flex items-center justify-between border-b border-ink-200 px-4 py-2">
+            <span className="text-sm font-medium">角色关系图</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-ink-400">单击节点打开角色卡 · ＋连线后依次点两个角色 · 点边编辑</span>
+              <button
+                type="button"
+                className="rounded border border-ink-200 px-3 py-1 text-sm hover:bg-ink-100"
+                onClick={() => setShowGraph(false)}
+              >
+                关闭
+              </button>
+            </div>
+          </div>
+          <div className="flex-1">
+            <RelationshipGraph
+              bookId={bookId}
+              onOpenCharacter={(cid) => {
+                const c = characters.find((x) => x.id === cid);
+                if (c) {
+                  setShowGraph(false);
+                  setEditing(c);
+                }
+              }}
+            />
+          </div>
+        </div>
+      )}
       <div className="flex items-center justify-between border-b border-ink-200 px-3 py-2">
         <span className="text-sm font-medium">角色卡（{characters.length}）</span>
-        <button
-          type="button"
-          className="rounded bg-violet-600 px-2 py-1 text-xs text-white hover:bg-violet-700"
-          onClick={() => setEditing('new')}
-        >
-          新建
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="rounded border border-ink-200 px-2 py-1 text-xs hover:bg-ink-100"
+            onClick={() => setShowGraph(true)}
+          >
+            关系图
+          </button>
+          <button
+            type="button"
+            className="rounded bg-violet-600 px-2 py-1 text-xs text-white hover:bg-violet-700"
+            onClick={() => setEditing('new')}
+          >
+            新建
+          </button>
+        </div>
       </div>
       <div className="flex-1 overflow-y-auto p-2">
         {characters.length === 0 && (

@@ -11,8 +11,9 @@ import type { ChapterService } from '../chapter/ChapterService';
 import type { MarkdownExporter } from './MarkdownExporter';
 import type { TxtExporter } from './TxtExporter';
 import type { EpubExporter } from './EpubExporter';
+import type { DocxExporter } from './DocxExporter';
 
-export type ExportFormat = 'markdown' | 'txt' | 'epub' | 'backup';
+export type ExportFormat = 'markdown' | 'txt' | 'epub' | 'docx' | 'backup';
 
 /** ProseMirror → 各格式转换器接口 */
 export interface DocExporter {
@@ -33,6 +34,7 @@ export class ExportService {
   private markdownExporter: MarkdownExporter;
   private txtExporter: TxtExporter;
   private epubExporter: EpubExporter;
+  private docxExporter: DocxExporter;
 
   constructor(
     bridge: NativeBridge,
@@ -40,7 +42,8 @@ export class ExportService {
     chapterService: ChapterService,
     markdownExporter: MarkdownExporter,
     txtExporter: TxtExporter,
-    epubExporter: EpubExporter
+    epubExporter: EpubExporter,
+    docxExporter: DocxExporter
   ) {
     this.bridge = bridge as never;
     this.db = db;
@@ -48,6 +51,7 @@ export class ExportService {
     this.markdownExporter = markdownExporter;
     this.txtExporter = txtExporter;
     this.epubExporter = epubExporter;
+    this.docxExporter = docxExporter;
   }
 
   /** 导出单章为指定格式 */
@@ -70,6 +74,11 @@ export class ExportService {
         [{ title: chapter.title, doc }]
       );
       await this.bridge.fs.writeBinaryFile(outputPath, new Uint8Array(buf));
+      return;
+    }
+    if (format === 'docx') {
+      const buf = await this.docxExporter.convertDoc(doc, chapter.title);
+      await this.bridge.fs.writeBinaryFile(outputPath, buf);
       return;
     }
     const exporter = format === 'markdown' ? this.markdownExporter : this.txtExporter;
@@ -109,6 +118,22 @@ export class ExportService {
       }
       const buf = await this.epubExporter.exportEpub(bookTitle, bookAuthor, parts);
       await this.bridge.fs.writeBinaryFile(outputPath, new Uint8Array(buf));
+      return;
+    }
+
+    if (format === 'docx') {
+      const parts: Array<{ title: string; doc: ProseMirrorDoc }> = [];
+      let i = 0;
+      for (const ch of chapters) {
+        parts.push({ title: ch.title, doc: await this.chapterService.getContent(ch.id) });
+        i++;
+        onProgress?.(i, total);
+      }
+      const buf = await this.docxExporter.convertBook(
+        { title: bookTitle, author: bookAuthor, genre: String(bookRow.genre ?? '') },
+        parts
+      );
+      await this.bridge.fs.writeBinaryFile(outputPath, buf);
       return;
     }
 

@@ -13,6 +13,22 @@ const CATEGORIES = ['地点', '势力', '物品', '事件', '其他'];
 export function WorldbookPanel({ bookId }: { bookId: string }): JSX.Element {
   const [entries, setEntries] = useState<WorldbookEntry[]>([]);
   const [editing, setEditing] = useState<Partial<WorldbookEntry> | null>(null);
+  const [embeddedIds, setEmbeddedIds] = useState<Set<string>>(new Set());
+  const [embedBatch, setEmbedBatch] = useState<{
+    done: number;
+    total: number;
+    running: boolean;
+    errorCount: number;
+  } | null>(null);
+
+  const loadEmbedded = async (): Promise<void> => {
+    try {
+      const ids = await getAppContext().ragService.embeddedEntryIds(bookId);
+      setEmbeddedIds(ids);
+    } catch {
+      setEmbeddedIds(new Set());
+    }
+  };
 
   const load = async (): Promise<void> => {
     const rows = await getAppContext().db.query<Record<string, unknown>>(
@@ -31,11 +47,20 @@ export function WorldbookPanel({ bookId }: { bookId: string }): JSX.Element {
         updatedAt: Number(r.updated_at)
       }))
     );
+    void loadEmbedded();
   };
 
   useEffect(() => {
     void load();
   }, [bookId]);
+
+  /** 保存后自动向量化（后台，失败不影响保存） */
+  const autoEmbed = (entryId: string): void => {
+    void getAppContext()
+      .ragService.embedEntry(entryId)
+      .then(() => loadEmbedded())
+      .catch((e) => console.warn('[RAG] 自动向量化失败:', e));
+  };
 
   const save = async (): Promise<void> => {
     if (!editing?.title?.trim()) {
@@ -44,7 +69,9 @@ export function WorldbookPanel({ bookId }: { bookId: string }): JSX.Element {
     }
     const { db, wq } = getAppContext();
     const now = Date.now();
+    let savedId: string;
     if (editing.id) {
+      savedId = editing.id;
       await wq.enqueue(() =>
         db.exec(
           'UPDATE worldbook_entries SET title = ?, category = ?, content = ?, tags = ?, updated_at = ? WHERE id = ?',
@@ -59,11 +86,12 @@ export function WorldbookPanel({ bookId }: { bookId: string }): JSX.Element {
         )
       );
     } else {
+      savedId = crypto.randomUUID();
       await wq.enqueue(() =>
         db.exec(
           'INSERT INTO worldbook_entries (id, book_id, title, category, content, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
           [
-            crypto.randomUUID(),
+            savedId,
             bookId,
             editing.title,
             editing.category ?? null,
@@ -76,17 +104,42 @@ export function WorldbookPanel({ bookId }: { bookId: string }): JSX.Element {
       );
     }
     setEditing(null);
+    autoEmbed(savedId);
     await load();
     window.dispatchEvent(new Event('novel-mentions-refresh'));
   };
 
   const remove = async (id: string): Promise<void> => {
     if (!(await confirmDialog('确认删除该条目？'))) return;
-    await getAppContext().wq.enqueue(() =>
-      getAppContext().db.exec('DELETE FROM worldbook_entries WHERE id = ?', [id])
-    );
+    const { db, wq, ragService } = getAppContext();
+    await wq.enqueue(() => db.exec('DELETE FROM worldbook_entries WHERE id = ?', [id]));
+    await ragService.removeEmbedding(id).catch(() => undefined);
     await load();
     window.dispatchEvent(new Event('novel-mentions-refresh'));
+  };
+
+  /** 批量向量化（首次启用 RAG / 内容更新后补全） */
+  const runEmbedAll = async (): Promise<void> => {
+    if (embedBatch?.running) return;
+    const { ragService } = getAppContext();
+    const total = entries.length;
+    setEmbedBatch({ done: 0, total, running: true, errorCount: 0 });
+    let done = 0;
+    let errorCount = 0;
+    try {
+      for await (const p of ragService.embedAll(bookId)) {
+        if (p.status === 'done' || p.status === 'error') {
+          done += 1;
+          if (p.status === 'error') errorCount += 1;
+          setEmbedBatch({ done, total, running: true, errorCount });
+        }
+      }
+    } catch (e) {
+      void alertDialog(`向量化失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setEmbedBatch({ done, total, running: false, errorCount });
+      void loadEmbedded();
+    }
   };
 
   if (editing) {
@@ -141,13 +194,31 @@ export function WorldbookPanel({ bookId }: { bookId: string }): JSX.Element {
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-ink-200 px-3 py-2">
         <span className="text-sm font-medium">世界书（{entries.length}）</span>
-        <button
-          type="button"
-          className="rounded bg-violet-600 px-2 py-1 text-xs text-white hover:bg-violet-700"
-          onClick={() => setEditing({ category: '其他' })}
-        >
-          新建
-        </button>
+        <div className="flex items-center gap-2">
+          {embedBatch ? (
+            <span className="text-[11px] text-ink-400">
+              {embedBatch.running
+                ? `向量化 ${embedBatch.done}/${embedBatch.total}…`
+                : `完成 ${embedBatch.done}/${embedBatch.total}${embedBatch.errorCount ? `（失败 ${embedBatch.errorCount}）` : ''}`}
+            </span>
+          ) : (
+            <button
+              type="button"
+              disabled={entries.length === 0}
+              className="rounded border border-ink-200 px-2 py-1 text-xs hover:bg-ink-100 disabled:opacity-40"
+              onClick={() => void runEmbedAll()}
+            >
+              批量向量化
+            </button>
+          )}
+          <button
+            type="button"
+            className="rounded bg-violet-600 px-2 py-1 text-xs text-white hover:bg-violet-700"
+            onClick={() => setEditing({ category: '其他' })}
+          >
+            新建
+          </button>
+        </div>
       </div>
       <div className="flex-1 overflow-y-auto p-2">
         {entries.length === 0 && (
@@ -166,6 +237,12 @@ export function WorldbookPanel({ bookId }: { bookId: string }): JSX.Element {
                 {w.category ?? '其他'}
               </span>
               <span className="text-sm font-medium">{w.title}</span>
+              {embeddedIds.has(w.id) && (
+                <span
+                  title="已向量化（参与 RAG 检索）"
+                  className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500"
+                />
+              )}
               <button
                 type="button"
                 className="ml-auto hidden text-xs text-ink-400 hover:text-red-600 group-hover:block"

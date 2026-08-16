@@ -100,4 +100,27 @@ export class OpenAICompatProvider implements LLMProvider {
   countTokens(text: string): number {
     return countTokens(text);
   }
+
+  /** OpenAI 兼容 /embeddings 端点（DeepSeek/Kimi/智谱等多数兼容服务支持） */
+  async embed(texts: string[], model: string): Promise<number[][]> {
+    const res = await tauriFetch(`${this.baseUrl}/embeddings`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.apiKey}`
+      },
+      body: JSON.stringify({ model, input: texts })
+    });
+    if (!res.ok) {
+      throw new Error(`Embedding 接口错误 ${res.status}: ${await res.text()}`);
+    }
+    const data = (await res.json()) as {
+      data?: Array<{ index?: number; embedding?: number[] }>;
+    };
+    const out = (data.data ?? []).map((d) => d.embedding ?? []);
+    if (out.length !== texts.length || out.some((v) => v.length === 0)) {
+      throw new Error('Embedding 返回数量或维度异常');
+    }
+    return out;
+  }
 }
