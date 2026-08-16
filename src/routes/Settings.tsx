@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSettingsStore } from '../store/settingsStore';
+import { alertDialog, confirmDialog } from '../native/dialog';
 import type { ProviderConfig } from '../types';
 
 type ProviderType = ProviderConfig['provider'];
@@ -41,11 +42,11 @@ export function Settings(): JSX.Element {
   const submit = async (): Promise<void> => {
     if (!editing) return;
     if (!editing.name.trim() || !editing.model.trim()) {
-      window.alert('名称与模型必填');
+      void alertDialog('名称与模型必填');
       return;
     }
     if (editing.provider === 'openai_compat' && !editing.baseUrl.trim()) {
-      window.alert('OpenAI 兼容协议需填写 baseURL');
+      void alertDialog('OpenAI 兼容协议需填写 baseURL');
       return;
     }
     await saveConfig(editing);
@@ -207,7 +208,9 @@ export function Settings(): JSX.Element {
                 type="button"
                 className="text-xs text-ink-400 hover:text-red-600"
                 onClick={() => {
-                  if (window.confirm(`删除配置「${c.name}」？`)) void removeConfig(c.id);
+                  void confirmDialog(`删除配置「${c.name}」？`).then((ok) => {
+                    if (ok) void removeConfig(c.id);
+                  });
                 }}
               >
                 删除

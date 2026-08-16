@@ -4,6 +4,7 @@
 
 import { useState } from 'react';
 import { getAppContext } from '../../context/app-context';
+import { confirmDialog } from '../../native/dialog';
 import type { SearchResult } from '../../services/search/GlobalSearch';
 import { useEditorStore } from '../../store/editorStore';
 
@@ -38,16 +39,33 @@ export function GlobalSearchModal({ bookId, onClose }: { bookId: string; onClose
   const runReplace = async (): Promise<void> => {
     if (!query.trim() || !results || results.length === 0) return;
     const total = results.reduce((s, r) => s + r.matches.length, 0);
-    if (!window.confirm(`将影响 ${results.length} 个章节（约 ${total} 处），替换后自动重建索引。确认执行？`)) {
+    const ok = await confirmDialog(
+      `将影响 ${results.length} 个章节（约 ${total} 处），替换后自动重建索引。确认执行？`,
+      '全局替换确认'
+    );
+    if (!ok) {
       return;
     }
     setReplacing(true);
     try {
+      // 1. 先落盘编辑器中未保存的修改，确保替换基于最新内容
+      await useEditorStore.getState().saveCurrentChapter();
+      // 2. 执行替换（写文件 + 重建 FTS 索引）
       const r = await getAppContext().search.replace(query, replacement, bookId, {
         useRegex,
         caseSensitive
       });
       setMessage(`已替换 ${r.replacedCount} 处（${r.affectedChapters.length} 章）`);
+      // 3. 刷新：当前章节若受影响则重载编辑器内容，并刷新章节列表字数
+      const store = useEditorStore.getState();
+      const cur = store.currentChapterId;
+      if (cur && r.affectedChapters.includes(cur)) {
+        const doc = await getAppContext().chapterService.getContent(cur);
+        store.editorApi?.setContent(doc);
+      }
+      if (store.bookId) {
+        await store.loadChapters(store.bookId);
+      }
       await runSearch();
     } catch (e) {
       setMessage(e instanceof Error ? e.message : String(e));

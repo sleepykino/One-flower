@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import { getAppContext } from '../../context/app-context';
+import { alertDialog, confirmDialog } from '../../native/dialog';
 import type { WorldbookEntry } from '../../types';
 
 const CATEGORIES = ['地点', '势力', '物品', '事件', '其他'];
@@ -38,7 +39,7 @@ export function WorldbookPanel({ bookId }: { bookId: string }): JSX.Element {
 
   const save = async (): Promise<void> => {
     if (!editing?.title?.trim()) {
-      window.alert('标题不能为空');
+      void alertDialog('标题不能为空');
       return;
     }
     const { db, wq } = getAppContext();
@@ -80,7 +81,7 @@ export function WorldbookPanel({ bookId }: { bookId: string }): JSX.Element {
   };
 
   const remove = async (id: string): Promise<void> => {
-    if (!window.confirm('确认删除该条目？')) return;
+    if (!(await confirmDialog('确认删除该条目？'))) return;
     await getAppContext().wq.enqueue(() =>
       getAppContext().db.exec('DELETE FROM worldbook_entries WHERE id = ?', [id])
     );

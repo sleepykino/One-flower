@@ -128,23 +128,20 @@ export class GlobalSearch {
     return out;
   }
 
-  /** 普通模式：LIKE（不区分大小写）/ instr（区分大小写），中文子串可命中 */
+  /** 普通模式：按书取全部索引行，JS 端做子串匹配（大小写可选），避免 SQL LIKE/FTS 方言差异 */
   private async searchPlain(
     query: string,
     bookId: string,
     caseSensitive: boolean,
     limit: number
   ): Promise<SearchResult[]> {
-    const rows = await this.db.query<{ chapter_id: string; title: string }>(
-      caseSensitive
-        ? `SELECT chapter_id, title FROM chapters_fts WHERE book_id = ? AND instr(content, ?) > 0 LIMIT ?`
-        : `SELECT chapter_id, title FROM chapters_fts WHERE book_id = ? AND content LIKE ? ESCAPE '\\' LIMIT ?`,
-      caseSensitive ? [bookId, query, limit] : [bookId, `%${escapeLike(query)}%`, limit]
+    const chapters = await this.db.query<{ chapter_id: string; title: string }>(
+      'SELECT chapter_id, title FROM chapters_fts WHERE book_id = ?',
+      [bookId]
     );
-
-    const results: SearchResult[] = [];
     const needle = caseSensitive ? query : query.toLowerCase();
-    for (const ch of rows) {
+    const results: SearchResult[] = [];
+    for (const ch of chapters.slice(0, limit)) {
       const content = await this.getIndexedContent(ch.chapter_id);
       const hay = caseSensitive ? content : content.toLowerCase();
       const matches: Array<{ excerpt: string; position: number }> = [];
@@ -216,8 +213,4 @@ export class GlobalSearch {
     }
     return { replacedCount, affectedChapters: affected };
   }
-}
-
-function escapeLike(s: string): string {
-  return s.replace(/[\\%_]/g, (c) => '\\' + c);
 }

@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router-dom';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useBookStore } from '../store/bookStore';
 import { getAppContext } from '../context/app-context';
+import { confirmDialog } from '../native/dialog';
 import type { Book } from '../types';
 
 export function Home(): JSX.Element {
@@ -59,7 +60,7 @@ export function Home(): JSX.Element {
     <div className="h-full overflow-y-auto">
       <header className="mx-auto flex max-w-5xl items-center justify-between px-6 py-6">
         <div>
-          <h1 className="text-2xl font-bold">One Flower</h1>
+          <h1 className="text-2xl font-bold">One Flower 一花一世界</h1>
           <p className="text-sm text-ink-500">本地优先 · 多模式 AI · Skill 文风 · 一致性检查</p>
         </div>
         <div className="flex gap-2">
@@ -177,9 +178,9 @@ function BookCard({
           className="hidden text-xs text-ink-400 hover:text-red-600 group-hover:block"
           onClick={(e) => {
             e.stopPropagation();
-            if (window.confirm(`确认删除《${book.title}》？本地文件将一并删除。`)) {
-              void onDelete();
-            }
+            void confirmDialog(`确认删除《${book.title}》？本地文件将一并删除。`).then((ok) => {
+              if (ok) void onDelete();
+            });
           }}
         >
           删除

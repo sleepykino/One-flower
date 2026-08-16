@@ -9,6 +9,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { getAppContext } from '../../context/app-context';
+import { alertDialog } from '../../native/dialog';
 import type { Character, CharacterSchema } from '../../types';
 
 interface StringField {
@@ -119,7 +120,7 @@ export function CharacterForm({
     try {
       JSON.parse(schemaDraft);
     } catch {
-      window.alert('JSON Schema 格式错误');
+      void alertDialog('JSON Schema 格式错误');
       return;
     }
     await getAppContext().characterService.saveSchema(schema.id, schemaDraft);

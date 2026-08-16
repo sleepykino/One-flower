@@ -4,6 +4,7 @@
 
 import { useState } from 'react';
 import { useEditorStore } from '../../store/editorStore';
+import { confirmDialog } from '../../native/dialog';
 import { CHAPTER_STATUS_LABEL, type Chapter, type ChapterStatus } from '../../types';
 
 const STATUS_COLOR: Record<ChapterStatus, string> = {
@@ -122,9 +123,9 @@ export function ChapterTree(): JSX.Element {
             className="hidden text-xs text-ink-400 hover:text-red-600 group-hover:block"
             onClick={(e) => {
               e.stopPropagation();
-              if (window.confirm(`确认删除「${chapter.title}」及其子章节？`)) {
-                void deleteChapter(chapter.id);
-              }
+              void confirmDialog(`确认删除「${chapter.title}」及其子章节？`).then((ok) => {
+                if (ok) void deleteChapter(chapter.id);
+              });
             }}
           >
             ×

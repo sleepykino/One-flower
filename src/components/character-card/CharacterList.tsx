@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from 'react';
 import { getAppContext } from '../../context/app-context';
+import { confirmDialog } from '../../native/dialog';
 import type { Character } from '../../types';
 import { CharacterForm } from './CharacterForm';
 
@@ -24,7 +25,7 @@ export function CharacterList({ bookId }: { bookId: string }): JSX.Element {
   }, [bookId]);
 
   const remove = async (id: string): Promise<void> => {
-    if (!window.confirm('确认删除该角色卡？')) return;
+    if (!(await confirmDialog('确认删除该角色卡？'))) return;
     await getAppContext().characterService.remove(id);
     await load();
   };

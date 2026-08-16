@@ -31,6 +31,24 @@ interface PopupState {
   y: number;
 }
 
+/** 字体选项（Windows 常见中文字体 + 西文衬线） */
+const FONT_FAMILIES: Array<{ value: string; label: string; css: string }> = [
+  { value: 'default', label: '默认', css: "'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif" },
+  { value: 'simsun', label: '宋体', css: 'SimSun, serif' },
+  { value: 'kaiti', label: '楷体', css: 'KaiTi, serif' },
+  { value: 'fangsong', label: '仿宋', css: 'FangSong, serif' },
+  { value: 'simhei', label: '黑体', css: 'SimHei, sans-serif' },
+  { value: 'yahei', label: '微软雅黑', css: "'Microsoft YaHei', sans-serif" },
+  { value: 'dengxian', label: '等线', css: 'DengXian, sans-serif' },
+  { value: 'georgia', label: 'Georgia', css: 'Georgia, serif' },
+  { value: 'times', label: 'Times New Roman', css: "'Times New Roman', serif" }
+];
+
+const FONT_SIZES = [14, 15, 16, 17, 18, 20, 22, 24];
+
+const FONT_SIZE_KEY = 'novel-editor-font-size';
+const FONT_FAMILY_KEY = 'novel-editor-font-family';
+
 interface TempFound {
   node: import('@tiptap/pm/model').Node;
   pos: number;
@@ -79,6 +97,24 @@ export function NovelEditor({ bookId }: { bookId: string }) {
   const [characters, setCharacters] = useState<MentionItem[]>([]);
   const [worldbook, setWorldbook] = useState<MentionItem[]>([]);
   const [, forceTick] = useState(0);
+  // 编辑器外观：字体/字号（localStorage 持久化）
+  const [fontSize, setFontSize] = useState<number>(() => {
+    const v = Number(localStorage.getItem(FONT_SIZE_KEY));
+    return FONT_SIZES.includes(v) ? v : 16;
+  });
+  const [fontFamily, setFontFamily] = useState<string>(
+    () => localStorage.getItem(FONT_FAMILY_KEY) || 'default'
+  );
+
+  const changeFontSize = (v: number): void => {
+    setFontSize(v);
+    localStorage.setItem(FONT_SIZE_KEY, String(v));
+  };
+  const changeFontFamily = (v: string): void => {
+    setFontFamily(v);
+    localStorage.setItem(FONT_FAMILY_KEY, v);
+  };
+  const fontCss = FONT_FAMILIES.find((f) => f.value === fontFamily)?.css ?? FONT_FAMILIES[0].css;
 
   // 拉取 @ / [[ 弹窗数据；监听面板保存后的刷新事件
   useEffect(() => {
@@ -354,11 +390,46 @@ export function NovelEditor({ bookId }: { bookId: string }) {
         <Sep />
         <TB onClick={() => openPopupManually('character')} title="插入角色提及">@角色</TB>
         <TB onClick={() => openPopupManually('worldbook')} title="插入世界书引用">[[条目]]</TB>
+        {/* 字体 / 字号（编辑区显示设置，持久化） */}
+        <span className="ml-auto flex items-center gap-1 text-xs">
+          <select
+            value={fontFamily}
+            onChange={(e) => changeFontFamily(e.target.value)}
+            title="字体"
+            className="rounded border border-ink-200 bg-white px-1 py-0.5 text-xs outline-none focus:border-violet-400"
+          >
+            {FONT_FAMILIES.map((f) => (
+              <option key={f.value} value={f.value}>
+                {f.label}
+              </option>
+            ))}
+          </select>
+          <select
+            value={fontSize}
+            onChange={(e) => changeFontSize(Number(e.target.value))}
+            title="字号"
+            className="rounded border border-ink-200 bg-white px-1 py-0.5 text-xs outline-none focus:border-violet-400"
+          >
+            {FONT_SIZES.map((s) => (
+              <option key={s} value={s}>
+                {s}px
+              </option>
+            ))}
+          </select>
+        </span>
       </div>
 
       {/* 编辑区 */}
       <div className="flex-1 overflow-y-auto bg-white px-6 py-6">
-        <div className="mx-auto max-w-3xl">
+        <div
+          className="mx-auto max-w-3xl"
+          style={
+            {
+              '--editor-font-size': `${fontSize}px`,
+              '--editor-font-family': fontCss
+            } as React.CSSProperties
+          }
+        >
           <EditorContent editor={editor} />
         </div>
       </div>

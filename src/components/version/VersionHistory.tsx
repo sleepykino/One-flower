@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from 'react';
 import { getAppContext } from '../../context/app-context';
+import { confirmDialog } from '../../native/dialog';
 import { useEditorStore } from '../../store/editorStore';
 import type { ChapterVersionMeta } from '../../services/chapter/ChapterVersionStore';
 import type { TextDiffResult } from '../../utils/diff';
@@ -52,7 +53,7 @@ export function VersionHistory(): JSX.Element {
   };
 
   const restore = async (versionId: string): Promise<void> => {
-    if (!window.confirm('回退后当前正文将被覆盖（会先存为历史版本），确认回退？')) return;
+    if (!(await confirmDialog('回退后当前正文将被覆盖（会先存为历史版本），确认回退？'))) return;
     const doc = await getAppContext().versionStore.restore(versionId);
     useEditorStore.getState().editorApi?.setContent(doc);
     await load();

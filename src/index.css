@@ -16,7 +16,8 @@ body {
 /* ============ 编辑器排版 ============ */
 .novel-editor .ProseMirror {
   @apply min-h-[60vh] outline-none px-1;
-  font-size: 16px;
+  font-size: var(--editor-font-size, 16px);
+  font-family: var(--editor-font-family, 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif);
   line-height: 1.9;
 }
 

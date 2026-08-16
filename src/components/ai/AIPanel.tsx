@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import { getAppContext } from '../../context/app-context';
+import { alertDialog } from '../../native/dialog';
 import { useEditorStore } from '../../store/editorStore';
 import { useAIStore } from '../../store/aiStore';
 import type { AIMode } from '../../services/skill/types';
@@ -65,7 +66,7 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
     const { orchestrator } = getAppContext();
     const api = useEditorStore.getState().editorApi;
     if (!api || !currentChapterId) {
-      window.alert('请先选择要编辑的章节');
+      void alertDialog('请先选择要编辑的章节');
       return;
     }
     const controller = useAIStore.getState().startStream();
@@ -168,7 +169,7 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
     const { orchestrator } = getAppContext();
     const api = useEditorStore.getState().editorApi;
     if (!api || !currentChapterId) {
-      window.alert('请先选择要检查的章节');
+      void alertDialog('请先选择要检查的章节');
       return;
     }
     const store = useAIStore.getState();
@@ -182,7 +183,7 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
       });
       useAIStore.getState().setReport(r);
     } catch (e) {
-      window.alert(`检查失败：${e instanceof Error ? e.message : String(e)}`);
+      void alertDialog(`检查失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       useAIStore.getState().setChecking(false);
     }
