@@ -48,9 +48,13 @@ export class SkillLoader {
       try {
         const raw = await this.bridge.fs.readFile(file);
         const manifest = this.parse(entry.name, dirPath, raw);
-        if (manifest) manifests.push(manifest);
-      } catch {
-        // 无 SKILL.md 或解析失败，跳过
+        if (manifest) {
+          manifests.push(manifest);
+        } else {
+          console.warn(`Skill 解析失败（frontmatter 缺失或格式错误）：${file}`);
+        }
+      } catch (e) {
+        console.warn(`Skill 加载失败（缺少 SKILL.md 或读取错误）：${file}`, e);
       }
     }
 

@@ -31,6 +31,15 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
   const [selectedCharIds, setSelectedCharIds] = useState<string[]>([]);
   const [instruction, setInstruction] = useState('');
   const [scene, setScene] = useState('');
+  // 生成参数：单次回复 token 上限（约等于中文字数）与采样温度
+  const [maxTokens, setMaxTokens] = useState(2048);
+  const [temperature, setTemperature] = useState('0.8');
+  const tempValue = (): number | undefined => {
+    const t = parseFloat(temperature);
+    return Number.isFinite(t) && t >= 0 && t <= 2 ? t : undefined;
+  };
+  const tokenValue = (): number | undefined =>
+    Number.isFinite(maxTokens) && maxTokens > 0 ? Math.floor(maxTokens) : undefined;
 
   useEffect(() => {
     void getAppContext()
@@ -72,6 +81,8 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
           currentContent: api.getPlainText(),
           recentChapters: recent,
           selectedCharacterIds: selectedCharIds,
+          maxTokens: tokenValue(),
+          temperature: tempValue(),
           signal: controller.signal
         });
       } else if (kind === 'rewrite') {
@@ -81,6 +92,8 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
           selectedText: selectedText,
           instruction,
           recentChapters: recent,
+          maxTokens: tokenValue(),
+          temperature: tempValue(),
           signal: controller.signal
         });
       } else {
@@ -207,6 +220,12 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
               当前：{currentChapter?.title ?? '未选择章节'} · 前情自动取最近 3 章
             </div>
             <CharPicker characters={characters} selected={selectedCharIds} onToggle={toggleChar} />
+            <GenParams
+              maxTokens={maxTokens}
+              setMaxTokens={setMaxTokens}
+              temperature={temperature}
+              setTemperature={setTemperature}
+            />
             <button
               type="button"
               disabled={streaming || !currentChapterId}
@@ -231,10 +250,16 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
               placeholder="改写要求，如：改为更紧张的氛围"
               className="mb-2 w-full resize-none rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400"
             />
+            <GenParams
+              maxTokens={maxTokens}
+              setMaxTokens={setMaxTokens}
+              temperature={temperature}
+              setTemperature={setTemperature}
+            />
             <button
               type="button"
               disabled={streaming || !selectedText || !instruction.trim()}
-              className="w-full rounded bg-violet-600 py-1.5 text-sm text-white hover:bg-violet-700 disabled:opacity-40"
+              className="mt-3 w-full rounded bg-violet-600 py-1.5 text-sm text-white hover:bg-violet-700 disabled:opacity-40"
               onClick={() => {
                 const api = useEditorStore.getState().editorApi;
                 const range = api?.getSelectionRange() ?? null;
@@ -347,6 +372,46 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function GenParams({
+  maxTokens,
+  setMaxTokens,
+  temperature,
+  setTemperature
+}: {
+  maxTokens: number;
+  setMaxTokens: (v: number) => void;
+  temperature: string;
+  setTemperature: (v: string) => void;
+}): JSX.Element {
+  return (
+    <div className="mt-3 flex items-center gap-2 text-xs text-ink-600">
+      <label className="flex items-center gap-1">
+        字数上限
+        <input
+          type="number"
+          min={1}
+          step={128}
+          value={maxTokens}
+          onChange={(e) => setMaxTokens(parseInt(e.target.value, 10) || 0)}
+          className="w-20 rounded border border-ink-200 px-1.5 py-1 outline-none focus:border-violet-400"
+        />
+      </label>
+      <label className="flex items-center gap-1" title="0 = 严谨确定，2 = 发散大胆">
+        温度
+        <input
+          type="number"
+          min={0}
+          max={2}
+          step={0.1}
+          value={temperature}
+          onChange={(e) => setTemperature(e.target.value)}
+          className="w-16 rounded border border-ink-200 px-1.5 py-1 outline-none focus:border-violet-400"
+        />
+      </label>
     </div>
   );
 }

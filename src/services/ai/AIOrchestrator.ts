@@ -118,8 +118,8 @@ export class AIOrchestrator {
     yield* provider.stream(messages, {
       model: config,
       signal: params.signal,
-      maxTokens: 4096,
-      temperature: 0.85
+      maxTokens: params.maxTokens ?? 4096,
+      temperature: params.temperature ?? 0.85
     });
   }
 
@@ -139,8 +139,8 @@ export class AIOrchestrator {
     yield* provider.stream(messages, {
       model: await this.modelOf(params.bookId),
       signal: params.signal,
-      maxTokens: 4096,
-      temperature: 0.7
+      maxTokens: params.maxTokens ?? 4096,
+      temperature: params.temperature ?? 0.7
     });
   }
 

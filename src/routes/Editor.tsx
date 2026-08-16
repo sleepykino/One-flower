@@ -41,6 +41,8 @@ export function Editor(): JSX.Element {
   const [searchOpen, setSearchOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [bookTitle, setBookTitle] = useState('');
+  const [leftOpen, setLeftOpen] = useState(true);
+  const [rightOpen, setRightOpen] = useState(true);
 
   useEffect(() => {
     setBookId(bookId);
@@ -93,6 +95,22 @@ export function Editor(): JSX.Element {
           </span>
           <button
             type="button"
+            className={`rounded border px-2 py-1 hover:bg-ink-100 ${leftOpen ? 'border-violet-300 text-violet-700' : 'border-ink-200 text-ink-500'}`}
+            title={leftOpen ? '收起章节目录' : '展开章节目录'}
+            onClick={() => setLeftOpen((v) => !v)}
+          >
+            {leftOpen ? '◀ 目录' : '▶ 目录'}
+          </button>
+          <button
+            type="button"
+            className={`rounded border px-2 py-1 hover:bg-ink-100 ${rightOpen ? 'border-violet-300 text-violet-700' : 'border-ink-200 text-ink-500'}`}
+            title={rightOpen ? '收起功能面板' : '展开功能面板'}
+            onClick={() => setRightOpen((v) => !v)}
+          >
+            {rightOpen ? '面板 ▶' : '◀ 面板'}
+          </button>
+          <button
+            type="button"
             className="rounded border border-ink-200 px-2 py-1 hover:bg-ink-100"
             onClick={() => setSearchOpen(true)}
           >
@@ -110,8 +128,14 @@ export function Editor(): JSX.Element {
 
       {/* 三栏布局 */}
       <div className="flex min-h-0 flex-1">
-        <aside className="w-64 shrink-0 border-r border-ink-200 bg-ink-50">
-          <ChapterTree />
+        <aside
+          className={`shrink-0 overflow-hidden border-r border-ink-200 bg-ink-50 transition-[width] duration-200 ${
+            leftOpen ? 'w-64' : 'w-0 border-r-0'
+          }`}
+        >
+          <div className="h-full w-64">
+            <ChapterTree />
+          </div>
         </aside>
 
         <main className="min-w-0 flex-1">
@@ -124,30 +148,36 @@ export function Editor(): JSX.Element {
           )}
         </main>
 
-        <aside className="flex w-80 shrink-0 flex-col border-l border-ink-200 bg-white">
-          <div className="flex border-b border-ink-200 text-xs">
-            {TABS.map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                onClick={() => setTab(t.key)}
-                className={`flex-1 py-2 ${
-                  tab === t.key
-                    ? 'border-b-2 border-violet-600 font-medium text-violet-700'
-                    : 'text-ink-500 hover:text-ink-800'
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-          <div className="min-h-0 flex-1">
-            {tab === 'ai' && <AIPanel bookId={bookId} />}
-            {tab === 'characters' && <CharacterList bookId={bookId} />}
-            {tab === 'worldbook' && <WorldbookPanel bookId={bookId} />}
-            {tab === 'foreshadow' && <ForeshadowPanel bookId={bookId} />}
-            {tab === 'history' && <VersionHistory />}
-            {tab === 'skills' && <SkillPanel bookId={bookId} />}
+        <aside
+          className={`shrink-0 overflow-hidden border-l border-ink-200 bg-white transition-[width] duration-200 ${
+            rightOpen ? 'w-80' : 'w-0 border-l-0'
+          }`}
+        >
+          <div className="flex h-full w-80 flex-col">
+            <div className="flex border-b border-ink-200 text-xs">
+              {TABS.map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => setTab(t.key)}
+                  className={`flex-1 py-2 ${
+                    tab === t.key
+                      ? 'border-b-2 border-violet-600 font-medium text-violet-700'
+                      : 'text-ink-500 hover:text-ink-800'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            <div className="min-h-0 flex-1">
+              {tab === 'ai' && <AIPanel bookId={bookId} />}
+              {tab === 'characters' && <CharacterList bookId={bookId} />}
+              {tab === 'worldbook' && <WorldbookPanel bookId={bookId} />}
+              {tab === 'foreshadow' && <ForeshadowPanel bookId={bookId} />}
+              {tab === 'history' && <VersionHistory />}
+              {tab === 'skills' && <SkillPanel bookId={bookId} />}
+            </div>
           </div>
         </aside>
       </div>

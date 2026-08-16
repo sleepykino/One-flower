@@ -59,7 +59,7 @@ export function Home(): JSX.Element {
     <div className="h-full overflow-y-auto">
       <header className="mx-auto flex max-w-5xl items-center justify-between px-6 py-6">
         <div>
-          <h1 className="text-2xl font-bold">AI 小说创作工作台</h1>
+          <h1 className="text-2xl font-bold">One Flower</h1>
           <p className="text-sm text-ink-500">本地优先 · 多模式 AI · Skill 文风 · 一致性检查</p>
         </div>
         <div className="flex gap-2">

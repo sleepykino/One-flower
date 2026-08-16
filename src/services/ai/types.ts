@@ -41,6 +41,10 @@ export interface ContinueParams {
   currentContent: string;
   recentChapters: ChapterContent[];
   selectedCharacterIds: string[];
+  /** 单次回复的 token 上限（约等于中文字数） */
+  maxTokens?: number;
+  /** 采样温度，默认 0.85 */
+  temperature?: number;
   signal?: AbortSignal;
 }
 
@@ -50,6 +54,10 @@ export interface RewriteParams {
   selectedText: string;
   instruction: string; // 如"改为更紧张的氛围"
   recentChapters: ChapterContent[];
+  /** 单次回复的 token 上限（约等于中文字数） */
+  maxTokens?: number;
+  /** 采样温度，默认 0.7 */
+  temperature?: number;
   signal?: AbortSignal;
 }
 

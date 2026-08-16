@@ -12,9 +12,9 @@
   "app": {
     "windows": [
       {
-        "title": "AI 小说创作工作台",
-        "width": 1440,
-        "height": 900,
+        "title": "One Flower",
+        "width": 1100,
+        "height": 720,
         "minWidth": 1100,
         "minHeight": 720
       }

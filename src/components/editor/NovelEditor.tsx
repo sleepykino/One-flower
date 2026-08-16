@@ -48,6 +48,22 @@ function findTemp(editor: Editor, requireNotDone = false): TempFound | null {
   return found;
 }
 
+/**
+ * 将累计的生成文本构建为段落块：
+ * 换行（含连续空行）合并为一次段落分隔，段落文本去除首尾空白
+ */
+function buildTempParagraphs(schema: Editor['state']['schema'], raw: string) {
+  const texts = raw
+    .replace(/\r/g, '')
+    .split(/\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (texts.length === 0) {
+    return [schema.nodes.paragraph.create()];
+  }
+  return texts.map((t) => schema.nodes.paragraph.create(null, schema.text(t)));
+}
+
 export function NovelEditor({ bookId }: { bookId: string }) {
   const currentChapterId = useEditorStore((s) => s.currentChapterId);
   const setSaveState = useEditorStore((s) => s.setSaveState);
@@ -57,6 +73,8 @@ export function NovelEditor({ bookId }: { bookId: string }) {
   const loadedChapterRef = useRef<string | null>(null);
   const replaceRangeRef = useRef<{ from: number; to: number } | null>(null);
   const lastBracketRef = useRef(0);
+  /** AI 流式累计文本（appendAITemp 重建临时节点内容的基准） */
+  const aiTextRef = useRef('');
   const [popup, setPopup] = useState<PopupState | null>(null);
   const [characters, setCharacters] = useState<MentionItem[]>([]);
   const [worldbook, setWorldbook] = useState<MentionItem[]>([]);
@@ -213,6 +231,7 @@ export function NovelEditor({ bookId }: { bookId: string }) {
       },
       startAITemp: (replaceRange) => {
         replaceRangeRef.current = replaceRange ?? null;
+        aiTextRef.current = '';
         const at = replaceRange ? replaceRange.to : editor.state.selection.to;
         editor.chain().command(({ tr }) => {
           const schema = editor.state.schema;
@@ -223,10 +242,31 @@ export function NovelEditor({ bookId }: { bookId: string }) {
         }).run();
       },
       appendAITemp: (text) => {
-        const found = findTemp(editor, true);
-        if (!found) return;
-        const innerEnd = found.pos + found.node.nodeSize - 1;
-        editor.view.dispatch(editor.state.tr.insertText(text, innerEnd));
+        if (!text) return;
+        let found = findTemp(editor, true);
+        if (!found) {
+          // 继续补完：重新打开已完成的临时节点（aiTextRef 仍保留上次累计文本）
+          const anyTemp = findTemp(editor);
+          if (!anyTemp) return;
+          editor.view.dispatch(
+            editor.state.tr.setNodeMarkup(anyTemp.pos, undefined, {
+              ...anyTemp.node.attrs,
+              done: false
+            })
+          );
+          found = { node: anyTemp.node, pos: anyTemp.pos };
+        }
+        // 累计全文后整体重建临时节点内容：
+        // 段落切分完全确定（换行=分段、连续空行合并），不受流式 chunk 边界影响
+        aiTextRef.current += text;
+        const schema = editor.state.schema;
+        const paras = buildTempParagraphs(schema, aiTextRef.current);
+        const tr = editor.state.tr.replaceWith(
+          found.pos + 1,
+          found.pos + found.node.nodeSize - 1,
+          paras
+        );
+        editor.view.dispatch(tr);
       },
       finishAITemp: () => {
         const found = findTemp(editor, true);
@@ -246,32 +286,28 @@ export function NovelEditor({ bookId }: { bookId: string }) {
         const { node, pos } = found;
         const range = replaceRangeRef.current;
         replaceRangeRef.current = null;
-        const schema = editor.state.schema;
         const tr = editor.state.tr;
-        const texts = node.textContent.split(/\n+/).filter(Boolean);
+        // 直接保留临时节点内已生成的段落结构
+        const content = node.content;
         if (range) {
-          // 改写：删除临时节点，再替换原选区
+          // 改写：删除临时节点，用生成段落替换原选区
           tr.delete(pos, pos + node.nodeSize);
-          const paras = texts.map((t) => schema.nodes.paragraph.create(null, schema.text(t)));
-          if (paras.length > 0) {
-            tr.replaceWith(range.from, range.to, paras);
+          if (content.size > 0) {
+            tr.replaceWith(range.from, range.to, content);
           }
-        } else {
+        } else if (content.size > 0) {
           // 续写/对白：临时节点内容解开为正常内容
-          if (texts.length > 0) {
-            const paras = texts.map((t) => schema.nodes.paragraph.create(null, schema.text(t)));
-            tr.replaceWith(pos, pos + node.nodeSize, paras);
-          } else {
-            tr.replaceWith(pos, pos + node.nodeSize, node.content);
-          }
+          tr.replaceWith(pos, pos + node.nodeSize, content);
         }
         editor.view.dispatch(tr);
+        aiTextRef.current = '';
         scheduleSave();
       },
       discardAITemp: () => {
         const found = findTemp(editor);
         if (!found) return;
         replaceRangeRef.current = null;
+        aiTextRef.current = '';
         editor.view.dispatch(editor.state.tr.delete(found.pos, found.pos + found.node.nodeSize));
       },
       focus: () => editor.commands.focus()

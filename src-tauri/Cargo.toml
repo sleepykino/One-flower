@@ -1,7 +1,7 @@
 [package]
 name = "oneflower"
 version = "0.1.0"
-description = "AI 小说创作工作台"
+description = "One Flower"
 edition = "2021"
 
 [lib]

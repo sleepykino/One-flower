@@ -10,6 +10,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
 #[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct DirEntry {
     pub name: String,
     pub is_dir: bool,
