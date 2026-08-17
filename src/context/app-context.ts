@@ -13,6 +13,7 @@ import { ChapterVersionStore } from '../services/chapter/ChapterVersionStore';
 import { CharacterService } from '../services/character/CharacterService';
 import { GlobalSearch } from '../services/search/GlobalSearch';
 import { SkillLoader } from '../services/skill/SkillLoader';
+import { SkillPackService } from '../services/skill/SkillPackService';
 import { ExportService } from '../services/export/ExportService';
 import { MarkdownExporter } from '../services/export/MarkdownExporter';
 import { TxtExporter } from '../services/export/TxtExporter';
@@ -24,6 +25,10 @@ import { AIOrchestrator } from '../services/ai/AIOrchestrator';
 import { SummaryService } from '../services/summary/SummaryService';
 import { AppSettingsService } from '../services/settings/AppSettingsService';
 import { WorldbookRAGService } from '../services/worldbook/WorldbookRAGService';
+import { FullRAGService } from '../services/rag/FullRAGService';
+import { MapEditorService } from '../services/map/MapEditorService';
+import { TimelineService } from '../services/timeline/TimelineService';
+import { NameGeneratorService } from '../services/namegen/NameGeneratorService';
 import { RelationshipService } from '../services/relationship/RelationshipService';
 import { WritingStatsService } from '../services/stats/WritingStatsService';
 import { createProvider } from '../services/ai/providers/LLMProvider';
@@ -46,6 +51,16 @@ export interface AppContext {
   summaryService: SummaryService;
   appSettings: AppSettingsService;
   ragService: WorldbookRAGService;
+  /** P2：全量 RAG（三路检索 + 章节片段向量化） */
+  fullRagService: FullRAGService;
+  /** P2：地图编辑 */
+  mapService: MapEditorService;
+  /** P2：时间线 */
+  timelineService: TimelineService;
+  /** P2：命名生成器 */
+  nameGenService: NameGeneratorService;
+  /** P2：Skill 包导入/导出 */
+  skillPackService: SkillPackService;
   relationshipService: RelationshipService;
   statsService: WritingStatsService;
 }
@@ -89,7 +104,8 @@ export async function initApp(): Promise<AppContext> {
   const bookService = new BookService(tauriBridge, db, wq);
   const versionStore = new ChapterVersionStore(tauriBridge, db, wq);
   const characterService = new CharacterService(tauriBridge, db, wq);
-  const skillLoader = new SkillLoader(tauriBridge, db, wq, await resolveSkillsDir());
+  const skillsDir = await resolveSkillsDir();
+  const skillLoader = new SkillLoader(tauriBridge, db, wq, skillsDir);
   await skillLoader.loadAll();
 
   const markdownExporter = new MarkdownExporter();
@@ -133,11 +149,18 @@ export async function initApp(): Promise<AppContext> {
   const summaryService = new SummaryService(tauriBridge, db, wq, providerFactory, chapterService);
   const appSettings = new AppSettingsService(db, wq);
   const ragService = new WorldbookRAGService(tauriBridge, db, wq, providerFactory, appSettings);
+  // P2：全量 RAG / 地图 / 时间线 / 命名 / Skill 包
+  const fullRagService = new FullRAGService(tauriBridge, db, wq, providerFactory, appSettings);
+  const mapService = new MapEditorService(db, wq);
+  const timelineService = new TimelineService(db, wq);
+  const nameGenService = new NameGeneratorService(tauriBridge, db, wq);
+  const skillPackService = new SkillPackService(tauriBridge, skillsDir);
   const relationshipService = new RelationshipService(db, wq);
   const statsService = new WritingStatsService(tauriBridge, db, wq);
   const orchestrator = new AIOrchestrator(providerFactory, skillLoader, promptAssembler, tauriBridge, {
     summaryService,
-    ragService
+    ragService,
+    fullRagService
   });
 
   ctx = {
@@ -157,6 +180,11 @@ export async function initApp(): Promise<AppContext> {
     summaryService,
     appSettings,
     ragService,
+    fullRagService,
+    mapService,
+    timelineService,
+    nameGenService,
+    skillPackService,
     relationshipService,
     statsService
   };

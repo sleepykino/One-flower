@@ -46,6 +46,46 @@ function Empty({ text }: { text: string }): JSX.Element {
 
 export function ContextPanel({ bookId }: { bookId: string }): JSX.Element {
   const [snap, setSnap] = useState<ContextSnapshot | null>(null);
+  // 全量 RAG 嵌入状态 + 批量向量化（存量章节需手动批量嵌入一次）
+  const [embedStats, setEmbedStats] = useState<{ chapters: number; segments: number } | null>(null);
+  const [embedding, setEmbedding] = useState(false);
+  const [embedMsg, setEmbedMsg] = useState('');
+
+  const refreshStats = useCallback((): void => {
+    void getAppContext()
+      .fullRagService.segmentStats(bookId)
+      .then(setEmbedStats)
+      .catch(() => setEmbedStats(null));
+  }, [bookId]);
+
+  useEffect(() => {
+    refreshStats();
+  }, [refreshStats]);
+
+  /** 批量向量化全书（未变化段落自动跳过） */
+  const runEmbedAll = async (): Promise<void> => {
+    const { fullRagService } = getAppContext();
+    setEmbedding(true);
+    setEmbedMsg('批量向量化中…');
+    try {
+      let done = 0;
+      for await (const p of fullRagService.embedAllSegments(bookId)) {
+        done += 1;
+        if (p.status === 'error') {
+          console.warn('[FullRAG] 章节向量化失败:', p.title, p.error);
+          setEmbedMsg(`已完成 ${done} 章（「${p.title}」失败：${p.error ?? ''}）`);
+        } else {
+          setEmbedMsg(`已完成 ${done} 章`);
+        }
+      }
+      setEmbedMsg(`批量向量化完成（共 ${done} 章）`);
+    } catch (e) {
+      setEmbedMsg(`失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setEmbedding(false);
+      refreshStats();
+    }
+  };
 
   const load = useCallback((): void => {
     setSnap(getAppContext().orchestrator.getLastContext(bookId));
@@ -61,16 +101,46 @@ export function ContextPanel({ bookId }: { bookId: string }): JSX.Element {
 
   if (!snap) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center text-xs text-ink-400">
-        <div>尚未发起 AI 调用。</div>
-        <div>在 AI 面板执行一次续写 / 改写 / 对白 / 检查后，这里会展示注入的完整上下文清单。</div>
-        <button
-          type="button"
-          className="mt-1 rounded border border-ink-200 px-2 py-1 hover:bg-ink-100"
-          onClick={refresh}
-        >
-          刷新
-        </button>
+      <div className="flex h-full flex-col">
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 p-4 text-center text-xs text-ink-400">
+          <div>尚未发起 AI 调用。</div>
+          <div>在 AI 面板执行一次续写 / 改写 / 对白 / 检查后，这里会展示注入的完整上下文清单。</div>
+          <button
+            type="button"
+            className="mt-1 rounded border border-ink-200 px-2 py-1 hover:bg-ink-100"
+            onClick={refresh}
+          >
+            刷新
+          </button>
+        </div>
+        {/* 全量 RAG 嵌入状态 + 存量章节批量向量化 */}
+        <div className="border-t border-ink-200 p-2">
+          <div className="rounded border border-ink-100 bg-white px-3 py-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium">全量 RAG 索引</span>
+              {embedStats && (
+                <span className="text-[11px] text-ink-400">
+                  {embedStats.chapters} 章 / {embedStats.segments} 段已向量化
+                </span>
+              )}
+            </div>
+            <div className="mt-1 flex items-center gap-2">
+              <button
+                type="button"
+                disabled={embedding}
+                className={`rounded border px-2 py-1 text-[11px] ${
+                  embedding ? 'border-ink-100 text-ink-300' : 'border-ink-200 hover:bg-ink-100'
+                }`}
+                onClick={() => void runEmbedAll()}
+              >
+                {embedding ? '向量化中…' : '批量向量化全书'}
+              </button>
+              {embedMsg && (
+                <span className="min-w-0 truncate text-[11px] text-ink-400">{embedMsg}</span>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -161,6 +231,29 @@ export function ContextPanel({ bookId }: { bookId: string }): JSX.Element {
           )}
         </Section>
 
+        {/* 原文片段（P2 全量 RAG，远期记忆召回） */}
+        <Section
+          title={`原文片段 RAG（${ctx.segments?.length ?? 0}）`}
+          tokens={tokensOf('segments')}
+          truncated={truncatedOf('segments')}
+        >
+          {(ctx.segments ?? []).length === 0 ? (
+            <Empty text="本次未召回远期原文片段（章节保存后会自动向量化）" />
+          ) : (
+            <ul className="space-y-1">
+              {(ctx.segments ?? []).map((s) => (
+                <li key={s.segmentId}>
+                  <span className="font-medium">《{s.chapterTitle}》</span>
+                  <span className="ml-1 rounded bg-emerald-50 px-1 text-[10px] text-emerald-600">
+                    {(s.score * 100).toFixed(0)}%
+                  </span>
+                  <span className="mt-0.5 block line-clamp-2 text-ink-400">{s.excerpt}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
+
         {/* 摘要链 */}
         <Section
           title={`前情摘要链（${ctx.summaryChain?.length ?? 0}）`}
@@ -214,6 +307,33 @@ export function ContextPanel({ bookId }: { bookId: string }): JSX.Element {
 
         <div className="mt-2 px-1 text-[11px] text-ink-400">
           快照时间：{new Date(snap.at).toLocaleTimeString()} · 生成预留 ~8000 tok 不计入
+        </div>
+
+        {/* 全量 RAG 嵌入状态 + 存量章节批量向量化 */}
+        <div className="mt-1 rounded border border-ink-100 bg-white px-3 py-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium">全量 RAG 索引</span>
+            {embedStats && (
+              <span className="text-[11px] text-ink-400">
+                {embedStats.chapters} 章 / {embedStats.segments} 段已向量化
+              </span>
+            )}
+          </div>
+          <div className="mt-1 flex items-center gap-2">
+            <button
+              type="button"
+              disabled={embedding}
+              className={`rounded border px-2 py-1 text-[11px] ${
+                embedding
+                  ? 'border-ink-100 text-ink-300'
+                  : 'border-ink-200 hover:bg-ink-100'
+              }`}
+              onClick={() => void runEmbedAll()}
+            >
+              {embedding ? '向量化中…' : '批量向量化全书'}
+            </button>
+            {embedMsg && <span className="min-w-0 truncate text-[11px] text-ink-400">{embedMsg}</span>}
+          </div>
         </div>
       </div>
     </div>

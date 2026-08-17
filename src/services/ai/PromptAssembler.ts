@@ -7,6 +7,7 @@ import type { ChatMessage } from './providers/LLMProvider';
 import type { AIMode, Character, ChapterContent, WorldbookEntryRef } from './types';
 import type { SkillManifest } from '../skill/types';
 import type { ChapterSummary } from '../summary/types';
+import type { SegmentRecall } from '../rag/FullRAGService';
 import { countTokens, truncateToTokenBudget } from '../../utils/tokens';
 
 export interface PromptContext {
@@ -16,6 +17,7 @@ export interface PromptContext {
   characters: Character[]; // 场景相关角色卡
   worldbookEntries?: WorldbookEntryRef[]; // P1：RAG 检索 top-K（check 模式为全量）
   summaryChain?: ChapterSummary[]; // P1：前 N 章摘要链（远 -> 近）
+  segments?: SegmentRecall[]; // P2：全量 RAG 原文片段召回（远期记忆）
   recentChapters: ChapterContent[]; // 滑动窗口：最近 2 章原文
   currentChapter?: ChapterContent; // 续写模式用
   userInstruction?: string; // 改写/扩写时用户的要求
@@ -28,6 +30,7 @@ export interface TokenBudget {
   characters: number; // ~1500
   worldbook: number; // ~1500 (P1)
   summaryChain: number; // ~4000（P1，替代部分 recentChapters）
+  segments: number; // ~1500（P2，远期相关原文片段）
   recentChapters: number; // ~3000（从 6000 缩减，摘要链分担）
   currentChapter: number; // ~3000
   userInstruction: number; // ~1000
@@ -40,6 +43,7 @@ export const DEFAULT_TOKEN_BUDGET: TokenBudget = {
   characters: 1500,
   worldbook: 1500,
   summaryChain: 4000,
+  segments: 1500,
   recentChapters: 3000,
   currentChapter: 3000,
   userInstruction: 1000,
@@ -118,6 +122,16 @@ export class PromptAssembler {
         return `《${s.title || `第 ${n - i} 章`}》（摘要）：${fit.text}`;
       });
       userParts.push(`【前情摘要（远 -> 近）】\n${parts.join('\n')}`);
+    }
+
+    // ---- user：远期相关片段（P2：全量 RAG 原文片段召回）----
+    if (ctx.segments && ctx.segments.length > 0) {
+      const segAll = ctx.segments
+        .map((s) => `- 《${s.chapterTitle}》：${s.excerpt}`)
+        .join('\n');
+      userParts.push(
+        `【远期相关片段（向量召回的既往章节原文，保持事实一致）】\n${truncateToTokenBudget(segAll, this.budget.segments).text}`
+      );
     }
 
     // ---- user：前情（滑动窗口，远 -> 近）----
@@ -207,6 +221,13 @@ export class PromptAssembler {
       part: 'summaryChain',
       tokens: countTokens(chainFit.text),
       truncated: chainFit.truncated
+    });
+    const segs = (ctx.segments ?? []).map((s) => s.excerpt).join('\n');
+    const segsFit = truncateToTokenBudget(segs, this.budget.segments);
+    out.push({
+      part: 'segments',
+      tokens: countTokens(segsFit.text),
+      truncated: segsFit.truncated
     });
     const recent = ctx.recentChapters.map((c) => c.content).join('\n');
     const recentFit = truncateToTokenBudget(recent, this.budget.recentChapters);

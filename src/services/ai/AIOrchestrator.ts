@@ -11,6 +11,7 @@ import type { LLMProvider, ChatChunk } from './providers/LLMProvider';
 import { createProvider } from './providers/LLMProvider';
 import type { SummaryService } from '../summary/SummaryService';
 import type { WorldbookRAGService } from '../worldbook/WorldbookRAGService';
+import type { FullRAGService, SegmentRecall } from '../rag/FullRAGService';
 import type {
   Character,
   CheckParams,
@@ -20,10 +21,12 @@ import type {
   RewriteParams
 } from './types';
 
-/** P1 依赖（可选注入，不破坏 P0 构造签名） */
+/** P1/P2 依赖（可选注入，不破坏 P0 构造签名） */
 export interface OrchestratorDeps {
   summaryService?: SummaryService;
   ragService?: WorldbookRAGService;
+  /** P2：全量 RAG（三路检索），可用时替代 ragService 单路 */
+  fullRagService?: FullRAGService;
 }
 
 /** 最近一次 AI 调用的上下文快照（ContextPanel 展示用） */
@@ -106,18 +109,34 @@ export class AIOrchestrator {
     }
   }
 
-  /** P1：世界书 RAG 检索 top-3（失败静默降级为空） */
+  /** P2：世界书 + 原文片段检索（优先全量 RAG 三路，失败回退 P1 世界书单路） */
   private async fetchRag(
     bookId: string,
     query: string
-  ): Promise<Parameters<PromptAssembler['assemble']>[0]['worldbookEntries']> {
-    if (!this.deps.ragService || !query.trim()) return undefined;
+  ): Promise<{
+    worldbookEntries: Parameters<PromptAssembler['assemble']>[0]['worldbookEntries'];
+    segments: SegmentRecall[] | undefined;
+  }> {
+    const empty = { worldbookEntries: undefined, segments: undefined };
+    if (!query.trim()) return empty;
+    if (this.deps.fullRagService) {
+      try {
+        const rag = await this.deps.fullRagService.retrieve(query, bookId);
+        return {
+          worldbookEntries: rag.worldbookEntries.length > 0 ? rag.worldbookEntries : undefined,
+          segments: rag.segments.length > 0 ? rag.segments : undefined
+        };
+      } catch (e) {
+        console.warn('[AI] 全量 RAG 检索失败，回退世界书单路:', e);
+      }
+    }
+    if (!this.deps.ragService) return empty;
     try {
       const hits = await this.deps.ragService.retrieve(query, bookId, 3);
-      return hits.length > 0 ? hits : undefined;
+      return { worldbookEntries: hits.length > 0 ? hits : undefined, segments: undefined };
     } catch (e) {
       console.warn('[AI] 世界书 RAG 检索失败，已跳过:', e);
-      return undefined;
+      return empty;
     }
   }
 
@@ -194,9 +213,9 @@ export class AIOrchestrator {
       params.chapterId,
       params.recentChapters
     );
-    // P1：世界书 RAG 检索（query 取当前章末尾约 2000 字）
+    // P2：三路检索（query 取当前章末尾约 2000 字）
     const ragQuery = params.currentContent.slice(-2000);
-    const worldbookEntries = await this.fetchRag(params.bookId, ragQuery);
+    const { worldbookEntries, segments } = await this.fetchRag(params.bookId, ragQuery);
     const ctx: PromptContext = {
       mode: 'continue',
       systemInstruction: '',
@@ -204,6 +223,7 @@ export class AIOrchestrator {
       characters,
       worldbookEntries,
       summaryChain,
+      segments,
       recentChapters,
       userInstruction: params.requirement,
       currentChapter: {
@@ -257,8 +277,8 @@ export class AIOrchestrator {
       params.chapterId,
       params.recentChapters
     );
-    // P1：世界书 RAG 检索（query 取场景描述）
-    const worldbookEntries = await this.fetchRag(params.bookId, params.scene);
+    // P2：三路检索（query 取场景描述）
+    const { worldbookEntries, segments } = await this.fetchRag(params.bookId, params.scene);
     const ctx: PromptContext = {
       mode: 'dialogue',
       systemInstruction: '',
@@ -266,6 +286,7 @@ export class AIOrchestrator {
       characters,
       worldbookEntries,
       summaryChain,
+      segments,
       recentChapters,
       userInstruction: params.scene
     };
