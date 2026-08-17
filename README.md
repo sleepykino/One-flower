@@ -10,7 +10,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/sleepykino/OneFlower/pulls)
 
-[功能特性](#-功能特性) · [快速开始](#-快速开始) · [首次配置](#-首次配置) · [项目结构](#-项目结构) · [路线图](#-路线图)
+[功能特性](#-功能特性) · [界面预览](#-界面预览) · [快速开始](#-快速开始) · [首次配置](#-首次配置) · [项目结构](#-项目结构) · [路线图](#-路线图)
 
 ---
 
@@ -51,9 +51,70 @@
 - **世界书 RAG**：条目自动向量化（embedding），续写时余弦检索 top-3 注入
 - **伏笔追踪**：埋设 / 回收 / 弃用管理，时间线可视化，未回收过滤
 
+### 🗺️ 世界地图
+
+参考「易制地图」等小说地图工具打造的可视化世界构建画布（Konva 渲染）：
+
+- **瓦片地形**：22 种地形瓦片（水域 / 平原 / 森林 / 山地 / 人文 5 大类，色块 + emoji 纹理），32px 网格自由铺设
+- **自由绘制**：笔刷（B）/ 橡皮（E）/ 油漆桶（连通区域填充）/ 吸管（取地形），笔刷 3 档大小；一笔一步历史，Ctrl+Z 精细回退
+- **随机生成**：分形值噪声（海拔 + 湿度双通道）生成大陆 / 岛屿生物群系，海平面、起伏度可调；一键撒聚居点（沿海自动港口渔村、内陆城镇村落）
+- **AI 生成地图**：一句话描述（如"一座海滨王国，含王都、港口、北境山脉"）自动生成地点布局与道路连线
+- **元件库**：60+ 图标元件（地形 / 水文 / 植被 / 聚落 / 建筑 / 军事 / 其他 7 类），点击连续放置，可关联世界书条目
+- **道路与区域**：直线 / 弧线连线（实虚线、箭头、标签）；多边形区域圈选势力范围
+- **画布能力**：底图上传与变换、六层图层显隐（底图 / 地形 / 区域 / 连线 / 地点 / 标注）、滚轮锚点缩放、多地图管理、导出 PNG（2x）
+
 ### 📊 写作统计
 
 今日字数 · 目标进度 · 近 30 天趋势图 · 连续写作天数（streak）
+
+## 📸 界面预览
+
+### 书架首页
+
+![书架首页](docs/screenshots/home.png)
+
+
+
+
+### 写作编辑器 + AI 面板
+
+![写作编辑器](docs/screenshots/editor.png)
+
+
+
+### AI 上下文透明化
+
+![AI 上下文面板](docs/screenshots/context-panel.png)
+
+
+
+### 角色关系图
+
+![角色关系图](docs/screenshots/character-graph.png)
+
+
+### 世界书 RAG 与伏笔追踪
+
+![世界书与伏笔](docs/screenshots/worldbook-foreshadow.png)
+
+
+
+### 写作统计
+
+![写作统计](docs/screenshots/stats.png)
+
+
+
+
+### 世界地图 · 随机地形生成
+
+![地图随机生成](docs/screenshots/map-generate.png)
+
+
+
+### 世界地图 · 手绘与标注
+
+![地图手绘标注](docs/screenshots/map-editor.png)
 
 ## 🛠️ 技术栈
 
@@ -64,6 +125,7 @@
 | 状态管理 | Zustand |
 | 编辑器 | TipTap / ProseMirror |
 | 关系图 | @xyflow/react |
+| 地图画布 | Konva / react-konva（瓦片离屏 canvas 增量渲染） |
 | 文档导出 | docx、fflate（EPUB 打包） |
 | 样式 | Tailwind CSS |
 | 存储 | SQLite（WAL + 单写队列）、系统钥匙串 |
@@ -97,9 +159,9 @@ npm run build
 
 ## ⚙️ 首次配置
 
-1. **添加模型**：设置页 → Provider 管理，新建配置（类型选 OpenAI 兼容 / Anthropic / Google，填 Base URL、模型名、API Key），点击"测试连接"验证
+1. **添加模型**：设置页 -> Provider 管理，新建配置（类型选 OpenAI 兼容 / Anthropic / Google，填 Base URL、模型名、API Key），点击"测试连接"验证
 2. **绑定书籍**：在书籍设置中选择该 Provider；不绑定时默认使用首组配置
-3. **向量嵌入（可选）**：设置页 → 向量嵌入（世界书 RAG），选择支持 embeddings 的 Provider 并填嵌入模型（如 `text-embedding-3-small`）
+3. **向量嵌入（可选）**：设置页 -> 向量嵌入（世界书 RAG），选择支持 embeddings 的 Provider 并填嵌入模型（如 `text-embedding-3-small`）
    - Anthropic 无 embeddings 接口
    - 更换嵌入模型后，需在世界书面板重新批量向量化
 4. **文风 Skill（可选）**：将 Markdown 格式的 Skill 文件放入 `~/.novelagent/skills/`，在 Skill 面板启用并设定适用模式与优先级
@@ -110,7 +172,7 @@ npm run build
 
 | 数据 | 位置 |
 |---|---|
-| 应用数据（数据库、书籍、版本快照） | 系统应用数据目录（Windows：`%APPDATA%\com.oneflower.novelagent`） |
+| 应用数据（数据库、书籍、版本快照、地图与底图） | 系统应用数据目录（Windows：`%APPDATA%\com.oneflower.novelagent`） |
 | 文风 Skill | `~/.novelagent/skills/` |
 | API Key | 操作系统钥匙串 |
 
@@ -118,24 +180,28 @@ npm run build
 
 ```
 src/
-  components/    # UI 组件（编辑器、章节树、AI 面板、角色/世界书/伏笔/统计面板等）
+  components/    # UI 组件（编辑器、章节树、AI 面板、角色/世界书/伏笔/统计/
+                 #   地图编辑器 MapEditor + MapInspector 等）
   context/       # 应用上下文（服务装配）
   db/            # SQLite 初始化、迁移（schema.sql + migrations/）、单写队列
   native/        # Tauri 桥（storage/fs/db/keyStore）、对话框封装
   routes/        # 页面（首页书架 / 编辑器 / 设置）
   services/      # 业务服务（AI 编排、提示词组装、摘要链、RAG、角色、关系、
-                 #   章节、版本、导入导出、统计、Skill 加载等）
+                 #   章节、版本、导入导出、统计、Skill、地图 editor/terrainGen/
+                 #   tileRender 等）
   store/         # Zustand 状态（book/editor/ai/settings）
   types/         # 共享类型定义
 src-tauri/       # Rust 侧：命令、存储桥、窗口配置
 doc/             # 设计文档（P0-P3 蓝图与实现规格）
+docs/screenshots/# 界面截图（README 展示用）
 ```
 
 ## 🗺️ 路线图
 
 - [x] **P0 - 核心**：编辑器、章节管理、AI 续写/改写/对白/检查、角色卡、世界书、版本历史、导入导出、文风 Skill
 - [x] **P1 - 增强**：章节摘要链、世界书 RAG、角色关系图、上下文透明化、DOCX 导出、写作统计、伏笔时间线、模板构建器、流式继续补完
-- [ ] **P2 / P3**：进行中
+- [x] **P2 - 世界地图**：瓦片地形自由绘制（笔刷/橡皮/填充/吸管）、分形噪声随机生成 + 聚居点撒点、AI 生成地图、60+ 元件库、道路连线、区域多边形、导出 PNG
+- [ ] **P3 及更多**：进行中
 
 ## 🤝 参与贡献
 
