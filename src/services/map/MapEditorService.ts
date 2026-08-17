@@ -1,11 +1,12 @@
 /**
  * MapEditorService：地图 CRUD（maps 表，003 迁移）
- * data 列存 JSON.stringify({ nodes, connections })，行转对象时容错解析
+ * data 列存 JSON.stringify({ nodes, connections, desc, bg })，行转对象时容错解析
+ * background_path 列存底图相对路径（相对 appData 目录）
  */
 
 import type { Database } from '../../db/Database';
 import type { WriteQueue } from '../../db/WriteQueue';
-import type { MapConnection, MapNode, NovelMap } from './types';
+import type { MapBackgroundTransform, MapConnection, MapNode, MapTiles, NovelMap } from './types';
 
 interface MapRow {
   id: string;
@@ -19,14 +20,33 @@ interface MapRow {
   updated_at: number;
 }
 
+interface MapData {
+  nodes?: MapNode[];
+  connections?: MapConnection[];
+  desc?: string;
+  bg?: MapBackgroundTransform;
+  tiles?: MapTiles;
+}
+
+/** 瓦片层数据校验：cols/rows 为正且 data 长度匹配 */
+function validTiles(t: unknown): t is MapTiles {
+  if (!t || typeof t !== 'object') return false;
+  const tiles = t as MapTiles;
+  return (
+    Number.isInteger(tiles.cols) &&
+    tiles.cols > 0 &&
+    Number.isInteger(tiles.rows) &&
+    tiles.rows > 0 &&
+    Array.isArray(tiles.data) &&
+    tiles.data.length === tiles.cols * tiles.rows
+  );
+}
+
 /** 行 -> 对象：data JSON.parse，损坏/为空时容错为空内容 */
 function rowToMap(r: MapRow): NovelMap {
-  let nodes: MapNode[] = [];
-  let connections: MapConnection[] = [];
+  let data: MapData = {};
   try {
-    const parsed = JSON.parse(r.data) as { nodes?: MapNode[]; connections?: MapConnection[] };
-    if (Array.isArray(parsed.nodes)) nodes = parsed.nodes;
-    if (Array.isArray(parsed.connections)) connections = parsed.connections;
+    data = JSON.parse(r.data) as MapData;
   } catch {
     // data 非法 JSON：按空地图处理
   }
@@ -37,8 +57,11 @@ function rowToMap(r: MapRow): NovelMap {
     width: r.width,
     height: r.height,
     background: r.background_path ?? undefined,
-    nodes,
-    connections,
+    bg: data.bg,
+    desc: data.desc,
+    tiles: validTiles(data.tiles) ? data.tiles : undefined,
+    nodes: Array.isArray(data.nodes) ? data.nodes : [],
+    connections: Array.isArray(data.connections) ? data.connections : [],
     createdAt: r.created_at,
     updatedAt: r.updated_at
   };
@@ -53,15 +76,15 @@ export class MapEditorService {
     this.wq = wq;
   }
 
-  /** 新建地图：默认 1200x800，data 存空节点/连线 */
+  /** 新建地图：默认 1600x1000，data 存空节点/连线 */
   async createMap(bookId: string, name: string): Promise<NovelMap> {
     const now = Date.now();
     const map: NovelMap = {
       id: crypto.randomUUID(),
       bookId,
       name,
-      width: 1200,
-      height: 800,
+      width: 1600,
+      height: 1000,
       nodes: [],
       connections: [],
       createdAt: now,
@@ -86,16 +109,23 @@ export class MapEditorService {
     return map;
   }
 
-  /** 保存地图：整体覆盖 name/width/height/data/updated_at */
+  /** 保存地图：整体覆盖 name/width/height/background_path/data/updated_at */
   async saveMap(map: NovelMap): Promise<void> {
     await this.wq.enqueue(() =>
       this.db.exec(
-        `UPDATE maps SET name = ?, width = ?, height = ?, data = ?, updated_at = ? WHERE id = ?`,
+        `UPDATE maps SET name = ?, width = ?, height = ?, background_path = ?, data = ?, updated_at = ? WHERE id = ?`,
         [
           map.name,
           map.width,
           map.height,
-          JSON.stringify({ nodes: map.nodes, connections: map.connections }),
+          map.background ?? null,
+          JSON.stringify({
+            nodes: map.nodes,
+            connections: map.connections,
+            desc: map.desc,
+            bg: map.bg,
+            tiles: map.tiles
+          }),
           Date.now(),
           map.id
         ]
@@ -120,7 +150,7 @@ export class MapEditorService {
     await this.wq.enqueue(() => this.db.exec('DELETE FROM maps WHERE id = ?', [id]));
   }
 
-  /** 复制地图（含节点/连线），命名为 "xx 副本" */
+  /** 复制地图（含节点/连线/底图引用），命名为 "xx 副本" */
   async duplicateMap(id: string): Promise<NovelMap | null> {
     const source = await this.getMap(id);
     if (!source) return null;
@@ -143,7 +173,13 @@ export class MapEditorService {
           copy.width,
           copy.height,
           copy.background ?? null,
-          JSON.stringify({ nodes: copy.nodes, connections: copy.connections }),
+          JSON.stringify({
+            nodes: copy.nodes,
+            connections: copy.connections,
+            desc: copy.desc,
+            bg: copy.bg,
+            tiles: copy.tiles
+          }),
           copy.createdAt,
           copy.updatedAt
         ]

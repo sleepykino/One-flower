@@ -48,16 +48,23 @@ const TABS: Array<{ key: RightTab; label: string }> = [
   { key: 'stats', label: '统计' }
 ];
 
-/** AI 生成地图的系统提示词（输出 { nodes, connections } JSON，契约见 MapEditor.parseAiContent） */
+/** AI 生成地图的系统提示词（输出 { nodes, connections } JSON，契约见 MapEditor.parseAiContent；icon id 全集见 map/types.ts ICON_LIBRARY） */
 const MAP_AI_SYSTEM = `你是小说世界地图设计师。根据用户描述生成地图 JSON，严格只输出 JSON 对象（不要 markdown 代码围栏、不要解释）：
-{"nodes":[{"id":"n1","type":"location","label":"地点名","x":600,"y":400,"shape":"circle","radius":24,"color":"#7c3aed","icon":"city"}],"connections":[{"id":"c1","fromNodeId":"n1","toNodeId":"n2","label":"道路","style":"solid"}]}
+{"nodes":[{"id":"n1","type":"location","label":"地点名","x":600,"y":400,"shape":"icon","icon":"city","radius":26,"color":"#7c3aed","desc":"一句话设定"}],"connections":[{"id":"c1","fromNodeId":"n1","toNodeId":"n2","label":"官道","style":"solid","lineType":"curve","arrow":false}]}
 规则：
-- 画布 1200x800：x∈[80,1120]、y∈[80,720]，布局疏朗、节点不重叠
-- type 只用 location（地点圆节点）与 marker（小圆点文字标注），不生成 region
-- icon 从以下选择：city城市/castle城堡/mountain山脉/forest森林/river河流/lake湖泊/port港口/ruins遗迹/cave洞穴/tower高塔/bridge桥梁/camp营地/shrine神殿/village村庄/battle战场
-- color 从 #7c3aed #2563eb #16a34a #ea580c #dc2626 #524c44 中选取
-- connections 表示道路/航线等关联，label 简短（如"官道""海路"），style 用 solid 或 dashed
-- 按地理逻辑布局（如港口靠海、山脉在边缘），生成 6-15 个节点`;
+- 画布 1600x1000：x∈[100,1500]、y∈[100,900]，布局疏朗、节点不重叠，按地理逻辑分布（港口靠海、山脉在边缘、河流沿岸有聚落）
+- type 只用 location（主要地点）与 marker（次要文字标注，radius 用 8），不生成 region；shape 一律用 "icon"，location 的 radius 用 22~30
+- icon 从以下 id 中选择（按含义匹配）：
+  地形：mountain山脉/snowpeak雪山/volcano火山/desert沙漠/island岛屿/hills丘陵/valley溪谷/icefield冰原
+  水文：ocean海洋/lake湖泊/river河流/spring泉水/hotspring温泉/waterfall瀑布/wetland湿地
+  植被：forest森林/jungle丛林/grassland草原/autumn秋林/gobi戈壁
+  聚居：city城市/town城镇/village村庄/tribe部落/camp营地/ruins废墟/farm农场/fishing渔村
+  建筑：castle城堡/palace宫殿/temple神殿/shrine神社/tower高塔/bridge桥梁/tavern酒馆/market集市/academy学院/cemetery墓地
+  军事：fortress要塞/battle战场/barracks军营/beacon烽火台/pass关隘
+  奇幻：cave洞穴/dragon龙巢/secret秘境/astro占星台/relic遗迹/crystal水晶矿/mine矿坑/holy圣地/demon魔窟/teleport传送门/harbor港口/stable驿站
+- color 从 #7c3aed #2563eb #0891b2 #16a34a #ca8a04 #ea580c #dc2626 #db2777 #524c44 #1f2937 中选取，同类地点用同色
+- connections 表示道路/航线等关联，label 简短（如"官道""海路"），style 用 solid 或 dashed；lineType 用 curve（道路）或 straight（航线/边界），单方向关系加 arrow:true
+- 可选给主要地点写 desc（一句话设定，≤20 字）；生成 8~18 个节点`;
 
 export function Editor(): JSX.Element {
   const { bookId = '' } = useParams();
@@ -134,7 +141,7 @@ export function Editor(): JSX.Element {
           { role: 'system', content: MAP_AI_SYSTEM },
           { role: 'user', content: prompt }
         ],
-        { model, maxTokens: 4096, temperature: 0.7 }
+        { model, maxTokens: 8192, temperature: 0.5 }
       );
       return res.content;
     },
