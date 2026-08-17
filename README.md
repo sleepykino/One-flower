@@ -74,19 +74,13 @@
 ![书架首页](docs/screenshots/home.png)
 
 
-
-
 ### 写作编辑器 + AI 面板
 
 ![写作编辑器](docs/screenshots/editor.png)
 
-
-
 ### AI 上下文透明化
 
 ![AI 上下文面板](docs/screenshots/context-panel.png)
-
-
 
 ### 角色关系图
 
@@ -97,20 +91,14 @@
 
 ![世界书与伏笔](docs/screenshots/worldbook-foreshadow.png)
 
-
-
 ### 写作统计
 
 ![写作统计](docs/screenshots/stats.png)
 
 
-
-
 ### 世界地图 · 随机地形生成
 
 ![地图随机生成](docs/screenshots/map-generate.png)
-
-
 
 ### 世界地图 · 手绘与标注
 
