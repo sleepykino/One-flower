@@ -8,6 +8,8 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { useBookStore } from '../store/bookStore';
 import { getAppContext } from '../context/app-context';
 import { confirmDialog } from '../native/dialog';
+import { UpdateDialog } from '../components/update/UpdateDialog';
+import type { UpdateInfo } from '../services/update/UpdateService';
 import type { Book } from '../types';
 
 export function Home(): JSX.Element {
@@ -21,10 +23,36 @@ export function Home(): JSX.Element {
   const [genre, setGenre] = useState('');
   const [author, setAuthor] = useState('');
   const [message, setMessage] = useState('');
+  // 客户端更新：自动检查（静默失败不打扰）
+  const [update, setUpdate] = useState<{ info: UpdateInfo; current: string } | null>(null);
 
   useEffect(() => {
     void loadBooks();
   }, [loadBooks]);
+
+  // 启动自动检查更新：开关开 && 距上次超 24h；延迟 3s 不打断启动；失败静默
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const { updateService } = getAppContext();
+        if (!(await updateService.shouldAutoCheck())) return;
+        await updateService.markChecked();
+        try {
+          const info = await updateService.findNewer();
+          if (!cancelled && info) {
+            setUpdate({ info, current: await updateService.getCurrentVersion() });
+          }
+        } catch {
+          // 网络失败静默（可稍后在设置页手动检查）
+        }
+      })();
+    }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, []);
 
   const submit = async (): Promise<void> => {
     if (!title.trim()) return;
@@ -145,6 +173,15 @@ export function Home(): JSX.Element {
           )}
         </div>
       </main>
+
+      {/* 启动自动检查发现新版本：下载弹窗 */}
+      {update && (
+        <UpdateDialog
+          info={update.info}
+          currentVersion={update.current}
+          onClose={() => setUpdate(null)}
+        />
+      )}
     </div>
   );
 }

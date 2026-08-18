@@ -9,6 +9,8 @@ import { getAppContext } from '../context/app-context';
 import { alertDialog, confirmDialog } from '../native/dialog';
 import type { GlobalPromptItem } from '../services/ai/GlobalPromptService';
 import { countTokens } from '../utils/tokens';
+import type { UpdateInfo } from '../services/update/UpdateService';
+import { UpdateDialog } from '../components/update/UpdateDialog';
 import type { ProviderConfig } from '../types';
 
 type ProviderType = ProviderConfig['provider'];
@@ -78,6 +80,42 @@ export function Settings(): JSX.Element {
   };
 
   const gpUsed = gpItems.filter((i) => i.enabled).reduce((sum, i) => sum + countTokens(i.text), 0);
+
+  // ============ 客户端更新（方案 A）============
+  const [appVersion, setAppVersion] = useState('');
+  const [autoCheck, setAutoCheck] = useState(true);
+  const [checking, setChecking] = useState(false);
+  const [updateMsg, setUpdateMsg] = useState('');
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      const { updateService } = getAppContext();
+      setAppVersion(await updateService.getCurrentVersion());
+      setAutoCheck(await updateService.isAutoCheckEnabled());
+    })();
+  }, []);
+
+  /** 手动检查：发现新版弹下载窗；无更新/失败仅提示 */
+  const checkUpdate = async (): Promise<void> => {
+    const { updateService } = getAppContext();
+    setChecking(true);
+    setUpdateMsg('检查中…');
+    try {
+      const info = await updateService.findNewer();
+      await updateService.markChecked();
+      if (info) {
+        setUpdateInfo(info);
+        setUpdateMsg(`发现新版本 v${info.version}`);
+      } else {
+        setUpdateMsg(`已是最新版本（v${appVersion || await updateService.getCurrentVersion()}）`);
+      }
+    } catch (e) {
+      setUpdateMsg(`检查失败：${e instanceof Error ? e.message : String(e)}（GitHub 访问受限时可配置网络后重试）`);
+    } finally {
+      setChecking(false);
+    }
+  };
 
   useEffect(() => {
     void loadConfigs();
@@ -413,6 +451,39 @@ export function Settings(): JSX.Element {
           </div>
         </section>
 
+        {/* 客户端更新（方案 A） */}
+        <section className="mt-4 rounded-lg border border-ink-200 bg-white p-4">
+          <div className="mb-1 flex items-center justify-between">
+            <h2 className="font-medium">软件更新</h2>
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-ink-600">
+              <input
+                type="checkbox"
+                checked={autoCheck}
+                onChange={(e) => {
+                  const v = e.target.checked;
+                  setAutoCheck(v);
+                  void getAppContext().updateService.setAutoCheckEnabled(v);
+                }}
+              />
+              自动检查更新
+            </label>
+          </div>
+          <p className="mb-3 text-xs text-ink-400">
+            当前版本 v{appVersion || '…'} · 新版本发布于 GitHub Releases，检查到新版本时会弹出下载提示。
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={checking}
+              className="rounded bg-violet-600 px-3 py-1 text-sm text-white hover:bg-violet-700 disabled:opacity-40"
+              onClick={() => void checkUpdate()}
+            >
+              {checking ? '检查中…' : '立即检查更新'}
+            </button>
+            {updateMsg && <span className="min-w-0 truncate text-xs text-ink-500">{updateMsg}</span>}
+          </div>
+        </section>
+
         <section className="mt-4 rounded-lg border border-ink-200 bg-white p-4 text-sm text-ink-600">
           <h2 className="mb-2 font-medium">数据与 Skill</h2>
           <ul className="list-disc space-y-1 pl-5 text-xs text-ink-500">
@@ -422,6 +493,15 @@ export function Settings(): JSX.Element {
           </ul>
         </section>
       </main>
+
+      {/* 发现新版本：下载弹窗 */}
+      {updateInfo && (
+        <UpdateDialog
+          info={updateInfo}
+          currentVersion={appVersion}
+          onClose={() => setUpdateInfo(null)}
+        />
+      )}
     </div>
   );
 }

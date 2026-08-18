@@ -38,7 +38,9 @@ pub fn run() {
             // keystore
             commands::keystore::set_secret,
             commands::keystore::get_secret,
-            commands::keystore::delete_secret
+            commands::keystore::delete_secret,
+            // shell
+            commands::shell::open_url
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

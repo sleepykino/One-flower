@@ -35,6 +35,7 @@ import { WritingStatsService } from '../services/stats/WritingStatsService';
 import { TaskCenterService } from '../services/task/TaskCenterService';
 import { SettingInferenceService } from '../services/consistency/SettingInferenceService';
 import { LongFormService } from '../services/longform/LongFormService';
+import { UpdateService } from '../services/update/UpdateService';
 import { useTaskStore } from '../store/taskStore';
 import { createProvider } from '../services/ai/providers/LLMProvider';
 import type { LLMProvider } from '../services/ai/providers/LLMProvider';
@@ -76,6 +77,8 @@ export interface AppContext {
   inferenceService: SettingInferenceService;
   /** P2.1-M7：长文模式（章节级规划-生成-自洽循环） */
   longformService: LongFormService;
+  /** 客户端更新：GitHub Release 检查 + 打开下载页 */
+  updateService: UpdateService;
 }
 
 let ctx: AppContext | null = null;
@@ -200,6 +203,9 @@ export async function initApp(): Promise<AppContext> {
     chapterService
   );
 
+  // 客户端更新（方案 A：GitHub latest release 检查，浏览器打开下载页）
+  const updateService = new UpdateService(appSettings);
+
   ctx = {
     bridge: tauriBridge,
     db,
@@ -227,7 +233,8 @@ export async function initApp(): Promise<AppContext> {
     statsService,
     tasks,
     inferenceService,
-    longformService
+    longformService,
+    updateService
   };
   return ctx;
 }
