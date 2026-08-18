@@ -300,6 +300,8 @@ function OutlineEditor({ chapter, onDone }: { chapter: Chapter; onDone: () => vo
   const [status, setStatus] = useState<ChapterStatus>(chapter.status);
   const [summaryBusy, setSummaryBusy] = useState(false);
   const [summaryErr, setSummaryErr] = useState<string | null>(null);
+  /** 摘要展开查看（默认折叠 4 行） */
+  const [summaryOpen, setSummaryOpen] = useState(false);
 
   const refreshChapters = async (): Promise<void> => {
     const bookId = useEditorStore.getState().bookId;
@@ -341,9 +343,24 @@ function OutlineEditor({ chapter, onDone }: { chapter: Chapter; onDone: () => vo
             {summaryBusy ? '生成中…' : chapter.summary ? '重新生成' : '生成摘要'}
           </button>
         </div>
-        <div className="mt-0.5 line-clamp-4 text-[11px] leading-relaxed text-ink-600">
+        <div
+          className={`mt-0.5 cursor-pointer whitespace-pre-wrap text-[11px] leading-relaxed text-ink-600 ${
+            summaryOpen ? '' : 'line-clamp-4'
+          }`}
+          onClick={() => setSummaryOpen((v) => !v)}
+          title={summaryOpen ? '点击收起' : '点击展开查看完整摘要'}
+        >
           {chapter.summary ?? '尚未生成。章节保存后将自动在后台生成，用于 AI 前情上下文。'}
         </div>
+        {chapter.summary && (
+          <button
+            type="button"
+            className="mt-0.5 text-[11px] text-violet-600 hover:underline"
+            onClick={() => setSummaryOpen((v) => !v)}
+          >
+            {summaryOpen ? '收起' : '展开全部'}
+          </button>
+        )}
         {summaryErr && <div className="mt-0.5 text-[11px] text-red-500">{summaryErr}</div>}
       </div>
       <div className="mt-1 flex items-center gap-1">

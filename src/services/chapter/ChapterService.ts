@@ -30,6 +30,13 @@ export class ChapterService {
     this.search = search;
   }
 
+  /** 字数增量回调（装配层注入：写作统计即时记录） */
+  private onWordsGrown?: (bookId: string, chapterId: string, words: number) => void;
+
+  setWordsGrownNotifier(fn: (bookId: string, chapterId: string, words: number) => void): void {
+    this.onWordsGrown = fn;
+  }
+
   async list(bookId: string): Promise<Chapter[]> {
     const rows = await this.db.query<Record<string, unknown>>(
       'SELECT * FROM chapters WHERE book_id = ? ORDER BY sort_order ASC, created_at ASC',
@@ -173,6 +180,10 @@ export class ChapterService {
     );
     await this.search.indexChapter(chapterId, ch.bookId, ch.title, docToPlainText(doc));
     await this.db.exec('UPDATE books SET updated_at = ? WHERE id = ?', [Date.now(), ch.bookId]);
+    // 写作统计：字数增长即时通知（保存前旧值 ch.wordCount 与新值之差，仅记正增量）
+    if (wordCount > ch.wordCount) {
+      this.onWordsGrown?.(ch.bookId, chapterId, wordCount - ch.wordCount);
+    }
     return wordCount;
   }
 

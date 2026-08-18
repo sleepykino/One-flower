@@ -191,6 +191,9 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
   const [entries, setEntries] = useState<Array<{ id: string; title: string }>>([]);
   const [renameDraft, setRenameDraft] = useState<string | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
+  /** 左右工具面板折叠（画布顶部按钮切换） */
+  const [leftOpen, setLeftOpen] = useState(true);
+  const [rightOpen, setRightOpen] = useState(true);
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiGenerating, setAiGenerating] = useState(false);
   const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null);
@@ -1357,8 +1360,13 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
 
         {/* 主体三栏 */}
         <div className="relative flex min-h-0 flex-1">
-          {/* 左侧栏 */}
-          <aside className="flex w-60 shrink-0 flex-col overflow-y-auto border-r border-ink-200">
+          {/* 左侧栏（宽度动画收起） */}
+          <aside
+            className={`shrink-0 overflow-hidden border-r border-ink-200 transition-[width] duration-200 ${
+              leftOpen ? 'w-60' : 'w-0 border-r-0'
+            }`}
+          >
+            <div className="flex h-full w-60 flex-col overflow-y-auto">
             {/* 地图列表 */}
             <div className="px-3 pb-1 pt-2.5 text-sm font-medium">地图</div>
             <div className="max-h-32 overflow-y-auto px-2">
@@ -1512,6 +1520,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
                 </button>
               ))}
             </div>
+            </div>
           </aside>
 
           {/* 画布区 */}
@@ -1611,11 +1620,33 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
             <div className="pointer-events-none absolute bottom-2 left-2 rounded bg-white/90 px-2 py-1 text-xs text-ink-500 shadow-sm">
               {hint}
             </div>
+            {/* 左右面板折叠按钮 */}
+            <button
+              type="button"
+              title={leftOpen ? '收起左侧工具面板' : '展开左侧工具面板'}
+              className="absolute left-2 top-2 z-10 rounded border border-ink-200 bg-white/90 px-2 py-1 text-xs text-ink-500 shadow-sm hover:bg-ink-100"
+              onClick={() => setLeftOpen((v) => !v)}
+            >
+              {leftOpen ? '◀' : '▶'}
+            </button>
+            <button
+              type="button"
+              title={rightOpen ? '收起右侧属性面板' : '展开右侧属性面板'}
+              className="absolute right-2 top-2 z-10 rounded border border-ink-200 bg-white/90 px-2 py-1 text-xs text-ink-500 shadow-sm hover:bg-ink-100"
+              onClick={() => setRightOpen((v) => !v)}
+            >
+              {rightOpen ? '▶' : '◀'}
+            </button>
           </div>
 
-          {/* 右侧属性面板 */}
+          {/* 右侧属性面板（宽度动画收起） */}
           {currentMap && (
-            <MapInspector
+            <div
+              className={`shrink-0 overflow-hidden transition-[width] duration-200 ${
+                rightOpen ? 'w-60' : 'w-0'
+              }`}
+            >
+              <MapInspector
               map={currentMap}
               entries={entries}
               node={selNode}
@@ -1631,6 +1662,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
               onRemoveBg={removeBg}
               onResetBg={resetBg}
             />
+            </div>
           )}
 
           {/* 节点右键菜单 */}

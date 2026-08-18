@@ -44,6 +44,20 @@ function Empty({ text }: { text: string }): JSX.Element {
   return <div className="text-xs text-ink-400">{text}</div>;
 }
 
+/** 默认两行截断，点击展开/收起（摘要等长文本查看用） */
+function ClampText({ text }: { text: string }): JSX.Element {
+  const [open, setOpen] = useState(false);
+  return (
+    <span
+      className={`mt-0.5 block cursor-pointer whitespace-pre-wrap text-ink-400 ${open ? '' : 'line-clamp-2'}`}
+      onClick={() => setOpen((v) => !v)}
+      title={open ? '点击收起' : '点击展开查看全文'}
+    >
+      {text}
+    </span>
+  );
+}
+
 export function ContextPanel({ bookId }: { bookId: string }): JSX.Element {
   const [snap, setSnap] = useState<ContextSnapshot | null>(null);
   // 全量 RAG 嵌入状态 + 批量向量化（存量章节需手动批量嵌入一次）
@@ -267,7 +281,7 @@ export function ContextPanel({ bookId }: { bookId: string }): JSX.Element {
               {(ctx.summaryChain ?? []).map((s) => (
                 <li key={s.chapterId}>
                   <span className="font-medium">《{s.title}》</span>
-                  <span className="mt-0.5 block line-clamp-2 text-ink-400">{s.summary}</span>
+                  <ClampText text={s.summary} />
                 </li>
               ))}
             </ul>

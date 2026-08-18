@@ -87,8 +87,11 @@ export function WritingStatsPanel({ bookId }: { bookId: string }): JSX.Element {
     setTotalWords(Number(tw?.total ?? 0));
   }, [bookId]);
 
+  // 初次加载 + 周期刷新（写作中保存即时落库，面板 15s 自动同步）
   useEffect(() => {
     void load();
+    const t = setInterval(() => void load(), 15000);
+    return () => clearInterval(t);
   }, [load]);
 
   const saveGoal = async (): Promise<void> => {

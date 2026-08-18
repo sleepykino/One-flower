@@ -157,6 +157,10 @@ export async function initApp(): Promise<AppContext> {
   const skillPackService = new SkillPackService(tauriBridge, skillsDir);
   const relationshipService = new RelationshipService(db, wq);
   const statsService = new WritingStatsService(tauriBridge, db, wq);
+  // 章节保存带来字数增长时即时写入写作统计（覆盖自动保存/切章 flush/卸载 flush 全部路径）
+  chapterService.setWordsGrownNotifier((bookId, chapterId, words) => {
+    void statsService.recordWords(bookId, words, [chapterId]);
+  });
   const orchestrator = new AIOrchestrator(providerFactory, skillLoader, promptAssembler, tauriBridge, {
     summaryService,
     ragService,

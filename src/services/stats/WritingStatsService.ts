@@ -33,8 +33,8 @@ export class WritingStatsService {
   private bridge: NativeBridge;
   private db: Database;
   private wq: WriteQueue;
-  /** 活跃编辑会话（每本书一个） */
-  private sessions = new Map<string, { startAt: number; startWords: number }>();
+  /** 活跃编辑会话（每本书一个）：仅跟踪时长（字数增量随保存即时记录） */
+  private sessions = new Map<string, { startAt: number }>();
 
   constructor(bridge: NativeBridge, db: Database, wq: WriteQueue) {
     this.bridge = bridge;
@@ -42,30 +42,25 @@ export class WritingStatsService {
     this.wq = wq;
   }
 
-  private async totalWords(bookId: string): Promise<number> {
-    const row = await this.db.queryOne<{ total: number | null }>(
-      'SELECT COALESCE(SUM(word_count), 0) AS total FROM chapters WHERE book_id = ?',
-      [bookId]
-    );
-    return Number(row?.total ?? 0);
-  }
-
-  /** 编辑器进入时开启会话（记录起始字数与时间） */
+  /** 编辑器进入时开启会话（记录起始时间） */
   async beginSession(bookId: string): Promise<void> {
-    this.sessions.set(bookId, { startAt: Date.now(), startWords: await this.totalWords(bookId) });
+    this.sessions.set(bookId, { startAt: Date.now() });
   }
 
-  /** 编辑器退出时结束会话：字数差 + 时长落库 */
+  /** 编辑器退出时结束会话：时长落库（字数增量已随保存即时记录，避免与保存竞态读到旧值） */
   async endSession(bookId: string, chaptersWorked: string[] = []): Promise<void> {
     const s = this.sessions.get(bookId);
     if (!s) return;
     this.sessions.delete(bookId);
     const durationSec = Math.round((Date.now() - s.startAt) / 1000);
     if (durationSec < 5) return; // 忽略瞬时进出
-    const endWords = await this.totalWords(bookId);
-    const diff = endWords - s.startWords;
-    if (diff <= 0 && durationSec < 60) return;
-    await this.recordSession(bookId, Math.max(diff, 0), chaptersWorked, durationSec);
+    await this.recordSession(bookId, 0, chaptersWorked, durationSec);
+  }
+
+  /** 章节保存带来字数增长时即时记录（写作中统计面板即可见） */
+  async recordWords(bookId: string, wordsWritten: number, chaptersWorked: string[] = []): Promise<void> {
+    if (wordsWritten <= 0) return;
+    await this.recordSession(bookId, wordsWritten, chaptersWorked, 0);
   }
 
   /** 记录一次编辑会话（增量） */
