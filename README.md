@@ -2,7 +2,7 @@
 
 **AI 辅助的小说创作工作台**
 
-一花一世界，创作属于你的世界。
+一花一世界，AI辅助，快速创造属于你的世界。
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2.0-FFC131?logo=tauri&logoColor=white)](https://tauri.app)
@@ -14,12 +14,28 @@
 
 ---
 
+> 写在最前
+>
+> 你才是故事的创作者，而不是AI。
+>
+> 当前AI写小说还有很多缺点，比如文风固定、记不住事、看不懂伏笔、剧情容易跑偏...
+>
+> 但优点同样出众，产出迅速，思维发散。
+>
+> 也许是时候仔细想一想，这些缺点未来是否能够解决，当前AI提供的灵感和灵感快速落地的能力是否需要。
+>
+> 未来如果不可挡，何不现在就加入。
+>
+> QQ交流群：1078337392
+
+
+
 ## 为什么是 OneFlower
 
 - **本地优先**：SQLite + 文件系统存储，不依赖任何云端服务，断网也能写作
 - **密钥安全**：API Key 存于操作系统钥匙串，不落明文磁盘
 - **模型自由**：OpenAI 兼容 / Anthropic / Google 任选，DeepSeek、智谱、Kimi 等国内服务即配即用
-- **上下文透明**：每次 AI 调用注入了什么（摘要链 / 世界书 / 角色卡 / 文风），ContextPanel 一目了然，含 token 占用
+- **上下文透明**：每次 AI 调用注入了什么（摘要链 / 世界书 / 角色卡 / 文风），ContextPanel 一目了然
 
 ## ✨ 功能特性
 
