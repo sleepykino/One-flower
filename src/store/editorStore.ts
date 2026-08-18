@@ -15,6 +15,12 @@ export interface EditorApi {
   getSelectedText(): string;
   /** 当前选区范围（无选区返回 null） */
   getSelectionRange(): { from: number; to: number } | null;
+  /** P2.1-M2：收集当前文档全部引用节点（@角色 / [[条目]] / ##章节），按出现顺序去重 */
+  getAiReferences(): Array<{
+    refType: 'character' | 'worldbook' | 'chapter';
+    refId: string;
+    label: string;
+  }>;
   /** 在光标处创建 AI 临时节点（改写模式传入待替换选区） */
   startAITemp(replaceRange?: { from: number; to: number }): void;
   /** 向 AI 临时节点追加流式文本 */
@@ -27,6 +33,8 @@ export interface EditorApi {
   discardAITemp(): void;
   /** 光标聚焦编辑器 */
   focus(): void;
+  /** P2.1-M7：在正文中查找文本片段并滚动定位（接缝审阅点击用） */
+  searchAndScroll?(text: string): void;
 }
 
 interface EditorStore {

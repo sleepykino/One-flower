@@ -5,14 +5,16 @@
 
 import type { NativeBridge } from '../../native/NativeBridge';
 import type { SkillLoader } from '../skill/SkillLoader';
-import type { PromptAssembler, PromptContext, TokenBreakdown } from './PromptAssembler';
+import type { PromptAssembler, PromptContext, TokenBreakdown, ForcedReference } from './PromptAssembler';
 import { DEFAULT_TOKEN_BUDGET } from './PromptAssembler';
 import type { LLMProvider, ChatChunk } from './providers/LLMProvider';
 import { createProvider } from './providers/LLMProvider';
+import type { GlobalPromptService } from './GlobalPromptService';
 import type { SummaryService } from '../summary/SummaryService';
 import type { WorldbookRAGService } from '../worldbook/WorldbookRAGService';
 import type { FullRAGService, SegmentRecall } from '../rag/FullRAGService';
 import type {
+  AiReference,
   Character,
   CheckParams,
   ConsistencyReport,
@@ -20,6 +22,8 @@ import type {
   DialogueParams,
   RewriteParams
 } from './types';
+import { docToPlainText } from '../../utils/pmdoc';
+import type { ProseMirrorDoc } from '../../types';
 
 /** P1/P2 依赖（可选注入，不破坏 P0 构造签名） */
 export interface OrchestratorDeps {
@@ -46,6 +50,8 @@ export class AIOrchestrator {
   private bridge: NativeBridge;
   private deps: OrchestratorDeps;
   private lastContext = new Map<string, ContextSnapshot>();
+  /** P2.1-M1：全局提示词（app-context 装配 setter 注入） */
+  private globalPromptService?: GlobalPromptService;
 
   constructor(
     providerFactory: (configId: string) => Promise<LLMProvider>,
@@ -59,6 +65,11 @@ export class AIOrchestrator {
     this.promptAssembler = promptAssembler;
     this.bridge = bridge;
     this.deps = deps;
+  }
+
+  /** P2.1-M1：全局提示词服务装配（同 search.setChapterService 先例） */
+  setGlobalPromptService(gp: GlobalPromptService): void {
+    this.globalPromptService = gp;
   }
 
   /** ContextPanel 用：取最近一次调用的上下文快照 */
@@ -202,6 +213,151 @@ export class AIOrchestrator {
     }));
   }
 
+  /** P2.1-M1/M2：四模式组装 PromptContext 后统一补充（globalPrompts / forcedRefs），须在 recordContext 前调用 */
+  private async applyCtxExtras(
+    ctx: PromptContext,
+    bookId: string,
+    aiReferences?: AiReference[]
+  ): Promise<void> {
+    if (this.globalPromptService) {
+      try {
+        ctx.globalPrompts = await this.globalPromptService.enabledTexts();
+      } catch (e) {
+        console.warn('[AI] 读取全局提示词失败，已跳过:', e);
+        ctx.globalPrompts = [];
+      }
+    }
+    if (aiReferences && aiReferences.length > 0) {
+      ctx.forcedRefs = await this.loadForcedRefs(bookId, aiReferences);
+    }
+  }
+
+  /** P2.1-M2：解析引用标记为全文强制引用（失败的条目跳过，不打断生成） */
+  private async loadForcedRefs(bookId: string, refs: AiReference[]): Promise<ForcedReference[]> {
+    const out: ForcedReference[] = [];
+    for (const r of refs) {
+      try {
+        if (r.refType === 'character') {
+          const row = await this.bridge.db.queryOne<Record<string, unknown>>(
+            'SELECT id, name, data FROM characters WHERE id = ?',
+            [r.refId]
+          );
+          if (!row) continue;
+          let data: Record<string, unknown> = {};
+          try {
+            data = JSON.parse(String(row.data ?? '{}')) as Record<string, unknown>;
+          } catch {
+            data = {};
+          }
+          const details = Object.entries(data)
+            .filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '')
+            .map(([k, v]) => `- ${k}: ${String(v)}`)
+            .join('\n');
+          out.push({
+            refType: 'character',
+            refId: r.refId,
+            label: String(row.name),
+            content: details || '（角色卡无字段）'
+          });
+        } else if (r.refType === 'worldbook') {
+          const row = await this.bridge.db.queryOne<{ title: string; content: string }>(
+            'SELECT title, content FROM worldbook_entries WHERE id = ?',
+            [r.refId]
+          );
+          if (!row) continue;
+          out.push({
+            refType: 'worldbook',
+            refId: r.refId,
+            label: String(row.title),
+            content: String(row.content ?? '')
+          });
+        } else {
+          const text = await this.loadChapterPlainText(bookId, r.refId);
+          if (text === null) continue;
+          out.push({
+            refType: 'chapter',
+            refId: r.refId,
+            label: r.label,
+            content: text.length > 800 ? `${text.slice(0, 800)}…` : text
+          });
+        }
+      } catch (e) {
+        console.warn('[AI] 加载强制引用失败，已跳过:', r.label, e);
+      }
+    }
+    return out;
+  }
+
+  /** 读取章节正文纯文本（从落盘 JSON），失败返回 null */
+  private async loadChapterPlainText(bookId: string, chapterId: string): Promise<string | null> {
+    const row = await this.bridge.db.queryOne<{ content_path: string | null }>(
+      'SELECT content_path FROM chapters WHERE id = ?',
+      [chapterId]
+    );
+    if (!row) return null;
+    let path = row.content_path ?? null;
+    if (!path) {
+      const book = await this.bridge.db.queryOne<{ storage_dir: string }>(
+        'SELECT storage_dir FROM books WHERE id = ?',
+        [bookId]
+      );
+      if (!book) return null;
+      path = `${String(book.storage_dir)}/chapters/${chapterId}.json`;
+    }
+    try {
+      const raw = await this.bridge.fs.readFile(path);
+      const doc = JSON.parse(raw) as ProseMirrorDoc;
+      if (doc?.type !== 'doc') return null;
+      return docToPlainText(doc);
+    } catch {
+      return null;
+    }
+  }
+
+  /** P2.1-M7：暴露三路检索给编排层（长文节拍表初稿用），不改既有私有语义 */
+  async retrieveRag(
+    bookId: string,
+    query: string
+  ): Promise<{
+    worldbookEntries?: Array<{ id: string; title: string; category: string | null; content: string }>;
+    segments?: SegmentRecall[];
+  }> {
+    return this.fetchRag(bookId, query);
+  }
+
+  /** P2.1-M6：读取本书非豁免设定事实 + 推导链作为"时代感基线"（check 模式注入） */
+  private async loadSettingBaseline(
+    bookId: string
+  ): Promise<PromptContext['settingBaseline'] | undefined> {
+    try {
+      const facts = await this.bridge.db.query<{ domain: string; fact: string; basis: string }>(
+        'SELECT domain, fact, basis FROM setting_facts WHERE book_id = ? AND exempt = 0 ORDER BY created_at ASC',
+        [bookId]
+      );
+      const chains = await this.bridge.db.query<{ premise: string; conclusion: string }>(
+        `SELECT si.premise, si.conclusion FROM setting_inferences si
+         JOIN setting_facts sf ON sf.id = si.fact_id
+         WHERE si.book_id = ? AND sf.exempt = 0 ORDER BY si.created_at ASC`,
+        [bookId]
+      );
+      if (facts.length === 0 && chains.length === 0) return undefined;
+      return {
+        facts: facts.map((f) => ({
+          domain: String(f.domain),
+          fact: String(f.fact),
+          basis: String(f.basis)
+        })),
+        chains: chains.map((c) => ({
+          premise: String(c.premise),
+          conclusion: String(c.conclusion)
+        }))
+      };
+    } catch (e) {
+      console.warn('[AI] 读取时代感基线失败，已跳过:', e);
+      return undefined;
+    }
+  }
+
   /** 续写：流式返回，支持 AbortSignal 中断 */
   async *continueWriting(params: ContinueParams): AsyncIterable<ChatChunk> {
     const provider = await this.resolveProvider(params.bookId);
@@ -232,6 +388,8 @@ export class AIOrchestrator {
         content: params.currentContent
       }
     };
+    if (params.beat) ctx.currentBeat = params.beat;
+    await this.applyCtxExtras(ctx, params.bookId, params.aiReferences);
     this.recordContext(params.bookId, ctx);
     const messages = this.promptAssembler.assemble(ctx);
     const config = await this.modelOf(params.bookId);
@@ -256,6 +414,7 @@ export class AIOrchestrator {
       selectedText: params.selectedText,
       userInstruction: params.instruction
     };
+    await this.applyCtxExtras(ctx, params.bookId, params.aiReferences);
     this.recordContext(params.bookId, ctx);
     const messages = this.promptAssembler.assemble(ctx);
     yield* provider.stream(messages, {
@@ -290,6 +449,7 @@ export class AIOrchestrator {
       recentChapters,
       userInstruction: params.scene
     };
+    await this.applyCtxExtras(ctx, params.bookId, params.aiReferences);
     this.recordContext(params.bookId, ctx);
     const messages = this.promptAssembler.assemble(ctx);
     yield* provider.stream(messages, {
@@ -328,6 +488,8 @@ export class AIOrchestrator {
         content: params.chapterContent
       }
     };
+    await this.applyCtxExtras(checkCtx, params.bookId, params.aiReferences);
+    checkCtx.settingBaseline = await this.loadSettingBaseline(params.bookId);
     this.recordContext(params.bookId, checkCtx);
     const messages = this.promptAssembler.assemble(checkCtx);
 

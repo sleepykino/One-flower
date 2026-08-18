@@ -3,6 +3,9 @@
 export type { AIMode } from '../skill/types';
 
 import type { ProseMirrorDoc } from '../../types';
+import type { ChapterBeat } from '../chapter/ChapterService';
+
+export type { ChapterBeat };
 
 export interface Character {
   id: string;
@@ -35,6 +38,13 @@ export interface ConsistencyReport {
   checkedAt: number;
 }
 
+/** P2.1-M2：文档内的引用标记（orchestrator 解析为 ForcedReference 全文注入） */
+export interface AiReference {
+  refType: 'character' | 'worldbook' | 'chapter';
+  refId: string;
+  label: string;
+}
+
 export interface ContinueParams {
   bookId: string;
   chapterId: string;
@@ -43,6 +53,10 @@ export interface ContinueParams {
   selectedCharacterIds: string[];
   /** 续写要求（可选），如"主角识破陷阱，引出幕后黑手" */
   requirement?: string;
+  /** M2: 当前文档的引用标记，orchestrator 解析全文注入 forcedRefs */
+  aiReferences?: AiReference[];
+  /** M5: 当前应执行的节拍（AIPanel 按 beats 与开关填充） */
+  beat?: ChapterBeat;
   /** 单次回复的 token 上限（约等于中文字数） */
   maxTokens?: number;
   /** 采样温度，默认 0.85 */
@@ -56,6 +70,8 @@ export interface RewriteParams {
   selectedText: string;
   instruction: string; // 如"改为更紧张的氛围"
   recentChapters: ChapterContent[];
+  /** M2: 当前文档的引用标记 */
+  aiReferences?: AiReference[];
   /** 单次回复的 token 上限（约等于中文字数） */
   maxTokens?: number;
   /** 采样温度，默认 0.7 */
@@ -69,6 +85,8 @@ export interface DialogueParams {
   scene: string; // 场景描述
   characterIds: string[]; // 参与对话的角色
   recentChapters: ChapterContent[];
+  /** M2: 当前文档的引用标记 */
+  aiReferences?: AiReference[];
   /** 单次回复的 token 上限（约等于中文字数），默认 4096 */
   maxTokens?: number;
   /** 采样温度，默认 0.9 */
@@ -80,6 +98,8 @@ export interface CheckParams {
   bookId: string;
   chapterId: string;
   chapterContent: string;
+  /** M2: 当前文档的引用标记 */
+  aiReferences?: AiReference[];
   signal?: AbortSignal;
 }
 

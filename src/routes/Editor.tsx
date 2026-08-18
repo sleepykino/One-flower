@@ -4,8 +4,20 @@
  * Ctrl+Shift+F 全局查找
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import {
+  Sparkles,
+  Layers,
+  Database,
+  Users,
+  BookOpen,
+  GitBranch,
+  History,
+  Puzzle,
+  BarChart3,
+  type LucideIcon
+} from 'lucide-react';
 import { useEditorStore } from '../store/editorStore';
 import { NovelEditor } from '../components/editor/NovelEditor';
 import { FocusMode } from '../components/editor/FocusMode';
@@ -23,12 +35,15 @@ import { ExportDialog } from '../components/export/ExportDialog';
 import { MapEditor } from '../components/map/MapEditor';
 import { TimelineView } from '../components/timeline/TimelineView';
 import { NameGenerator } from '../components/namegen/NameGenerator';
+import { TaskIndicator } from '../components/task/TaskIndicator';
 import { getAppContext } from '../context/app-context';
+import type { LongFormSession } from '../services/longform/types';
 import { resolveProviderConfigId } from '../services/ai/providerResolver';
 import { createProvider } from '../services/ai/providers/LLMProvider';
 
 type RightTab =
   | 'ai'
+  | 'longform' // P2.1-M7：长文模式（Phase 7 启用）
   | 'context'
   | 'characters'
   | 'worldbook'
@@ -37,15 +52,38 @@ type RightTab =
   | 'skills'
   | 'stats';
 
-const TABS: Array<{ key: RightTab; label: string }> = [
-  { key: 'ai', label: 'AI' },
-  { key: 'context', label: '上下文' },
-  { key: 'characters', label: '角色' },
-  { key: 'worldbook', label: '世界书' },
-  { key: 'foreshadow', label: '伏笔' },
-  { key: 'history', label: '历史' },
-  { key: 'skills', label: 'Skill' },
-  { key: 'stats', label: '统计' }
+/** P2.1-M7 长文 tab 启用开关（Phase 7 已启用） */
+const LONGFORM_ENABLED = true;
+
+/** P2.1-M3：右侧面板分组（AI / 资料 / 工具），icon rail 呈现 */
+const RIGHT_TAB_GROUPS: Array<{
+  label: string;
+  tabs: Array<{ key: RightTab; title: string; icon: LucideIcon; hidden?: boolean }>;
+}> = [
+  {
+    label: 'AI',
+    tabs: [
+      { key: 'ai', title: 'AI 助手', icon: Sparkles },
+      { key: 'longform', title: '长文', icon: Layers, hidden: !LONGFORM_ENABLED }
+    ]
+  },
+  {
+    label: '资料',
+    tabs: [
+      { key: 'context', title: '上下文', icon: Database },
+      { key: 'characters', title: '角色', icon: Users },
+      { key: 'worldbook', title: '世界书', icon: BookOpen },
+      { key: 'foreshadow', title: '伏笔', icon: GitBranch }
+    ]
+  },
+  {
+    label: '工具',
+    tabs: [
+      { key: 'history', title: '版本', icon: History },
+      { key: 'skills', title: 'Skill', icon: Puzzle },
+      { key: 'stats', title: '统计', icon: BarChart3 }
+    ]
+  }
 ];
 
 /** AI 生成地图的系统提示词（输出 { nodes, connections } JSON，契约见 MapEditor.parseAiContent；icon id 全集见 map/types.ts ICON_LIBRARY） */
@@ -85,6 +123,16 @@ export function Editor(): JSX.Element {
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [namegenOpen, setNamegenOpen] = useState(false);
   const [focusOn, setFocusOn] = useState(false);
+  // P2.1-M7：未完成长文会话恢复横幅
+  const [lfActive, setLfActive] = useState<LongFormSession | null>(null);
+
+  useEffect(() => {
+    setLfActive(null);
+    void getAppContext()
+      .longformService.findActive(bookId)
+      .then(setLfActive)
+      .catch(() => undefined);
+  }, [bookId]);
 
   useEffect(() => {
     setBookId(bookId);
@@ -166,17 +214,6 @@ export function Editor(): JSX.Element {
           {currentChapter ? `${currentChapter.title} · ${currentChapter.wordCount} 字` : '未选择章节'}
         </div>
         <div className="ml-auto flex items-center gap-2 text-xs">
-          <span
-            className={
-              saveState === 'saved'
-                ? 'text-emerald-600'
-                : saveState === 'saving'
-                  ? 'text-amber-600'
-                  : 'text-ink-400'
-            }
-          >
-            {saveState === 'saved' ? '已保存' : saveState === 'saving' ? '保存中…' : '未保存'}
-          </span>
           {/* P2 工具组：专注 / 地图 / 时间线 / 命名 */}
           <button
             type="button"
@@ -245,6 +282,37 @@ export function Editor(): JSX.Element {
         </div>
       </header>
 
+      {/* P2.1-M7：长文会话恢复横幅 */}
+      {lfActive && lfActive.beats.length > 0 && (
+        <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-xs text-amber-800">
+          <span>
+            检测到未完成的长文生成（第{' '}
+            {Math.min(lfActive.currentBeatIndex + 1, lfActive.beats.length)}/{lfActive.beats.length}{' '}
+            拍，状态：{lfActive.status === 'running' ? '进行中' : lfActive.status === 'paused' ? '已暂停' : '待审阅'}）
+          </span>
+          <button
+            type="button"
+            className="rounded bg-amber-600 px-2 py-0.5 text-white hover:bg-amber-700"
+            onClick={() => {
+              setTab('longform');
+              setLfActive(null);
+            }}
+          >
+            恢复
+          </button>
+          <button
+            type="button"
+            className="rounded border border-amber-300 px-2 py-0.5 hover:bg-amber-100"
+            onClick={() => {
+              void getAppContext().longformService.deleteSession(lfActive.id);
+              setLfActive(null);
+            }}
+          >
+            丢弃
+          </button>
+        </div>
+      )}
+
       {/* 三栏布局 */}
       <div className="flex min-h-0 flex-1">
         <aside
@@ -269,41 +337,69 @@ export function Editor(): JSX.Element {
           )}
         </main>
 
+        {/* P2.1-M3：右侧 icon rail + 内容区（rail 随 rightOpen 整体折叠） */}
         <aside
           className={`shrink-0 overflow-hidden border-l border-ink-200 bg-white transition-[width] duration-200 ${
-            rightOpen ? 'w-80' : 'w-0 border-l-0'
+            rightOpen ? 'w-[368px]' : 'w-0 border-l-0'
           }`}
         >
-          <div className="flex h-full w-80 flex-col">
-            <div className="flex border-b border-ink-200 text-xs">
-              {TABS.map((t) => (
-                <button
-                  key={t.key}
-                  type="button"
-                  onClick={() => setTab(t.key)}
-                  className={`flex-1 py-2 ${
-                    tab === t.key
-                      ? 'border-b-2 border-violet-600 font-medium text-violet-700'
-                      : 'text-ink-500 hover:text-ink-800'
-                  }`}
-                >
-                  {t.label}
-                </button>
+          <div className="flex h-full w-[368px]">
+            {/* 竖排图标栏 */}
+            <nav className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-ink-100 py-2">
+              {RIGHT_TAB_GROUPS.map((g, gi) => (
+                <Fragment key={g.label}>
+                  {gi > 0 && <div className="my-1 w-8 border-t border-ink-200" />}
+                  {g.tabs.map((t) => (
+                    <button
+                      key={t.key}
+                      type="button"
+                      title={t.title}
+                      onClick={() => setTab(t.key)}
+                      className={`flex h-9 w-9 items-center justify-center rounded-md ${
+                        tab === t.key
+                          ? 'bg-violet-100 text-violet-700'
+                          : 'text-ink-500 hover:bg-ink-100 hover:text-ink-800'
+                      } ${t.hidden ? 'hidden' : ''}`}
+                    >
+                      <t.icon size={18} />
+                    </button>
+                  ))}
+                </Fragment>
               ))}
-            </div>
-            <div className="min-h-0 flex-1">
-              {tab === 'ai' && <AIPanel bookId={bookId} />}
-              {tab === 'context' && <ContextPanel bookId={bookId} />}
-              {tab === 'characters' && <CharacterList bookId={bookId} />}
-              {tab === 'worldbook' && <WorldbookPanel bookId={bookId} />}
-              {tab === 'foreshadow' && <ForeshadowPanel bookId={bookId} />}
-              {tab === 'history' && <VersionHistory />}
-              {tab === 'skills' && <SkillPanel bookId={bookId} />}
-              {tab === 'stats' && <WritingStatsPanel bookId={bookId} />}
+            </nav>
+            {/* 内容区 */}
+            <div className="flex min-w-0 flex-1 flex-col">
+              <div className="min-h-0 flex-1">
+                {tab === 'ai' && <AIPanel bookId={bookId} />}
+                {tab === 'longform' && <AIPanel bookId={bookId} initialTab="longform" />}
+                {tab === 'context' && <ContextPanel bookId={bookId} />}
+                {tab === 'characters' && <CharacterList bookId={bookId} />}
+                {tab === 'worldbook' && <WorldbookPanel bookId={bookId} />}
+                {tab === 'foreshadow' && <ForeshadowPanel bookId={bookId} />}
+                {tab === 'history' && <VersionHistory />}
+                {tab === 'skills' && <SkillPanel bookId={bookId} />}
+                {tab === 'stats' && <WritingStatsPanel bookId={bookId} />}
+              </div>
             </div>
           </div>
         </aside>
       </div>
+
+      {/* P2.1-M4 底部状态栏：保存状态 + 任务指示器 */}
+      <footer className="flex h-6 shrink-0 items-center gap-3 border-t border-ink-200 bg-white px-3 text-[11px]">
+        <span
+          className={
+            saveState === 'saved'
+              ? 'text-emerald-600'
+              : saveState === 'saving'
+                ? 'text-amber-600'
+                : 'text-ink-400'
+          }
+        >
+          {saveState === 'saved' ? '已保存' : saveState === 'saving' ? '保存中…' : '未保存'}
+        </span>
+        <TaskIndicator />
+      </footer>
 
       {searchOpen && <GlobalSearchModal bookId={bookId} onClose={() => setSearchOpen(false)} />}
       {exportOpen && <ExportDialog bookId={bookId} onClose={() => setExportOpen(false)} />}

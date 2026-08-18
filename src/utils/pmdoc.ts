@@ -27,11 +27,12 @@ export function isPMDoc(v: unknown): v is ProseMirrorDoc {
   );
 }
 
-/** 内联节点 → 纯文本（提及/引用转为名称文本） */
+/** 内联节点 -> 纯文本（提及/引用转为名称文本） */
 function inlineText(node: PMNode): string {
   if (node.type === 'text') return node.text ?? '';
   if (node.type === 'characterMention') return String(node.attrs?.name ?? '');
   if (node.type === 'worldbookRef') return String(node.attrs?.title ?? '');
+  if (node.type === 'chapterRef') return String(node.attrs?.title ?? '');
   if (node.content) return node.content.map(inlineText).join('');
   return '';
 }
@@ -149,7 +150,7 @@ export function replaceInDoc(
         node.text = node.text.replace(search, replacement);
       }
     }
-    if (node.type === 'characterMention' || node.type === 'worldbookRef') {
+    if (node.type === 'characterMention' || node.type === 'worldbookRef' || node.type === 'chapterRef') {
       const attrKey = node.type === 'characterMention' ? 'name' : 'title';
       const val = node.attrs?.[attrKey];
       if (typeof val === 'string') {

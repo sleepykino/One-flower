@@ -9,8 +9,10 @@ import { alertDialog } from '../../native/dialog';
 import { useEditorStore } from '../../store/editorStore';
 import { useAIStore } from '../../store/aiStore';
 import type { AIMode } from '../../services/skill/types';
+import type { ChapterBeat } from '../../services/chapter/ChapterService';
 import type { Character } from '../../types';
 import { ConsistencyReportView } from './ConsistencyReport';
+import { LongFormPanel } from './LongFormPanel';
 
 const MODES: Array<{ key: AIMode; label: string }> = [
   { key: 'continue', label: '续写' },
@@ -19,7 +21,7 @@ const MODES: Array<{ key: AIMode; label: string }> = [
   { key: 'check', label: '检查' }
 ];
 
-export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
+export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: 'longform' }): JSX.Element {
   const mode = useAIStore((s) => s.mode);
   const setMode = useAIStore((s) => s.setMode);
   const phase = useAIStore((s) => s.phase);
@@ -34,6 +36,11 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
   // 续写要求（可选）：引导续写方向，随提示词以【要求】段注入
   const [continueReq, setContinueReq] = useState('');
   const [scene, setScene] = useState('');
+  // P2.1-M5：按节拍定向续写（当前章节存在未完成节拍时可选，默认开）
+  const [beats, setBeats] = useState<ChapterBeat[]>([]);
+  const [beatDirect, setBeatDirect] = useState(true);
+  // P2.1-M7：长文模式视图（第 5 tab；rail 'longform' 入口经 initialTab 打开）
+  const [longform, setLongform] = useState(initialTab === 'longform');
   // 生成参数：单次回复 token 上限（约等于中文字数）与采样温度
   const [maxTokens, setMaxTokens] = useState(2048);
   const [temperature, setTemperature] = useState('0.8');
@@ -50,9 +57,27 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
       .then(setCharacters);
   }, [bookId]);
 
+  // P2.1-M5：读取当前章节节拍（编辑器节拍栏保存后广播刷新）
+  useEffect(() => {
+    const load = (): void => {
+      if (!currentChapterId) {
+        setBeats([]);
+        return;
+      }
+      void getAppContext()
+        .chapterService.getBeats(currentChapterId)
+        .then(setBeats);
+    };
+    load();
+    window.addEventListener('novel-beats-refresh', load);
+    return () => window.removeEventListener('novel-beats-refresh', load);
+  }, [currentChapterId, bookId]);
+
   const streaming = phase === 'streaming';
   const deciding = phase === 'deciding';
   const currentChapter = chapters.find((c) => c.id === currentChapterId);
+  /** 第一个未完成节拍（定向续写目标） */
+  const pendingBeat = beats.find((b) => !b.done && b.text.trim() !== '');
 
   /** 收集前情（滑动窗口最近 3 章） */
   const gatherRecent = async () => {
@@ -74,6 +99,9 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
     const controller = useAIStore.getState().startStream();
     api.startAITemp(range ?? undefined);
 
+    // P2.1-M2：透传当前文档引用标记（orchestrator 注入 forcedRefs 全文）
+    const aiReferences = api.getAiReferences();
+
     try {
       const recent = await gatherRecent();
       let iterable: AsyncIterable<{ delta: string; done: boolean }>;
@@ -85,6 +113,8 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
           recentChapters: recent,
           selectedCharacterIds: selectedCharIds,
           requirement: continueReq.trim() || undefined,
+          aiReferences,
+          beat: beatDirect ? pendingBeat : undefined,
           maxTokens: tokenValue(),
           temperature: tempValue(),
           signal: controller.signal
@@ -96,6 +126,7 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
           selectedText: selectedText,
           instruction,
           recentChapters: recent,
+          aiReferences,
           maxTokens: tokenValue(),
           temperature: tempValue(),
           signal: controller.signal
@@ -107,6 +138,7 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
           scene,
           characterIds: selectedCharIds,
           recentChapters: recent,
+          aiReferences,
           maxTokens: tokenValue(),
           temperature: tempValue(),
           signal: controller.signal
@@ -197,7 +229,8 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
       const r = await orchestrator.checkConsistency({
         bookId,
         chapterId: currentChapterId,
-        chapterContent: api.getPlainText()
+        chapterContent: api.getPlainText(),
+        aiReferences: api.getAiReferences()
       });
       useAIStore.getState().setReport(r);
     } catch (e) {
@@ -213,15 +246,18 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
 
   return (
     <div className="flex h-full flex-col">
-      {/* 模式 tab */}
+      {/* 模式 tab（四模式 + 长文） */}
       <div className="flex border-b border-ink-200">
         {MODES.map((m) => (
           <button
             key={m.key}
             type="button"
-            onClick={() => setMode(m.key)}
+            onClick={() => {
+              setMode(m.key);
+              setLongform(false);
+            }}
             className={`flex-1 px-2 py-2 text-sm ${
-              mode === m.key
+              !longform && mode === m.key
                 ? 'border-b-2 border-violet-600 font-medium text-violet-700'
                 : 'text-ink-500 hover:text-ink-800'
             }`}
@@ -229,8 +265,23 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
             {m.label}
           </button>
         ))}
+        <button
+          type="button"
+          onClick={() => setLongform(true)}
+          className={`flex-1 px-2 py-2 text-sm ${
+            longform
+              ? 'border-b-2 border-violet-600 font-medium text-violet-700'
+              : 'text-ink-500 hover:text-ink-800'
+          }`}
+        >
+          长文
+        </button>
       </div>
 
+      {/* P2.1-M7：长文模式四步向导 */}
+      {longform ? (
+        <LongFormPanel bookId={bookId} />
+      ) : (
       <div className="flex-1 overflow-y-auto">
         {/* 续写 */}
         {mode === 'continue' && (
@@ -239,6 +290,21 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
               当前：{currentChapter?.title ?? '未选择章节'} · 前情自动取最近 3 章
             </div>
             <CharPicker characters={characters} selected={selectedCharIds} onToggle={toggleChar} />
+            {/* P2.1-M5：按节拍定向开关（存在未完成节拍时显示） */}
+            {pendingBeat && (
+              <label className="mt-2 flex items-center gap-2 rounded border border-emerald-200 bg-emerald-50/50 px-2 py-1.5 text-xs text-emerald-800">
+                <input
+                  type="checkbox"
+                  checked={beatDirect}
+                  onChange={(e) => setBeatDirect(e.target.checked)}
+                />
+                <span className="min-w-0 flex-1">
+                  按节拍定向：
+                  <span className="font-medium">{pendingBeat.text.slice(0, 24)}</span>
+                  <span className="ml-1 text-emerald-600">（约 {pendingBeat.targetWords ?? 300} 字）</span>
+                </span>
+              </label>
+            )}
             <textarea
               rows={3}
               value={continueReq}
@@ -346,10 +412,22 @@ export function AIPanel({ bookId }: { bookId: string }): JSX.Element {
             {error}
           </div>
         )}
+
+        {/* 续写 tab 底部引导：切换长文模式（P2.1-M7） */}
+        {mode === 'continue' && !streaming && !deciding && (
+          <button
+            type="button"
+            className="m-3 mt-0 rounded border border-violet-200 bg-violet-50/50 py-1.5 text-center text-xs text-violet-700 hover:bg-violet-100"
+            onClick={() => setLongform(true)}
+          >
+            需要整章生成？切换长文模式 →
+          </button>
+        )}
       </div>
+      )}
 
       {/* 流式中断三选项 */}
-      {(streaming || deciding) && (
+      {!longform && (streaming || deciding) && (
         <div className="border-t border-ink-200 bg-ink-50 p-2">
           {streaming && (
             <button

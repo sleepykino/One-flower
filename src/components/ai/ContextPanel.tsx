@@ -76,29 +76,56 @@ export function ContextPanel({ bookId }: { bookId: string }): JSX.Element {
     refreshStats();
   }, [refreshStats]);
 
-  /** 批量向量化全书（未变化段落自动跳过） */
+  /** 批量向量化全书（未变化段落自动跳过）—— P2.1-M4 试点接入任务中心（后台化 + 取消 + 失败重试） */
   const runEmbedAll = async (): Promise<void> => {
-    const { fullRagService } = getAppContext();
+    const { fullRagService, tasks, chapterService } = getAppContext();
     setEmbedding(true);
     setEmbedMsg('批量向量化中…');
+    const exec = (): void => {
+      setEmbedding(true);
+      setEmbedMsg('批量向量化中…');
+      tasks.register({
+        kind: 'batch-embed',
+        title: '全书章节向量化',
+        cancellable: true,
+        run: async ({ report, signal }) => {
+          let done = 0;
+          const all = await chapterService.list(bookId);
+          const total = all.length;
+          for await (const p of fullRagService.embedAllSegments(bookId)) {
+            if (signal.aborted) throw new DOMException('已取消', 'AbortError');
+            done += 1;
+            report(Math.round((done / Math.max(total, 1)) * 100), `第 ${done}/${total} 章`);
+            if (p.status === 'error') {
+              console.warn('[FullRAG] 章节向量化失败:', p.title, p.error);
+              setEmbedMsg(`已完成 ${done} 章（「${p.title}」失败：${p.error ?? ''}）`);
+            } else {
+              setEmbedMsg(`已完成 ${done} 章`);
+            }
+          }
+          setEmbedMsg(`批量向量化完成（共 ${done} 章）`);
+        },
+        retry: exec
+      });
+    };
     try {
-      let done = 0;
-      for await (const p of fullRagService.embedAllSegments(bookId)) {
-        done += 1;
-        if (p.status === 'error') {
-          console.warn('[FullRAG] 章节向量化失败:', p.title, p.error);
-          setEmbedMsg(`已完成 ${done} 章（「${p.title}」失败：${p.error ?? ''}）`);
-        } else {
-          setEmbedMsg(`已完成 ${done} 章`);
-        }
-      }
-      setEmbedMsg(`批量向量化完成（共 ${done} 章）`);
+      exec();
     } catch (e) {
       setEmbedMsg(`失败：${e instanceof Error ? e.message : String(e)}`);
-    } finally {
       setEmbedding(false);
-      refreshStats();
+      return;
     }
+    // 任务在后台运行，本地 embedding 态跟随任务列表恢复
+    const unsub = tasks.subscribe((list) => {
+      const mine = list
+        .filter((t) => t.kind === 'batch-embed')
+        .sort((a, b) => b.startedAt - a.startedAt)[0];
+      if (!mine || mine.status !== 'running') {
+        setEmbedding(false);
+        refreshStats();
+        unsub();
+      }
+    });
   };
 
   const load = useCallback((): void => {
@@ -186,6 +213,60 @@ export function ContextPanel({ bookId }: { bookId: string }): JSX.Element {
         </div>
       </div>
       <div className="flex-1 overflow-y-auto p-2 text-xs">
+        {/* P2.1-M1：全局提示词 */}
+        <Section
+          title={`全局提示词（${ctx.globalPrompts?.length ?? 0}）`}
+          tokens={tokensOf('globalPrompts')}
+          truncated={truncatedOf('globalPrompts')}
+        >
+          {(ctx.globalPrompts ?? []).length === 0 ? (
+            <Empty text="未注入全局提示词（可在设置页配置）" />
+          ) : (
+            <ul className="space-y-1">
+              {(ctx.globalPrompts ?? []).map((g, i) => (
+                <li key={i} className="flex items-start gap-2">
+                  <span className="rounded bg-amber-50 px-1 text-[10px] text-amber-600">优先</span>
+                  <span className="text-ink-600">{g}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
+
+        {/* P2.1-M2：作者指定引用（强制注入，不受检索影响） */}
+        <Section
+          title={`作者指定引用（${ctx.forcedRefs?.length ?? 0}）`}
+          tokens={tokensOf('forcedRefs')}
+          truncated={truncatedOf('forcedRefs')}
+        >
+          {(ctx.forcedRefs ?? []).length === 0 ? (
+            <Empty text="正文中暂无 @ / [[ / ## 引用标记" />
+          ) : (
+            <ul className="space-y-1">
+              {(ctx.forcedRefs ?? []).map((r) => (
+                <li key={`${r.refType}:${r.refId}`} className="flex items-start gap-1">
+                  <span
+                    className={`rounded px-1 text-[10px] ${
+                      r.refType === 'character'
+                        ? 'bg-violet-50 text-violet-600'
+                        : r.refType === 'worldbook'
+                          ? 'bg-sky-50 text-sky-600'
+                          : 'bg-emerald-50 text-emerald-600'
+                    }`}
+                  >
+                    {r.refType === 'character' ? '角色' : r.refType === 'worldbook' ? '世界书' : '章节'}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="font-medium">{r.label}</span>
+                    <span className="ml-1 text-ink-400">全文注入</span>
+                    <ClampText text={r.content} />
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
+
         {/* Skill */}
         <Section title={`文风 Skill（${ctx.enabledSkills.length}）`} tokens={tokensOf('skills')} truncated={truncatedOf('skills')}>
           {ctx.enabledSkills.length === 0 ? (

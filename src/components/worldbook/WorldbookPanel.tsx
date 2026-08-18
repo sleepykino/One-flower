@@ -7,10 +7,15 @@ import { useEffect, useState } from 'react';
 import { getAppContext } from '../../context/app-context';
 import { alertDialog, confirmDialog } from '../../native/dialog';
 import type { WorldbookEntry } from '../../types';
+import { SettingFactsView } from './SettingFactsView';
 
 const CATEGORIES = ['地点', '势力', '物品', '事件', '其他'];
 
+type WbTab = 'entries' | 'facts';
+
 export function WorldbookPanel({ bookId }: { bookId: string }): JSX.Element {
+  // P2.1-M6：面板标签页（条目 / 设定事实）
+  const [tab, setTab] = useState<WbTab>('entries');
   const [entries, setEntries] = useState<WorldbookEntry[]>([]);
   const [editing, setEditing] = useState<Partial<WorldbookEntry> | null>(null);
   const [embeddedIds, setEmbeddedIds] = useState<Set<string>>(new Set());
@@ -142,6 +147,20 @@ export function WorldbookPanel({ bookId }: { bookId: string }): JSX.Element {
     }
   };
 
+  if (tab === 'facts') {
+    return (
+      <div className="flex h-full flex-col">
+        <div className="flex border-b border-ink-200 text-xs">
+          <button type="button" onClick={() => setTab('entries')} className="flex-1 py-2 text-ink-500 hover:text-ink-800">条目</button>
+          <button type="button" onClick={() => setTab('facts')} className="flex-1 border-b-2 border-violet-600 font-medium py-2 text-violet-700">设定事实</button>
+        </div>
+        <div className="min-h-0 flex-1">
+          <SettingFactsView bookId={bookId} />
+        </div>
+      </div>
+    );
+  }
+
   if (editing) {
     return (
       <div className="flex h-full flex-col p-3">
@@ -192,6 +211,10 @@ export function WorldbookPanel({ bookId }: { bookId: string }): JSX.Element {
 
   return (
     <div className="flex h-full flex-col">
+      <div className="flex border-b border-ink-200 text-xs">
+        <button type="button" onClick={() => setTab('entries')} className="flex-1 border-b-2 border-violet-600 font-medium py-2 text-violet-700">条目</button>
+        <button type="button" onClick={() => setTab('facts')} className="flex-1 py-2 text-ink-500 hover:text-ink-800">设定事实</button>
+      </div>
       <div className="flex items-center justify-between border-b border-ink-200 px-3 py-2">
         <span className="text-sm font-medium">世界书（{entries.length}）</span>
         <div className="flex items-center gap-2">

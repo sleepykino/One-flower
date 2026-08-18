@@ -4,11 +4,19 @@
  */
 
 import type { ChatMessage } from './providers/LLMProvider';
-import type { AIMode, Character, ChapterContent, WorldbookEntryRef } from './types';
+import type { AIMode, Character, ChapterContent, WorldbookEntryRef, ChapterBeat } from './types';
 import type { SkillManifest } from '../skill/types';
 import type { ChapterSummary } from '../summary/types';
 import type { SegmentRecall } from '../rag/FullRAGService';
 import { countTokens, truncateToTokenBudget } from '../../utils/tokens';
+
+/** P2.1-M2：强制引用（不受检索相似度影响，全文注入独立预算段） */
+export interface ForcedReference {
+  refType: 'character' | 'worldbook' | 'chapter';
+  refId: string;
+  label: string;
+  content: string; // 条目全文（由 AIOrchestrator.loadForcedRefs 填充）
+}
 
 export interface PromptContext {
   mode: AIMode;
@@ -17,11 +25,22 @@ export interface PromptContext {
   characters: Character[]; // 场景相关角色卡
   worldbookEntries?: WorldbookEntryRef[]; // P1：RAG 检索 top-K（check 模式为全量）
   summaryChain?: ChapterSummary[]; // P1：前 N 章摘要链（远 -> 近）
-  segments?: SegmentRecall[]; // P2：全量 RAG 原文片段召回（远期记忆）
+  segments?: SegmentRecall[]; // P2：全量 RAG 原文片段召回
   recentChapters: ChapterContent[]; // 滑动窗口：最近 2 章原文
   currentChapter?: ChapterContent; // 续写模式用
   userInstruction?: string; // 改写/扩写时用户的要求
   selectedText?: string; // 改写/扩写选中的文本
+  /** M1: 启用的全局提示词条目 */
+  globalPrompts?: string[];
+  /** M2: 强制引用（不受检索相似度影响） */
+  forcedRefs?: ForcedReference[];
+  /** M5: 当前应执行的节拍（定向续写） */
+  currentBeat?: ChapterBeat;
+  /** M6: 时代感基线（check 模式注入：非豁免设定事实 + 推导链） */
+  settingBaseline?: {
+    facts: Array<{ domain: string; fact: string; basis: string }>;
+    chains: Array<{ premise: string; conclusion: string }>;
+  };
 }
 
 export interface TokenBudget {
@@ -34,6 +53,8 @@ export interface TokenBudget {
   recentChapters: number; // ~3000（从 6000 缩减，摘要链分担）
   currentChapter: number; // ~3000
   userInstruction: number; // ~1000
+  globalPrompts: number; // ~600（P2.1-M1，作者全局要求）
+  forcedRefs: number; // ~1500（P2.1-M2，作者指定引用）
   reserved: number; // 生成预留 ~8000
 }
 
@@ -47,6 +68,8 @@ export const DEFAULT_TOKEN_BUDGET: TokenBudget = {
   recentChapters: 3000,
   currentChapter: 3000,
   userInstruction: 1000,
+  globalPrompts: 600,
+  forcedRefs: 1500,
   reserved: 8000
 };
 
@@ -74,9 +97,40 @@ export class PromptAssembler {
     const systemParts: string[] = [];
     const userParts: string[] = [];
 
+    // ---- user：M2 作者指定引用（最前，角色卡之前；不受检索相似度影响）----
+    if (ctx.forcedRefs && ctx.forcedRefs.length > 0) {
+      const typeLabel: Record<ForcedReference['refType'], string> = {
+        character: '角色',
+        worldbook: '世界书',
+        chapter: '章节'
+      };
+      const refsAll = ctx.forcedRefs
+        .map((r) => `【${typeLabel[r.refType]}·${r.label}】\n${r.content}`)
+        .join('\n\n');
+      userParts.push(
+        `## 作者指定引用（本次生成必须参考以下条目全文）\n${truncateToTokenBudget(refsAll, this.budget.forcedRefs).text}`
+      );
+    }
+
     // ---- system：任务指令（system 预算内）----
     const task = MODE_TASK_INSTRUCTION[ctx.mode];
     systemParts.push(task);
+
+    // ---- system：M1 作者全局要求（任务指令之后、Skill 之前；优先级显式高于 Skill）----
+    if (ctx.globalPrompts && ctx.globalPrompts.length > 0) {
+      const gpAll = ctx.globalPrompts.map((t) => `- ${t}`).join('\n');
+      systemParts.push(
+        `## 作者全局要求（优先级最高，高于任何 Skill 指令；与之冲突时以本节为准）\n${truncateToTokenBudget(gpAll, this.budget.globalPrompts).text}`
+      );
+    }
+
+    // ---- system：M5 本章节拍约束（任务指令之后，定向续写）----
+    if (ctx.currentBeat) {
+      const b = ctx.currentBeat;
+      systemParts.push(
+        `## 本章节拍约束\n当前节拍：${b.text}（目标约 ${b.targetWords ?? 300} 字）\n严格围绕当前节拍写作，不得跳过、不得自行增加节拍；完成当前节拍内容后自然收束，留待下一拍。`
+      );
+    }
 
     // ---- system：文风 Skill 正文（按 priority 降序已排序）----
     if (ctx.enabledSkills.length > 0) {
@@ -166,20 +220,44 @@ export class PromptAssembler {
 
     // ---- 输出格式 ----
     if (ctx.mode === 'check') {
-      userParts.push(
-        [
-          '【一致性检查任务】',
-          '对比下方章节正文与上述角色卡/世界书设定，找出事实性矛盾（外貌、性格、关系、地点、时间线、物品、称谓等）。',
-          '严格输出如下 JSON（不要 markdown 代码块），无矛盾时 contradictions 为空数组：',
-          '{"contradictions":[{"severity":"high|medium|low","description":"矛盾描述","relatedSetting":"关联的角色卡或世界书条目名称","chapterExcerpt":"章节原文片段"}]}',
-          '',
-          '【待检查的章节正文】',
-          truncateToTokenBudget(
-            ctx.currentChapter?.content ?? '',
-            this.budget.currentChapter
-          ).text
-        ].join('\n')
+      const checkLines: string[] = [];
+      // M6：时代感基线（非豁免事实 + 推导链）
+      const baseline = ctx.settingBaseline;
+      const hasBaseline = !!baseline && (baseline.facts.length > 0 || baseline.chains.length > 0);
+      if (baseline && hasBaseline) {
+        const lines: string[] = [];
+        if (baseline.facts.length > 0) {
+          lines.push('【已确认设定事实（时代感基线）】');
+          for (const f of baseline.facts.slice(0, 60)) {
+            lines.push(`- [${f.domain}] ${f.fact}（依据：${f.basis}）`);
+          }
+        }
+        if (baseline.chains.length > 0) {
+          lines.push('', '【由事实推导的技术/社会前提（时代感基线）】');
+          for (const c of baseline.chains.slice(0, 60)) {
+            lines.push(`- ${c.premise} -> ${c.conclusion}`);
+          }
+        }
+        checkLines.push(truncateToTokenBudget(lines.join('\n'), this.budget.worldbook).text, '');
+      }
+      checkLines.push(
+        '【一致性检查任务】',
+        '对比下方章节正文与上述角色卡/世界书设定'
+          + (hasBaseline ? '及时代感基线' : '')
+          + '，找出事实性矛盾（外貌、性格、关系、地点、时间线、物品、称谓等）。'
+          + (hasBaseline
+            ? '同时检查正文是否出现基线之外的越级技术/社会元素（例如无光学工艺基础却出现望远镜），此类越级矛盾同样计入 contradictions。'
+            : ''),
+        '严格输出如下 JSON（不要 markdown 代码块），无矛盾时 contradictions 为空数组：',
+        '{"contradictions":[{"severity":"high|medium|low","description":"矛盾描述","relatedSetting":"关联的角色卡或世界书条目名称","chapterExcerpt":"章节原文片段"}]}',
+        '',
+        '【待检查的章节正文】',
+        truncateToTokenBudget(
+          ctx.currentChapter?.content ?? '',
+          this.budget.currentChapter
+        ).text
       );
+      userParts.push(checkLines.join('\n'));
     } else {
       userParts.push('请开始输出。');
     }
@@ -193,6 +271,12 @@ export class PromptAssembler {
   /** 调试用：返回组装后的各部分 token 占用 */
   inspect(ctx: PromptContext): TokenBreakdown[] {
     const out: TokenBreakdown[] = [];
+    const gpAll = (ctx.globalPrompts ?? []).join('\n');
+    const gpFit = truncateToTokenBudget(gpAll, this.budget.globalPrompts);
+    out.push({ part: 'globalPrompts', tokens: countTokens(gpFit.text), truncated: gpFit.truncated });
+    const refsAll = (ctx.forcedRefs ?? []).map((r) => r.content).join('\n');
+    const refsFit = truncateToTokenBudget(refsAll, this.budget.forcedRefs);
+    out.push({ part: 'forcedRefs', tokens: countTokens(refsFit.text), truncated: refsFit.truncated });
     const skills = ctx.enabledSkills.map((s) => s.body).join('\n\n');
     out.push({
       part: 'system',

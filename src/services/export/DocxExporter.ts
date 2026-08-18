@@ -35,6 +35,7 @@ function inlineText(node: PMNode): string {
   if (node.type === 'text') return node.text ?? '';
   if (node.type === 'characterMention') return String(node.attrs?.name ?? '');
   if (node.type === 'worldbookRef') return String(node.attrs?.title ?? '');
+  if (node.type === 'chapterRef') return String(node.attrs?.title ?? '');
   if (node.content) return node.content.map(inlineText).join('');
   return '';
 }

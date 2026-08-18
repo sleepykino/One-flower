@@ -17,6 +17,14 @@ export interface ChapterInput {
   outline?: string | null;
 }
 
+/** P2.1-M5：章节节拍（Beat 锚定续写用） */
+export interface ChapterBeat {
+  id: string;
+  text: string; // 场景/事件描述："主角识破陷阱，引出幕后黑手"
+  targetWords?: number; // 默认 300
+  done: boolean;
+}
+
 export class ChapterService {
   private bridge: NativeBridge;
   private db: Database;
@@ -212,6 +220,36 @@ export class ChapterService {
     }
     // 时间正序呈现（远 → 近）
     return out.reverse();
+  }
+
+  /** P2.1-M5：读 chapters.beats JSON；null/损坏返回 [] */
+  async getBeats(chapterId: string): Promise<ChapterBeat[]> {
+    const row = await this.db.queryOne<{ beats: string | null }>(
+      'SELECT beats FROM chapters WHERE id = ?',
+      [chapterId]
+    );
+    if (!row?.beats) return [];
+    try {
+      const parsed = JSON.parse(row.beats) as unknown;
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter(
+        (b): b is ChapterBeat =>
+          typeof b === 'object' && b !== null && typeof (b as ChapterBeat).text === 'string'
+      );
+    } catch {
+      return [];
+    }
+  }
+
+  /** P2.1-M5：整体覆盖保存节拍列表，过 wq */
+  async saveBeats(chapterId: string, beats: ChapterBeat[]): Promise<void> {
+    await this.wq.enqueue(() =>
+      this.db.exec('UPDATE chapters SET beats = ?, updated_at = ? WHERE id = ?', [
+        JSON.stringify(beats),
+        Date.now(),
+        chapterId
+      ])
+    );
   }
 
   /** 章节树扁平列表按树序展开（导出全书用） */

@@ -58,6 +58,9 @@ body {
 .node-worldbookRef {
   @apply inline-block rounded bg-sky-100 px-1 text-sky-700 text-[0.95em] mx-0.5;
 }
+.node-chapterRef {
+  @apply inline-block rounded bg-emerald-100 px-1 text-emerald-700 text-[0.95em] mx-0.5;
+}
 
 /* AI 流式临时节点：灰色斜体 */
 .ai-temp-node {

@@ -5,6 +5,7 @@
 
 import type { ProseMirrorDoc } from '../../types';
 import { docToMarkdown } from '../../utils/pmdoc';
+import { stripReferenceMarks } from '../../utils/referenceMarks';
 import type { DocExporter } from './ExportService';
 
 export class MarkdownExporter implements DocExporter {
@@ -12,7 +13,8 @@ export class MarkdownExporter implements DocExporter {
   readonly binary = false;
 
   convertDoc(doc: ProseMirrorDoc, chapterTitle: string): string {
-    const body = docToMarkdown(doc);
+    // P2.1-M2：引用节点已转为纯名字，另清洗正文纯文本残留标记（不动 Markdown 标题语法 #/##/###）
+    const body = stripReferenceMarks(docToMarkdown(doc));
     return `# ${chapterTitle}\n\n${body}\n`;
   }
 }

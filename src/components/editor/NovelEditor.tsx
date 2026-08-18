@@ -12,12 +12,14 @@ import type { JSONContent } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import { CharacterMention } from './nodes/CharacterMention';
 import { WorldbookRef } from './nodes/WorldbookRef';
+import { ChapterRef } from './nodes/ChapterRef';
 import { Dialogue } from './nodes/Dialogue';
 import { AITemporaryNode } from './extensions/AITemporaryNode';
 import { PasteHandler } from './extensions/PasteHandler';
 import { useEditorStore, type EditorApi } from '../../store/editorStore';
 import { getAppContext } from '../../context/app-context';
 import { docToPlainText } from '../../utils/pmdoc';
+import type { ChapterBeat } from '../../services/chapter/ChapterService';
 import type { ProseMirrorDoc } from '../../types';
 
 export interface MentionItem {
@@ -25,8 +27,12 @@ export interface MentionItem {
   label: string;
 }
 
+/** P2.1-M2：引用类型（@ 分组下拉 / [[ 世界书 / ## 章节） */
+export type RefKind = 'character' | 'worldbook' | 'chapter';
+
 interface PopupState {
-  type: 'character' | 'worldbook';
+  /** all = @ 触发的三组列表；其余为单组快捷触发 */
+  type: 'all' | RefKind;
   x: number;
   y: number;
 }
@@ -84,6 +90,7 @@ function buildTempParagraphs(schema: Editor['state']['schema'], raw: string) {
 
 export function NovelEditor({ bookId }: { bookId: string }) {
   const currentChapterId = useEditorStore((s) => s.currentChapterId);
+  const chapters = useEditorStore((s) => s.chapters);
   const setSaveState = useEditorStore((s) => s.setSaveState);
   const setSelectedText = useEditorStore((s) => s.setSelectedText);
   const setEditorApi = useEditorStore((s) => s.setEditorApi);
@@ -91,6 +98,8 @@ export function NovelEditor({ bookId }: { bookId: string }) {
   const loadedChapterRef = useRef<string | null>(null);
   const replaceRangeRef = useRef<{ from: number; to: number } | null>(null);
   const lastBracketRef = useRef(0);
+  /** ## 触发：第二个 # 时间戳 */
+  const lastHashRef = useRef(0);
   /** AI 流式累计文本（appendAITemp 重建临时节点内容的基准） */
   const aiTextRef = useRef('');
   const [popup, setPopup] = useState<PopupState | null>(null);
@@ -105,6 +114,59 @@ export function NovelEditor({ bookId }: { bookId: string }) {
   const [fontFamily, setFontFamily] = useState<string>(
     () => localStorage.getItem(FONT_FAMILY_KEY) || 'default'
   );
+
+  // ============ P2.1-M5：章节节拍清单栏 ============
+  const [beats, setBeats] = useState<ChapterBeat[]>([]);
+  const [beatsOpen, setBeatsOpen] = useState(false);
+  /** 拖拽排序：被拖项索引 */
+  const dragBeatRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!currentChapterId) {
+      setBeats([]);
+      return;
+    }
+    void getAppContext()
+      .chapterService.getBeats(currentChapterId)
+      .then(setBeats);
+  }, [currentChapterId]);
+
+  /** 整体覆盖保存（过 wq），并广播刷新（AIPanel 定向开关实时读取） */
+  const persistBeats = (next: ChapterBeat[]): void => {
+    setBeats(next);
+    if (!currentChapterId) return;
+    void getAppContext().chapterService.saveBeats(currentChapterId, next);
+    window.dispatchEvent(new Event('novel-beats-refresh'));
+  };
+
+  const updateBeat = (id: string, patch: Partial<ChapterBeat>, persistNow = true): void => {
+    const next = beats.map((b) => (b.id === id ? { ...b, ...patch } : b));
+    if (persistNow) {
+      persistBeats(next);
+    } else {
+      // 文本输入过程仅更新本地，失焦时持久化（避免逐键写库）
+      setBeats(next);
+    }
+  };
+
+  const addBeat = (): void => {
+    persistBeats([
+      ...beats,
+      { id: crypto.randomUUID(), text: '', targetWords: 300, done: false }
+    ]);
+  };
+
+  const removeBeat = (id: string): void => {
+    persistBeats(beats.filter((b) => b.id !== id));
+  };
+
+  const reorderBeat = (from: number, to: number): void => {
+    if (from === to || from < 0 || to < 0 || from >= beats.length || to >= beats.length) return;
+    const next = [...beats];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    persistBeats(next);
+  };
 
   const changeFontSize = (v: number): void => {
     setFontSize(v);
@@ -150,6 +212,7 @@ export function NovelEditor({ bookId }: { bookId: string }) {
       StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
       CharacterMention,
       WorldbookRef,
+      ChapterRef,
       Dialogue,
       AITemporaryNode,
       PasteHandler
@@ -159,7 +222,7 @@ export function NovelEditor({ bookId }: { bookId: string }) {
         if (event.key === '@') {
           event.preventDefault();
           const coords = view.coordsAtPos(view.state.selection.from);
-          setPopup({ type: 'character', x: coords.left, y: coords.bottom + 6 });
+          setPopup({ type: 'all', x: coords.left, y: coords.bottom + 6 });
           return true;
         }
         if (event.key === '[') {
@@ -175,6 +238,20 @@ export function NovelEditor({ bookId }: { bookId: string }) {
             return true;
           }
           lastBracketRef.current = now;
+        }
+        if (event.key === '#') {
+          const now = Date.now();
+          if (now - lastHashRef.current < 800 && view.state.selection.from >= 1) {
+            event.preventDefault();
+            // 删除第一个 '#'
+            const from = view.state.selection.from - 1;
+            view.dispatch(view.state.tr.delete(from, from + 1));
+            const coords = view.coordsAtPos(view.state.selection.from);
+            setPopup({ type: 'chapter', x: coords.left, y: coords.bottom + 6 });
+            lastHashRef.current = 0;
+            return true;
+          }
+          lastHashRef.current = now;
         }
         if (event.key === 'Escape') setPopup(null);
         return false;
@@ -265,6 +342,38 @@ export function NovelEditor({ bookId }: { bookId: string }) {
         const { from, to, empty } = editor.state.selection;
         return empty ? null : { from, to };
       },
+      /** P2.1-M2：收集当前文档全部引用节点，按出现顺序去重 */
+      getAiReferences: () => {
+        const seen = new Set<string>();
+        const out: Array<{ refType: RefKind; refId: string; label: string }> = [];
+        editor.state.doc.descendants((node) => {
+          let refType: RefKind | null = null;
+          let refId = '';
+          let label = '';
+          if (node.type.name === 'characterMention') {
+            refType = 'character';
+            refId = String(node.attrs.id ?? '');
+            label = String(node.attrs.name ?? '');
+          } else if (node.type.name === 'worldbookRef') {
+            refType = 'worldbook';
+            refId = String(node.attrs.id ?? '');
+            label = String(node.attrs.title ?? '');
+          } else if (node.type.name === 'chapterRef') {
+            refType = 'chapter';
+            refId = String(node.attrs.id ?? '');
+            label = String(node.attrs.title ?? '');
+          }
+          if (refType && refId) {
+            const key = `${refType}:${refId}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              out.push({ refType, refId, label });
+            }
+          }
+          return true;
+        });
+        return out;
+      },
       startAITemp: (replaceRange) => {
         replaceRangeRef.current = replaceRange ?? null;
         aiTextRef.current = '';
@@ -346,19 +455,43 @@ export function NovelEditor({ bookId }: { bookId: string }) {
         aiTextRef.current = '';
         editor.view.dispatch(editor.state.tr.delete(found.pos, found.pos + found.node.nodeSize));
       },
-      focus: () => editor.commands.focus()
+      focus: () => editor.commands.focus(),
+      /** P2.1-M7：查找文本片段并滚动定位（优先长前缀，逐级缩短重试） */
+      searchAndScroll: (text) => {
+        const probe = text.replace(/\s/g, '').slice(0, 24);
+        if (!probe) return;
+        for (const len of [probe.length, 12, 6]) {
+          if (len > probe.length) continue;
+          const frag = probe.slice(0, len);
+          let target = -1;
+          editor.state.doc.descendants((node, pos) => {
+            if (target >= 0) return false;
+            if (node.isText && node.text && node.text.includes(frag)) {
+              target = pos;
+              return false;
+            }
+            return true;
+          });
+          if (target >= 0) {
+            editor.chain().focus().setTextSelection(target).scrollIntoView().run();
+            return;
+          }
+        }
+      }
     };
     setEditorApi(api);
     return () => setEditorApi(null);
   }, [editor, setEditorApi, setSaveState]);
 
   // ============ 弹窗插入 ============
-  const insertMention = (item: MentionItem): void => {
+  const insertMention = (refType: RefKind, item: MentionItem): void => {
     if (!editor || !popup) return;
-    if (popup.type === 'character') {
+    if (refType === 'character') {
       editor.chain().focus().insertCharacterMention(item.id, item.label).run();
-    } else {
+    } else if (refType === 'worldbook') {
       editor.chain().focus().insertWorldbookRef(item.id, item.label).run();
+    } else {
+      editor.chain().focus().insertChapterRef(item.id, item.label).run();
     }
     setPopup(null);
   };
@@ -388,7 +521,7 @@ export function NovelEditor({ bookId }: { bookId: string }) {
         <TB onClick={() => editor.chain().focus().toggleDialogue().run()} active={editor.isActive('dialogue')} title="对白">对白</TB>
         <TB onClick={() => editor.chain().focus().setHorizontalRule().run()} title="分隔线">—</TB>
         <Sep />
-        <TB onClick={() => openPopupManually('character')} title="插入角色提及">@角色</TB>
+        <TB onClick={() => openPopupManually('all')} title="插入引用（@角色 / 世界书 / 章节）">@引用</TB>
         <TB onClick={() => openPopupManually('worldbook')} title="插入世界书引用">[[条目]]</TB>
         {/* 字体 / 字号（编辑区显示设置，持久化） */}
         <span className="ml-auto flex items-center gap-1 text-xs">
@@ -419,28 +552,137 @@ export function NovelEditor({ bookId }: { bookId: string }) {
         </span>
       </div>
 
-      {/* 编辑区 */}
-      <div className="flex-1 overflow-y-auto bg-white px-6 py-6">
-        <div
-          className="mx-auto max-w-3xl"
-          style={
-            {
-              '--editor-font-size': `${fontSize}px`,
-              '--editor-font-family': fontCss
-            } as React.CSSProperties
-          }
+      {/* 编辑区：左侧节拍清单栏（P2.1-M5）+ 正文 */}
+      <div className="relative flex min-h-0 flex-1">
+        {/* 节拍栏：外层变宽 + 内层固定宽（Tailwind JIT 完整类名静态可见） */}
+        <aside
+          className={`shrink-0 overflow-hidden border-r border-ink-200 bg-ink-50 transition-[width] duration-200 ${
+            beatsOpen ? 'w-56' : 'w-0 border-r-0'
+          }`}
         >
-          <EditorContent editor={editor} />
+          <div className="flex h-full w-56 flex-col">
+            <div className="flex items-center gap-1 border-b border-ink-200 px-2 py-1.5 text-xs">
+              <span className="font-medium">章节节拍</span>
+              <span className="text-ink-400">{beats.length}</span>
+              <button
+                type="button"
+                className="ml-auto rounded border border-ink-200 px-1.5 py-0.5 text-[10px] hover:bg-ink-100"
+                onClick={addBeat}
+              >
+                + 添加节拍
+              </button>
+              <button
+                type="button"
+                title="收起节拍栏"
+                className="rounded border border-ink-200 px-1.5 py-0.5 text-[10px] hover:bg-ink-100"
+                onClick={() => setBeatsOpen(false)}
+              >
+                ◀
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-1.5">
+              {beats.length === 0 && (
+                <div className="px-1 py-2 text-[11px] leading-5 text-ink-400">
+                  暂无节拍。添加"场景/事件"节拍后，续写可按节拍定向生成（AI 面板开关控制）。
+                </div>
+              )}
+              {beats.map((b, i) => (
+                <div
+                  key={b.id}
+                  draggable
+                  onDragStart={() => {
+                    dragBeatRef.current = i;
+                  }}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={() => {
+                    if (dragBeatRef.current !== null) reorderBeat(dragBeatRef.current, i);
+                    dragBeatRef.current = null;
+                  }}
+                  className="mb-1 cursor-grab rounded border border-ink-200 bg-white px-1.5 py-1"
+                >
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="checkbox"
+                      checked={b.done}
+                      title={b.done ? '已完成' : '勾选完成'}
+                      onChange={(e) => updateBeat(b.id, { done: e.target.checked })}
+                    />
+                    <span className="text-[10px] text-ink-400">{i + 1}</span>
+                    <input
+                      value={b.text}
+                      placeholder="节拍描述，如：主角识破陷阱"
+                      onChange={(e) => updateBeat(b.id, { text: e.target.value }, false)}
+                      onBlur={() => persistBeats(beats)}
+                      className={`min-w-0 flex-1 rounded border border-transparent px-1 py-0.5 text-[11px] outline-none focus:border-violet-300 ${
+                        b.done ? 'text-ink-400 line-through' : ''
+                      }`}
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      step={100}
+                      value={b.targetWords ?? 300}
+                      title="目标字数"
+                      onChange={(e) =>
+                        updateBeat(b.id, { targetWords: parseInt(e.target.value, 10) || 0 })
+                      }
+                      className="w-12 rounded border border-transparent px-1 py-0.5 text-[10px] text-ink-500 outline-none focus:border-violet-300"
+                    />
+                    <button
+                      type="button"
+                      title="删除节拍"
+                      className="px-0.5 text-[10px] text-ink-400 hover:text-red-600"
+                      onClick={() => removeBeat(b.id)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </aside>
+
+        {/* 展开按钮（栏收起时悬浮显示） */}
+        {!beatsOpen && (
+          <button
+            type="button"
+            title="展开章节节拍栏"
+            className="absolute left-0 top-2 z-10 rounded-r border border-l-0 border-ink-200 bg-white px-1 py-1 text-[10px] text-ink-500 hover:bg-ink-100"
+            onClick={() => setBeatsOpen(true)}
+          >
+            节
+            <br />
+            拍
+            <br />
+            ▶
+          </button>
+        )}
+
+        <div className="min-w-0 flex-1 overflow-y-auto bg-white px-6 py-6">
+          <div
+            className="mx-auto max-w-3xl"
+            style={
+              {
+                '--editor-font-size': `${fontSize}px`,
+                '--editor-font-family': fontCss
+              } as React.CSSProperties
+            }
+          >
+            <EditorContent editor={editor} />
+          </div>
         </div>
       </div>
 
-      {/* @ / [[ 弹窗 */}
+      {/* @ / [[ / ## 弹窗 */}
       {popup && (
         <MentionPopup
           type={popup.type}
           x={popup.x}
           y={popup.y}
-          items={popup.type === 'character' ? characters : worldbook}
+          characters={characters}
+          worldbook={worldbook}
+          chapters={chapters.map((c) => ({ id: c.id, label: c.title }))}
           onPick={insertMention}
           onClose={() => setPopup(null)}
         />
@@ -482,52 +724,84 @@ function MentionPopup({
   type,
   x,
   y,
-  items,
+  characters,
+  worldbook,
+  chapters,
   onPick,
   onClose
 }: {
-  type: 'character' | 'worldbook';
+  type: 'all' | RefKind;
   x: number;
   y: number;
-  items: MentionItem[];
-  onPick: (item: MentionItem) => void;
+  characters: MentionItem[];
+  worldbook: MentionItem[];
+  chapters: MentionItem[];
+  onPick: (refType: RefKind, item: MentionItem) => void;
   onClose: () => void;
 }): JSX.Element {
   const [query, setQuery] = useState('');
-  const filtered = items.filter((i) => i.label.toLowerCase().includes(query.toLowerCase())).slice(0, 8);
+  const q = query.toLowerCase();
+  const groups: Array<{ kind: RefKind; title: string; items: MentionItem[] }> = [];
+  const characterItems = type === 'all' || type === 'character' ? characters : [];
+  const worldbookItems = type === 'all' || type === 'worldbook' ? worldbook : [];
+  const chapterItems = type === 'all' || type === 'chapter' ? chapters : [];
+  if (characterItems.length > 0) groups.push({ kind: 'character', title: '角色', items: characterItems });
+  if (worldbookItems.length > 0) groups.push({ kind: 'worldbook', title: '世界书', items: worldbookItems });
+  if (chapterItems.length > 0) groups.push({ kind: 'chapter', title: '章节', items: chapterItems });
+  const filtered = groups.map((g) => ({
+    ...g,
+    items: g.items.filter((i) => i.label.toLowerCase().includes(q))
+  }));
+  const first = filtered.find((g) => g.items.length > 0)?.items[0] ?? null;
+
+  const hint =
+    type === 'all'
+      ? '选择引用（角色 @ / 世界书 [[ ]] / 章节 ##）'
+      : type === 'character'
+        ? '选择角色（@提及）'
+        : type === 'worldbook'
+          ? '选择世界书条目（[[引用]]）'
+          : '选择章节（##引用）';
 
   return (
     <div
-      className="fixed z-50 w-56 rounded-md border border-ink-200 bg-white p-2 shadow-lg"
-      style={{ left: Math.min(x, window.innerWidth - 240), top: Math.min(y, window.innerHeight - 240) }}
+      className="fixed z-50 w-60 rounded-md border border-ink-200 bg-white p-2 shadow-lg"
+      style={{ left: Math.min(x, window.innerWidth - 256), top: Math.min(y, window.innerHeight - 260) }}
     >
-      <div className="mb-1 text-xs text-ink-500">
-        {type === 'character' ? '选择角色（@提及）' : '选择世界书条目（[[引用]]）'}
-      </div>
+      <div className="mb-1 text-xs text-ink-500">{hint}</div>
       <input
         autoFocus
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Escape') onClose();
-          if (e.key === 'Enter' && filtered[0]) {
-            onPick(filtered[0]);
+          if (e.key === 'Enter' && first) {
+            onPick(filtered.find((g) => g.items.length > 0)!.kind, first);
           }
         }}
         placeholder="输入过滤…"
         className="mb-1 w-full rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-ink-400"
       />
-      <div className="max-h-44 overflow-y-auto">
-        {filtered.length === 0 && <div className="px-2 py-1 text-xs text-ink-400">无匹配项</div>}
-        {filtered.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => onPick(item)}
-            className="block w-full rounded px-2 py-1 text-left text-sm hover:bg-ink-100"
-          >
-            {item.label}
-          </button>
+      <div className="max-h-56 overflow-y-auto">
+        {filtered.every((g) => g.items.length === 0) && (
+          <div className="px-2 py-1 text-xs text-ink-400">无匹配项</div>
+        )}
+        {filtered.map((g) => (
+          <div key={g.kind} className="mb-1">
+            <div className="px-1 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-400">
+              {g.title}
+            </div>
+            {g.items.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onPick(g.kind, item)}
+                className="block w-full truncate rounded px-2 py-1 text-left text-sm hover:bg-ink-100"
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
         ))}
       </div>
     </div>

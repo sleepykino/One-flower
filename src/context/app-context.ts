@@ -22,6 +22,7 @@ import { DocxExporter } from '../services/export/DocxExporter';
 import { ImportService } from '../services/import/ImportService';
 import { PromptAssembler } from '../services/ai/PromptAssembler';
 import { AIOrchestrator } from '../services/ai/AIOrchestrator';
+import { GlobalPromptService } from '../services/ai/GlobalPromptService';
 import { SummaryService } from '../services/summary/SummaryService';
 import { AppSettingsService } from '../services/settings/AppSettingsService';
 import { WorldbookRAGService } from '../services/worldbook/WorldbookRAGService';
@@ -31,6 +32,10 @@ import { TimelineService } from '../services/timeline/TimelineService';
 import { NameGeneratorService } from '../services/namegen/NameGeneratorService';
 import { RelationshipService } from '../services/relationship/RelationshipService';
 import { WritingStatsService } from '../services/stats/WritingStatsService';
+import { TaskCenterService } from '../services/task/TaskCenterService';
+import { SettingInferenceService } from '../services/consistency/SettingInferenceService';
+import { LongFormService } from '../services/longform/LongFormService';
+import { useTaskStore } from '../store/taskStore';
 import { createProvider } from '../services/ai/providers/LLMProvider';
 import type { LLMProvider } from '../services/ai/providers/LLMProvider';
 
@@ -48,6 +53,8 @@ export interface AppContext {
   importService: ImportService;
   promptAssembler: PromptAssembler;
   orchestrator: AIOrchestrator;
+  /** P2.1-M1：自定义全局提示词 */
+  globalPrompts: GlobalPromptService;
   summaryService: SummaryService;
   appSettings: AppSettingsService;
   ragService: WorldbookRAGService;
@@ -63,6 +70,12 @@ export interface AppContext {
   skillPackService: SkillPackService;
   relationshipService: RelationshipService;
   statsService: WritingStatsService;
+  /** P2.1-M4：任务中心（长任务注册/进度/取消/重试） */
+  tasks: TaskCenterService;
+  /** P2.1-M6：设定反推（事实抽取/推导链/越级矛盾） */
+  inferenceService: SettingInferenceService;
+  /** P2.1-M7：长文模式（章节级规划-生成-自洽循环） */
+  longformService: LongFormService;
 }
 
 let ctx: AppContext | null = null;
@@ -166,6 +179,26 @@ export async function initApp(): Promise<AppContext> {
     ragService,
     fullRagService
   });
+  // P2.1-M1：全局提示词（四模式统一注入 system 段，优先级高于 Skill）
+  const globalPrompts = new GlobalPromptService(appSettings);
+  orchestrator.setGlobalPromptService(globalPrompts);
+
+  // P2.1-M4：任务中心 + taskStore 桥接（subscribe 推入）
+  const tasks = new TaskCenterService();
+  tasks.subscribe((list) => useTaskStore.getState().setTasks(list));
+
+  // P2.1-M6：设定反推（抽取与推导注册任务中心后台运行）
+  const inferenceService = new SettingInferenceService(tauriBridge, { wq }, providerFactory, tasks);
+
+  // P2.1-M7：长文模式（编排层循环调用 continue 模式；每拍落盘 longform_sessions）
+  const longformService = new LongFormService(
+    tauriBridge,
+    { wq },
+    providerFactory,
+    orchestrator,
+    tasks,
+    chapterService
+  );
 
   ctx = {
     bridge: tauriBridge,
@@ -181,6 +214,7 @@ export async function initApp(): Promise<AppContext> {
     importService,
     promptAssembler,
     orchestrator,
+    globalPrompts,
     summaryService,
     appSettings,
     ragService,
@@ -190,7 +224,10 @@ export async function initApp(): Promise<AppContext> {
     nameGenService,
     skillPackService,
     relationshipService,
-    statsService
+    statsService,
+    tasks,
+    inferenceService,
+    longformService
   };
   return ctx;
 }

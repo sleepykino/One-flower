@@ -7,6 +7,7 @@ import type { DatabaseAdapter, NativeBridge, Transaction } from '../native/Nativ
 import initSql from './migrations/001_init.sql?raw';
 import p1Sql from './migrations/002_p1_additions.sql?raw';
 import p2Sql from './migrations/003_p2_additions.sql?raw';
+import p21Sql from './migrations/004_p21_additions.sql?raw';
 
 interface Migration {
   version: number;
@@ -16,7 +17,8 @@ interface Migration {
 const MIGRATIONS: Migration[] = [
   { version: 1, sql: initSql },
   { version: 2, sql: p1Sql },
-  { version: 3, sql: p2Sql }
+  { version: 3, sql: p2Sql },
+  { version: 4, sql: p21Sql }
 ];
 
 export class Database {
