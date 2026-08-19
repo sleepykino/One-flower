@@ -10,7 +10,7 @@ import type { NativeBridge } from '../../native/NativeBridge';
 import type { Database } from '../../db/Database';
 import type { WriteQueue } from '../../db/WriteQueue';
 import type { LLMProvider } from '../ai/providers/LLMProvider';
-import { resolveProviderConfigId } from '../ai/providerResolver';
+import { resolveProviderConfigIdForFeature } from '../ai/providerResolver';
 import type { AppSettingsService } from '../settings/AppSettingsService';
 import type { WorldbookEntry } from '../../types';
 
@@ -89,16 +89,13 @@ export class WorldbookRAGService {
     this.settings = settings;
   }
 
-  /** 解析 embedding 用的 provider 与模型（app_settings 未配置时回退书籍/首组配置） */
+  /** 解析 embedding 用的 provider 与模型（模型分工「向量嵌入」未配置时回退第一组配置） */
   private async resolveEmbedding(bookId: string): Promise<{
     provider: LLMProvider;
     model: string;
   }> {
-    let configId = await this.settings.get(EMBED_PROVIDER_KEY);
-    if (!configId) {
-      configId = await resolveProviderConfigId(this.bridge, bookId);
-    }
-    if (!configId) throw new Error('未配置 Embedding 服务：请到设置页配置向量模型');
+    const configId = await resolveProviderConfigIdForFeature(this.bridge, bookId, 'embedding');
+    if (!configId) throw new Error('未配置 Embedding 服务：请到设置页「模型分工」配置向量模型');
     const provider = await this.providerFactory(configId);
     if (!provider.embed) {
       throw new Error(`Provider「${provider.name}」不支持向量嵌入（Anthropic 无此能力）`);

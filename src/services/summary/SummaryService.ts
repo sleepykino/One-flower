@@ -9,7 +9,7 @@ import type { Database } from '../../db/Database';
 import type { WriteQueue } from '../../db/WriteQueue';
 import type { LLMProvider } from '../ai/providers/LLMProvider';
 import type { ChatMessage } from '../ai/providers/LLMProvider';
-import { resolveProvider, resolveModelName } from '../ai/providerResolver';
+import { resolveProviderForFeature, resolveModelNameForFeature } from '../ai/providerResolver';
 import type { NativeBridge } from '../../native/NativeBridge';
 import type { ChapterService } from '../chapter/ChapterService';
 import type { Chapter } from '../../types';
@@ -80,8 +80,9 @@ export class SummaryService {
       const text = docToPlainText(await this.chapterService.getContent(chapterId));
       if (!text.trim()) throw new Error('章节正文为空');
 
-      const provider = await resolveProvider(this.bridge, ch.bookId, this.providerFactory);
-      const model = await resolveModelName(this.bridge, ch.bookId);
+      // P2 二期：摘要走 'summary' 功能点路由（建议绑弱模型省成本）
+      const provider = await resolveProviderForFeature(this.bridge, ch.bookId, 'summary', this.providerFactory);
+      const model = await resolveModelNameForFeature(this.bridge, ch.bookId, 'summary');
 
       const messages: ChatMessage[] = [
         { role: 'system', content: SUMMARY_SYSTEM_PROMPT },

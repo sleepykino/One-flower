@@ -10,7 +10,7 @@ import type { AIOrchestrator } from '../ai/AIOrchestrator';
 import type { AiReference } from '../ai/types';
 import type { TaskCenterService } from '../task/TaskCenterService';
 import type { ChapterService } from '../chapter/ChapterService';
-import { resolveProvider, resolveModelName } from '../ai/providerResolver';
+import { resolveProviderForFeature, resolveModelNameForFeature } from '../ai/providerResolver';
 import type { LLMProvider } from '../ai/providers/LLMProvider';
 import type { LongFormBeat, LongFormRunHooks, LongFormSession, SeamIssue } from './types';
 import { countTokens } from '../../utils/tokens';
@@ -86,8 +86,9 @@ export class LongFormService {
     hints?: string;
     signal?: AbortSignal;
   }): Promise<LongFormBeat[]> {
-    const provider = await resolveProvider(this.bridge, params.bookId, this.providerFactory);
-    const model = await resolveModelName(this.bridge, params.bookId);
+    // P2 二期：节拍规划走 'longform-draft' 功能点路由（低频小任务，可绑中弱模型）
+    const provider = await resolveProviderForFeature(this.bridge, params.bookId, 'longform-draft', this.providerFactory);
+    const model = await resolveModelNameForFeature(this.bridge, params.bookId, 'longform-draft');
 
     // 材料：前情摘要（近 5 章摘要）+ 本章大纲 + 已有正文尾段 + RAG
     const summaryRows = await this.bridge.db.query<{ title: string; summary: string }>(
@@ -488,8 +489,9 @@ export class LongFormService {
     }
     if (seams.length === 0) return [];
 
-    const provider = await resolveProvider(this.bridge, session.bookId, this.providerFactory);
-    const model = await resolveModelName(this.bridge, session.bookId);
+    // P2 二期：接缝自检走 'longform-seam' 功能点路由
+    const provider = await resolveProviderForFeature(this.bridge, session.bookId, 'longform-seam', this.providerFactory);
+    const model = await resolveModelNameForFeature(this.bridge, session.bookId, 'longform-seam');
     const res = await provider.chat(
       [
         { role: 'system', content: SEAM_SYSTEM },

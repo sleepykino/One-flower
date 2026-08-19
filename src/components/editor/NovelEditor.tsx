@@ -19,6 +19,14 @@ import { PasteHandler } from './extensions/PasteHandler';
 import { useEditorStore, type EditorApi } from '../../store/editorStore';
 import { getAppContext } from '../../context/app-context';
 import { docToPlainText } from '../../utils/pmdoc';
+import {
+  FONT_FAMILIES,
+  FONT_SIZES,
+  loadFontSize,
+  loadFontFamily,
+  saveFontSize,
+  saveFontFamily
+} from '../../utils/editorAppearance';
 import type { ChapterBeat } from '../../services/chapter/ChapterService';
 import type { ProseMirrorDoc } from '../../types';
 
@@ -37,23 +45,7 @@ interface PopupState {
   y: number;
 }
 
-/** 字体选项（Windows 常见中文字体 + 西文衬线） */
-const FONT_FAMILIES: Array<{ value: string; label: string; css: string }> = [
-  { value: 'default', label: '默认', css: "'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif" },
-  { value: 'simsun', label: '宋体', css: 'SimSun, serif' },
-  { value: 'kaiti', label: '楷体', css: 'KaiTi, serif' },
-  { value: 'fangsong', label: '仿宋', css: 'FangSong, serif' },
-  { value: 'simhei', label: '黑体', css: 'SimHei, sans-serif' },
-  { value: 'yahei', label: '微软雅黑', css: "'Microsoft YaHei', sans-serif" },
-  { value: 'dengxian', label: '等线', css: 'DengXian, sans-serif' },
-  { value: 'georgia', label: 'Georgia', css: 'Georgia, serif' },
-  { value: 'times', label: 'Times New Roman', css: "'Times New Roman', serif" }
-];
-
-const FONT_SIZES = [14, 15, 16, 17, 18, 20, 22, 24];
-
-const FONT_SIZE_KEY = 'novel-editor-font-size';
-const FONT_FAMILY_KEY = 'novel-editor-font-family';
+/** 字体选项与持久化：P2 三期迁至 utils/editorAppearance（设置页「外观」共用） */
 
 interface TempFound {
   node: import('@tiptap/pm/model').Node;
@@ -106,14 +98,9 @@ export function NovelEditor({ bookId }: { bookId: string }) {
   const [characters, setCharacters] = useState<MentionItem[]>([]);
   const [worldbook, setWorldbook] = useState<MentionItem[]>([]);
   const [, forceTick] = useState(0);
-  // 编辑器外观：字体/字号（localStorage 持久化）
-  const [fontSize, setFontSize] = useState<number>(() => {
-    const v = Number(localStorage.getItem(FONT_SIZE_KEY));
-    return FONT_SIZES.includes(v) ? v : 16;
-  });
-  const [fontFamily, setFontFamily] = useState<string>(
-    () => localStorage.getItem(FONT_FAMILY_KEY) || 'default'
-  );
+  // 编辑器外观：字体/字号（localStorage 持久化，与设置页「外观」共用）
+  const [fontSize, setFontSize] = useState<number>(loadFontSize);
+  const [fontFamily, setFontFamily] = useState<string>(loadFontFamily);
 
   // ============ P2.1-M5：章节节拍清单栏 ============
   const [beats, setBeats] = useState<ChapterBeat[]>([]);
@@ -168,13 +155,23 @@ export function NovelEditor({ bookId }: { bookId: string }) {
     persistBeats(next);
   };
 
+  // 设置页「外观」修改后同步编辑器（storage 事件 + 自定义事件兜底）
+  useEffect(() => {
+    const sync = (): void => {
+      setFontSize(loadFontSize());
+      setFontFamily(loadFontFamily());
+    };
+    window.addEventListener('editor-appearance-change', sync);
+    return () => window.removeEventListener('editor-appearance-change', sync);
+  }, []);
+
   const changeFontSize = (v: number): void => {
     setFontSize(v);
-    localStorage.setItem(FONT_SIZE_KEY, String(v));
+    saveFontSize(v);
   };
   const changeFontFamily = (v: string): void => {
     setFontFamily(v);
-    localStorage.setItem(FONT_FAMILY_KEY, v);
+    saveFontFamily(v);
   };
   const fontCss = FONT_FAMILIES.find((f) => f.value === fontFamily)?.css ?? FONT_FAMILIES[0].css;
 

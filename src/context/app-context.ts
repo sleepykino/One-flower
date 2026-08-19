@@ -23,6 +23,7 @@ import { ImportService } from '../services/import/ImportService';
 import { PromptAssembler } from '../services/ai/PromptAssembler';
 import { AIOrchestrator } from '../services/ai/AIOrchestrator';
 import { GlobalPromptService } from '../services/ai/GlobalPromptService';
+import { ModelRoutingService } from '../services/ai/modelRouting';
 import { SummaryService } from '../services/summary/SummaryService';
 import { AppSettingsService } from '../services/settings/AppSettingsService';
 import { WorldbookRAGService } from '../services/worldbook/WorldbookRAGService';
@@ -56,6 +57,8 @@ export interface AppContext {
   orchestrator: AIOrchestrator;
   /** P2.1-M1：自定义全局提示词 */
   globalPrompts: GlobalPromptService;
+  /** P2 二期：AI 模型分工（按功能点路由 Provider 配置） */
+  modelRouting: ModelRoutingService;
   summaryService: SummaryService;
   appSettings: AppSettingsService;
   ragService: WorldbookRAGService;
@@ -186,6 +189,9 @@ export async function initApp(): Promise<AppContext> {
   const globalPrompts = new GlobalPromptService(appSettings);
   orchestrator.setGlobalPromptService(globalPrompts);
 
+  // P2 二期：AI 模型分工（功能点 -> 配置绑定，控制成本）
+  const modelRouting = new ModelRoutingService(appSettings);
+
   // P2.1-M4：任务中心 + taskStore 桥接（subscribe 推入）
   const tasks = new TaskCenterService();
   tasks.subscribe((list) => useTaskStore.getState().setTasks(list));
@@ -221,6 +227,7 @@ export async function initApp(): Promise<AppContext> {
     promptAssembler,
     orchestrator,
     globalPrompts,
+    modelRouting,
     summaryService,
     appSettings,
     ragService,

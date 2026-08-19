@@ -38,7 +38,7 @@ import { NameGenerator } from '../components/namegen/NameGenerator';
 import { TaskIndicator } from '../components/task/TaskIndicator';
 import { getAppContext } from '../context/app-context';
 import type { LongFormSession } from '../services/longform/types';
-import { resolveProviderConfigId } from '../services/ai/providerResolver';
+import { resolveProviderConfigIdForFeature } from '../services/ai/providerResolver';
 import { createProvider } from '../services/ai/providers/LLMProvider';
 
 type RightTab =
@@ -164,7 +164,7 @@ export function Editor(): JSX.Element {
   const aiGenerateMap = useCallback(
     async (prompt: string): Promise<string> => {
       const { bridge, db } = getAppContext();
-      const configId = await resolveProviderConfigId(bridge, bookId);
+      const configId = await resolveProviderConfigIdForFeature(bridge, bookId, 'map');
       if (!configId) throw new Error('未配置模型，请先到设置页添加 Provider 配置');
       const row = await db.queryOne<Record<string, unknown>>(
         'SELECT * FROM provider_configs WHERE id = ?',

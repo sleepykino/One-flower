@@ -7,7 +7,7 @@
 import type { NativeBridge } from '../../native/NativeBridge';
 import type { WriteQueue } from '../../db/WriteQueue';
 import type { LLMProvider } from '../ai/providers/LLMProvider';
-import { resolveProvider, resolveModelName } from '../ai/providerResolver';
+import { resolveProviderForFeature, resolveModelNameForFeature } from '../ai/providerResolver';
 import type { TaskCenterService } from '../task/TaskCenterService';
 import type { ConsistencyReport } from '../ai/types';
 import type { ExtractionScope, FactKind, FactSource, InferenceChainItem, SettingFact } from './types';
@@ -146,8 +146,9 @@ export class SettingInferenceService {
     report: (p: number, d?: string) => void,
     signal: AbortSignal
   ): Promise<void> {
-    const provider = await resolveProvider(this.bridge, bookId, this.providerFactory);
-    const model = await resolveModelName(this.bridge, bookId);
+    // P2 二期：事实抽取走 'fact-extract' 功能点路由
+    const provider = await resolveProviderForFeature(this.bridge, bookId, 'fact-extract', this.providerFactory);
+    const model = await resolveModelNameForFeature(this.bridge, bookId, 'fact-extract');
 
     // 组装材料批次：[label, text, source, sourceRef][]
     type Batch = { label: string; material: string; source: FactSource; sourceRef: string };
@@ -298,8 +299,9 @@ export class SettingInferenceService {
     const facts = (await this.listFacts(bookId)).filter((f) => !f.exempt);
     if (facts.length === 0) throw new Error('无待推导事实，请先抽取事实或解除豁免');
 
-    const provider = await resolveProvider(this.bridge, bookId, this.providerFactory);
-    const model = await resolveModelName(this.bridge, bookId);
+    // P2 二期：推导链走 'inference' 功能点路由
+    const provider = await resolveProviderForFeature(this.bridge, bookId, 'inference', this.providerFactory);
+    const model = await resolveModelNameForFeature(this.bridge, bookId, 'inference');
 
     const byDomain = new Map<string, SettingFact[]>();
     for (const f of facts) {
@@ -371,8 +373,9 @@ export class SettingInferenceService {
   ): Promise<ConsistencyReport['contradictions']> {
     const baseline = await this.loadBaseline(bookId);
     if (!baseline) return [];
-    const provider = await resolveProvider(this.bridge, bookId, this.providerFactory);
-    const model = await resolveModelName(this.bridge, bookId);
+    // P2 二期：越级校验走 'baseline-check' 功能点路由
+    const provider = await resolveProviderForFeature(this.bridge, bookId, 'baseline-check', this.providerFactory);
+    const model = await resolveModelNameForFeature(this.bridge, bookId, 'baseline-check');
     const user = [
       baseline,
       '',

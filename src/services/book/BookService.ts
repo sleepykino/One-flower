@@ -115,16 +115,6 @@ export class BookService {
     );
   }
 
-  async setProviderConfig(bookId: string, configId: string | null): Promise<void> {
-    await this.wq.enqueue(() =>
-      this.db.exec('UPDATE books SET provider_config_id = ?, updated_at = ? WHERE id = ?', [
-        configId,
-        Date.now(),
-        bookId
-      ])
-    );
-  }
-
   /** 触碰更新时间（章节保存时联动） */
   async touch(bookId: string): Promise<void> {
     await this.wq.enqueue(() =>

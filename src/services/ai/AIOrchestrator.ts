@@ -10,6 +10,8 @@ import { DEFAULT_TOKEN_BUDGET } from './PromptAssembler';
 import type { LLMProvider, ChatChunk } from './providers/LLMProvider';
 import { createProvider } from './providers/LLMProvider';
 import type { GlobalPromptService } from './GlobalPromptService';
+import type { FeatureKey } from './modelRouting';
+import { resolveProviderConfigIdForFeature } from './providerResolver';
 import type { SummaryService } from '../summary/SummaryService';
 import type { WorldbookRAGService } from '../worldbook/WorldbookRAGService';
 import type { FullRAGService, SegmentRecall } from '../rag/FullRAGService';
@@ -40,6 +42,8 @@ export interface ContextSnapshot {
   ctx: PromptContext;
   breakdown: TokenBreakdown[];
   totalTokens: number;
+  /** P2 二期：本次调用实际使用的模型名（成本路由可见性） */
+  model?: string;
   at: number;
 }
 
@@ -78,7 +82,7 @@ export class AIOrchestrator {
   }
 
   /** 记录上下文快照（每次 assemble 后调用） */
-  private recordContext(bookId: string, ctx: PromptContext): void {
+  private recordContext(bookId: string, ctx: PromptContext, model?: string): void {
     const breakdown = this.promptAssembler.inspect(ctx);
     const totalTokens = breakdown.reduce((sum, b) => sum + b.tokens, 0);
     this.lastContext.set(bookId, {
@@ -87,6 +91,7 @@ export class AIOrchestrator {
       ctx,
       breakdown,
       totalTokens,
+      model,
       at: Date.now()
     });
   }
@@ -151,19 +156,9 @@ export class AIOrchestrator {
     }
   }
 
-  /** 读取书籍绑定的 provider（书籍未配置时取第一组配置） */
-  private async resolveProvider(bookId: string): Promise<LLMProvider> {
-    const book = await this.bridge.db.queryOne<{ provider_config_id: string | null }>(
-      'SELECT provider_config_id FROM books WHERE id = ?',
-      [bookId]
-    );
-    let configId = book?.provider_config_id ?? null;
-    if (!configId) {
-      const first = await this.bridge.db.queryOne<{ id: string }>(
-        'SELECT id FROM provider_configs ORDER BY created_at ASC LIMIT 1'
-      );
-      configId = first?.id ?? null;
-    }
+  /** 读取本次调用使用的 provider（P2 二期：按功能点路由，功能绑定 -> 第一组配置） */
+  private async resolveProvider(bookId: string, feature: FeatureKey): Promise<LLMProvider> {
+    const configId = await resolveProviderConfigIdForFeature(this.bridge, bookId, feature);
     if (!configId) throw new Error('未配置任何模型，请先到设置页添加 Provider 配置');
     return this.providerFactory(configId);
   }
@@ -360,7 +355,7 @@ export class AIOrchestrator {
 
   /** 续写：流式返回，支持 AbortSignal 中断 */
   async *continueWriting(params: ContinueParams): AsyncIterable<ChatChunk> {
-    const provider = await this.resolveProvider(params.bookId);
+    const provider = await this.resolveProvider(params.bookId, 'continue');
     const skills = await this.skillLoader.getEnabledForMode(params.bookId, 'continue');
     const characters = await this.loadCharacters(params.selectedCharacterIds);
     // P1：摘要链 + 最近 2 章原文（失败回退滑动窗口）
@@ -390,11 +385,11 @@ export class AIOrchestrator {
     };
     if (params.beat) ctx.currentBeat = params.beat;
     await this.applyCtxExtras(ctx, params.bookId, params.aiReferences);
-    this.recordContext(params.bookId, ctx);
+    const model = await this.modelOf(params.bookId, 'continue');
+    this.recordContext(params.bookId, ctx, model);
     const messages = this.promptAssembler.assemble(ctx);
-    const config = await this.modelOf(params.bookId);
     yield* provider.stream(messages, {
-      model: config,
+      model,
       signal: params.signal,
       maxTokens: params.maxTokens ?? 4096,
       temperature: params.temperature ?? 0.85
@@ -403,7 +398,7 @@ export class AIOrchestrator {
 
   /** 改写选中文本 */
   async *rewrite(params: RewriteParams): AsyncIterable<ChatChunk> {
-    const provider = await this.resolveProvider(params.bookId);
+    const provider = await this.resolveProvider(params.bookId, 'rewrite');
     const skills = await this.skillLoader.getEnabledForMode(params.bookId, 'rewrite');
     const ctx: PromptContext = {
       mode: 'rewrite',
@@ -415,10 +410,11 @@ export class AIOrchestrator {
       userInstruction: params.instruction
     };
     await this.applyCtxExtras(ctx, params.bookId, params.aiReferences);
-    this.recordContext(params.bookId, ctx);
+    const model = await this.modelOf(params.bookId, 'rewrite');
+    this.recordContext(params.bookId, ctx, model);
     const messages = this.promptAssembler.assemble(ctx);
     yield* provider.stream(messages, {
-      model: await this.modelOf(params.bookId),
+      model,
       signal: params.signal,
       maxTokens: params.maxTokens ?? 4096,
       temperature: params.temperature ?? 0.7
@@ -427,7 +423,7 @@ export class AIOrchestrator {
 
   /** 生成对白 */
   async *generateDialogue(params: DialogueParams): AsyncIterable<ChatChunk> {
-    const provider = await this.resolveProvider(params.bookId);
+    const provider = await this.resolveProvider(params.bookId, 'dialogue');
     const skills = await this.skillLoader.getEnabledForMode(params.bookId, 'dialogue');
     const characters = await this.loadCharacters(params.characterIds);
     // P1：摘要链 + 最近 2 章原文
@@ -450,10 +446,11 @@ export class AIOrchestrator {
       userInstruction: params.scene
     };
     await this.applyCtxExtras(ctx, params.bookId, params.aiReferences);
-    this.recordContext(params.bookId, ctx);
+    const model = await this.modelOf(params.bookId, 'dialogue');
+    this.recordContext(params.bookId, ctx, model);
     const messages = this.promptAssembler.assemble(ctx);
     yield* provider.stream(messages, {
-      model: await this.modelOf(params.bookId),
+      model,
       signal: params.signal,
       maxTokens: params.maxTokens ?? 4096,
       temperature: params.temperature ?? 0.9
@@ -462,7 +459,7 @@ export class AIOrchestrator {
 
   /** 一致性检查：非流式，返回结构化报告（不注入文风 Skill） */
   async checkConsistency(params: CheckParams): Promise<ConsistencyReport> {
-    const provider = await this.resolveProvider(params.bookId);
+    const provider = await this.resolveProvider(params.bookId, 'check');
     // check 模式不注入文风 Skill：通过 applies_to 过滤自然排除
     const skills = await this.skillLoader.getEnabledForMode(params.bookId, 'check');
     const characters = await this.loadCharacters(
@@ -490,11 +487,12 @@ export class AIOrchestrator {
     };
     await this.applyCtxExtras(checkCtx, params.bookId, params.aiReferences);
     checkCtx.settingBaseline = await this.loadSettingBaseline(params.bookId);
-    this.recordContext(params.bookId, checkCtx);
+    const model = await this.modelOf(params.bookId, 'check');
+    this.recordContext(params.bookId, checkCtx, model);
     const messages = this.promptAssembler.assemble(checkCtx);
 
     const res = await provider.chat(messages, {
-      model: await this.modelOf(params.bookId),
+      model,
       signal: params.signal,
       maxTokens: 4096,
       temperature: 0.2
@@ -546,19 +544,9 @@ export class AIOrchestrator {
     }
   }
 
-  /** 书籍绑定的模型名 */
-  private async modelOf(bookId: string): Promise<string> {
-    const book = await this.bridge.db.queryOne<{ provider_config_id: string | null }>(
-      'SELECT provider_config_id FROM books WHERE id = ?',
-      [bookId]
-    );
-    let configId = book?.provider_config_id ?? null;
-    if (!configId) {
-      const first = await this.bridge.db.queryOne<{ id: string }>(
-        'SELECT id FROM provider_configs ORDER BY created_at ASC LIMIT 1'
-      );
-      configId = first?.id ?? null;
-    }
+  /** 本次调用使用的模型名（P2 二期：按功能点路由） */
+  private async modelOf(bookId: string, feature: FeatureKey): Promise<string> {
+    const configId = await resolveProviderConfigIdForFeature(this.bridge, bookId, feature);
     if (!configId) throw new Error('未配置任何模型');
     const row = await this.bridge.db.queryOne<{ model: string }>(
       'SELECT model FROM provider_configs WHERE id = ?',

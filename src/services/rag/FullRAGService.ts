@@ -10,10 +10,9 @@ import type { NativeBridge } from '../../native/NativeBridge';
 import type { Database } from '../../db/Database';
 import type { WriteQueue } from '../../db/WriteQueue';
 import type { LLMProvider } from '../ai/providers/LLMProvider';
-import { resolveProviderConfigId } from '../ai/providerResolver';
+import { resolveProviderConfigIdForFeature } from '../ai/providerResolver';
 import type { AppSettingsService } from '../settings/AppSettingsService';
 import {
-  EMBED_PROVIDER_KEY,
   EMBED_MODEL_KEY,
   DEFAULT_EMBED_MODEL
 } from '../worldbook/WorldbookRAGService';
@@ -144,11 +143,8 @@ export class FullRAGService {
     provider: LLMProvider;
     model: string;
   }> {
-    let configId = await this.settings.get(EMBED_PROVIDER_KEY);
-    if (!configId) {
-      configId = await resolveProviderConfigId(this.bridge, bookId);
-    }
-    if (!configId) throw new Error('未配置 Embedding 服务：请到设置页配置向量模型');
+    const configId = await resolveProviderConfigIdForFeature(this.bridge, bookId, 'embedding');
+    if (!configId) throw new Error('未配置 Embedding 服务：请到设置页「模型分工」配置向量模型');
     const provider = await this.providerFactory(configId);
     if (!provider.embed) {
       throw new Error(`Provider「${provider.name}」不支持向量嵌入（Anthropic 无此能力）`);

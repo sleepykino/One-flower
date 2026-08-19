@@ -10,7 +10,7 @@ import type { Database } from '../../db/Database';
 import type { WriteQueue } from '../../db/WriteQueue';
 import type { LLMProvider, ChatMessage } from '../ai/providers/LLMProvider';
 import { createProvider } from '../ai/providers/LLMProvider';
-import { resolveProviderConfigId } from '../ai/providerResolver';
+import { resolveProviderConfigIdForFeature } from '../ai/providerResolver';
 import type { NameGenParams, GeneratedName, NameFavorite, NameType, Gender } from './types';
 import { TYPE_LABEL } from './types';
 
@@ -122,7 +122,8 @@ export class NameGeneratorService {
 
   /** 批量生成名字 */
   async generate(bookId: string, params: NameGenParams): Promise<GeneratedName[]> {
-    const configId = await resolveProviderConfigId(this.bridge, bookId);
+    // P2 二期：命名生成走 'namegen' 功能点路由
+    const configId = await resolveProviderConfigIdForFeature(this.bridge, bookId, 'namegen');
     if (!configId) throw new Error('未配置任何模型，请先到设置页添加 Provider 配置');
     const { provider, model } = await this.resolveProvider(configId);
 

@@ -204,6 +204,11 @@ export function ContextPanel({ bookId }: { bookId: string }): JSX.Element {
       <div className="flex items-center justify-between border-b border-ink-200 px-3 py-2">
         <span className="text-sm font-medium">AI 上下文</span>
         <div className="flex items-center gap-2 text-[11px] text-ink-400">
+          {snap.model && (
+            <span className="rounded bg-violet-50 px-1.5 py-0.5 text-violet-600" title="本次调用实际使用的模型（模型分工路由结果）">
+              {snap.model}
+            </span>
+          )}
           <span>
             {modeLabel[snap.mode] ?? snap.mode} · 共 {snap.totalTokens} tok
           </span>
