@@ -11,6 +11,7 @@ export type FeatureKey =
   | 'rewrite'
   | 'dialogue'
   | 'check'
+  | 'typo-check'
   | 'longform-draft'
   | 'longform-seam'
   | 'fact-extract'
@@ -42,6 +43,7 @@ export const AI_FEATURES: FeatureMeta[] = [
   { key: 'rewrite', label: '改写', desc: '选中段落按指令改写', group: 'generate' },
   { key: 'dialogue', label: '对白', desc: '场景对白生成', group: 'generate' },
   { key: 'check', label: '一致性检查', desc: '角色卡/世界书/时代感基线比对', group: 'review' },
+  { key: 'typo-check', label: '错字检查', desc: '当前章节错别字校对', group: 'review' },
   { key: 'longform-draft', label: '长文节拍规划', desc: '长文模式第一步的节拍表初稿', group: 'review' },
   { key: 'longform-seam', label: '接缝审阅', desc: '长文完成后的接缝自检', group: 'review' },
   { key: 'fact-extract', label: '设定事实抽取', desc: '从世界书/角色/章节抽取事实', group: 'review' },

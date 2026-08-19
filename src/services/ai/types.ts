@@ -38,6 +38,18 @@ export interface ConsistencyReport {
   checkedAt: number;
 }
 
+/** 错字检查（P2.1）：当前章节错别字校对结果 */
+export interface TypoItem {
+  original: string; // 含错字的原文片段（须与正文逐字一致，用于定位与替换）
+  suggestion: string; // 修正后的完整片段
+  reason: string; // 错误原因简述
+}
+
+export interface TypoReport {
+  typos: TypoItem[];
+  checkedAt: number;
+}
+
 /** P2.1-M2：文档内的引用标记（orchestrator 解析为 ForcedReference 全文注入） */
 export interface AiReference {
   refType: 'character' | 'worldbook' | 'chapter';
@@ -100,6 +112,13 @@ export interface CheckParams {
   chapterContent: string;
   /** M2: 当前文档的引用标记 */
   aiReferences?: AiReference[];
+  signal?: AbortSignal;
+}
+
+export interface TypoCheckParams {
+  bookId: string;
+  chapterId: string;
+  chapterContent: string;
   signal?: AbortSignal;
 }
 

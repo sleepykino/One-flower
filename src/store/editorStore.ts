@@ -35,6 +35,8 @@ export interface EditorApi {
   focus(): void;
   /** P2.1-M7：在正文中查找文本片段并滚动定位（接缝审阅点击用） */
   searchAndScroll?(text: string): void;
+  /** P2.1：查找并替换正文中第一处匹配文本（错字一键修正用），未找到返回 false */
+  replaceFirstOccurrence?(search: string, replacement: string): boolean;
 }
 
 interface EditorStore {

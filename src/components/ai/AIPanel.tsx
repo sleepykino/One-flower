@@ -12,6 +12,7 @@ import type { AIMode } from '../../services/skill/types';
 import type { ChapterBeat } from '../../services/chapter/ChapterService';
 import type { Character } from '../../types';
 import { ConsistencyReportView } from './ConsistencyReport';
+import { TypoReportView } from './TypoReportView';
 import { LongFormPanel } from './LongFormPanel';
 
 const MODES: Array<{ key: AIMode; label: string }> = [
@@ -27,6 +28,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
   const phase = useAIStore((s) => s.phase);
   const error = useAIStore((s) => s.error);
   const report = useAIStore((s) => s.report);
+  const typoReport = useAIStore((s) => s.typoReport);
   const chapters = useEditorStore((s) => s.chapters);
   const currentChapterId = useEditorStore((s) => s.currentChapterId);
   const selectedText = useEditorStore((s) => s.selectedText);
@@ -240,6 +242,36 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
     }
   };
 
+  /** 本章节错字检查：纯校对任务，报告含定位与一键修正 */
+  const runTypoCheck = async (): Promise<void> => {
+    const { orchestrator } = getAppContext();
+    const api = useEditorStore.getState().editorApi;
+    if (!api || !currentChapterId) {
+      void alertDialog('请先选择要检查的章节');
+      return;
+    }
+    const text = api.getPlainText();
+    if (!text.trim()) {
+      void alertDialog('当前章节为空');
+      return;
+    }
+    const store = useAIStore.getState();
+    store.setChecking(true);
+    store.setTypoReport(null);
+    try {
+      const r = await orchestrator.checkTypos({
+        bookId,
+        chapterId: currentChapterId,
+        chapterContent: text
+      });
+      useAIStore.getState().setTypoReport(r);
+    } catch (e) {
+      void alertDialog(`错字检查失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      useAIStore.getState().setChecking(false);
+    }
+  };
+
   const toggleChar = (id: string): void => {
     setSelectedCharIds((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   };
@@ -389,16 +421,31 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
         {mode === 'check' && (
           <div className="p-3">
             <div className="mb-2 text-xs text-ink-500">
-              对当前章节全文与角色卡 / 世界书做一致性检查（不注入文风 Skill）
+              一致性检查比对角色卡 / 世界书（不注入文风 Skill）；错字检查校对当前章节错别字
             </div>
-            <button
-              type="button"
-              disabled={phase === 'checking' || !currentChapterId}
-              className="w-full rounded bg-violet-600 py-1.5 text-sm text-white hover:bg-violet-700 disabled:opacity-40"
-              onClick={() => void runCheck()}
-            >
-              {phase === 'checking' ? '检查中…' : '开始检查'}
-            </button>
+            <div className="flex gap-1">
+              <button
+                type="button"
+                disabled={phase === 'checking' || !currentChapterId}
+                className="flex-1 rounded bg-violet-600 py-1.5 text-sm text-white hover:bg-violet-700 disabled:opacity-40"
+                onClick={() => void runCheck()}
+              >
+                {phase === 'checking' ? '检查中…' : '一致性检查'}
+              </button>
+              <button
+                type="button"
+                disabled={phase === 'checking' || !currentChapterId}
+                className="flex-1 rounded bg-amber-600 py-1.5 text-sm text-white hover:bg-amber-700 disabled:opacity-40"
+                onClick={() => void runTypoCheck()}
+              >
+                {phase === 'checking' ? '检查中…' : '错字检查'}
+              </button>
+            </div>
+            {typoReport && (
+              <div className="mt-2">
+                <TypoReportView key={typoReport.checkedAt} report={typoReport} />
+              </div>
+            )}
             {report && (
               <div className="mt-2">
                 <ConsistencyReportView report={report} />

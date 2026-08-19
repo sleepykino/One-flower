@@ -7,7 +7,7 @@ import type { NativeBridge } from '../../native/NativeBridge';
 import type { SkillLoader } from '../skill/SkillLoader';
 import type { PromptAssembler, PromptContext, TokenBreakdown, ForcedReference } from './PromptAssembler';
 import { DEFAULT_TOKEN_BUDGET } from './PromptAssembler';
-import type { LLMProvider, ChatChunk } from './providers/LLMProvider';
+import type { LLMProvider, ChatChunk, ChatMessage } from './providers/LLMProvider';
 import { createProvider } from './providers/LLMProvider';
 import type { GlobalPromptService } from './GlobalPromptService';
 import type { FeatureKey } from './modelRouting';
@@ -22,7 +22,9 @@ import type {
   ConsistencyReport,
   ContinueParams,
   DialogueParams,
-  RewriteParams
+  RewriteParams,
+  TypoCheckParams,
+  TypoReport
 } from './types';
 import { docToPlainText } from '../../utils/pmdoc';
 import type { ProseMirrorDoc } from '../../types';
@@ -499,6 +501,67 @@ export class AIOrchestrator {
     });
 
     return this.parseReport(res.content);
+  }
+
+  /** 错字检查：非流式，返回结构化错字列表（纯校对任务，不组装上下文、不注入 Skill） */
+  async checkTypos(params: TypoCheckParams): Promise<TypoReport> {
+    const provider = await this.resolveProvider(params.bookId, 'typo-check');
+    const model = await this.modelOf(params.bookId, 'typo-check');
+    const messages: ChatMessage[] = [
+      {
+        role: 'system',
+        content: [
+          '你是专业的中文小说校对员。找出正文中的错别字：写错的字、同音/形近的别字、明显的多字漏字。',
+          '只报告有把握的错误，不涉及文风、标点偏好、主观表达，也不修改故事内容。',
+          'original 必须从正文中逐字摘取 4-10 字（含错字），与正文完全一致，作为定位替换依据。',
+          '输出严格 JSON，不要任何其他文字：',
+          '{"typos":[{"original":"含错字的原文片段","suggestion":"修正后的完整片段","reason":"简短原因"}]}',
+          '若没有错别字，输出 {"typos":[]}。'
+        ].join('\n')
+      },
+      { role: 'user', content: `【正文】\n${params.chapterContent}` }
+    ];
+    const res = await provider.chat(messages, {
+      model,
+      signal: params.signal,
+      maxTokens: 2048,
+      temperature: 0.1
+    });
+    return this.parseTypoReport(res.content);
+  }
+
+  /** 从模型输出解析错字报告（容忍 markdown 代码块包裹与前后杂文，解析失败抛错提示用户） */
+  private parseTypoReport(raw: string): TypoReport {
+    let text = raw.trim();
+    const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fence) text = fence[1].trim();
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if (start >= 0 && end > start) text = text.slice(start, end + 1);
+    try {
+      const parsed = JSON.parse(text) as {
+        typos?: Array<{ original?: string; suggestion?: string; reason?: string }>;
+      };
+      return {
+        typos: (parsed.typos ?? [])
+          .filter(
+            (t) =>
+              typeof t.original === 'string' &&
+              typeof t.suggestion === 'string' &&
+              t.original.trim() !== '' &&
+              t.suggestion.trim() !== '' &&
+              t.original !== t.suggestion
+          )
+          .map((t) => ({
+            original: String(t.original),
+            suggestion: String(t.suggestion),
+            reason: String(t.reason ?? '')
+          })),
+        checkedAt: Date.now()
+      };
+    } catch {
+      throw new Error(`模型输出无法解析为 JSON：${raw.slice(0, 200)}`);
+    }
   }
 
   /** 从模型输出解析矛盾报告（容忍 markdown 代码块包裹） */

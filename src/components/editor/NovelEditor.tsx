@@ -474,6 +474,30 @@ export function NovelEditor({ bookId }: { bookId: string }) {
             return;
           }
         }
+      },
+      /** P2.1：查找并替换第一处匹配文本（错字一键修正），替换后滚动到修改处 */
+      replaceFirstOccurrence: (search, replacement) => {
+        if (!search) return false;
+        let from = -1;
+        let to = -1;
+        editor.state.doc.descendants((node, pos) => {
+          if (from >= 0) return false;
+          if (node.isText && node.text) {
+            const idx = node.text.indexOf(search);
+            if (idx >= 0) {
+              from = pos + idx;
+              to = from + search.length;
+              return false;
+            }
+          }
+          return true;
+        });
+        if (from < 0) return false;
+        const tr = editor.state.tr.insertText(replacement, from, to);
+        tr.scrollIntoView();
+        editor.view.dispatch(tr);
+        scheduleSave();
+        return true;
       }
     };
     setEditorApi(api);
