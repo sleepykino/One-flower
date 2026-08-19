@@ -9,6 +9,7 @@ import { useBookStore } from '../store/bookStore';
 import { getAppContext } from '../context/app-context';
 import { confirmDialog } from '../native/dialog';
 import { UpdateDialog } from '../components/update/UpdateDialog';
+import { HomeSidebar } from '../components/home/HomeSidebar';
 import type { UpdateInfo } from '../services/update/UpdateService';
 import type { Book } from '../types';
 
@@ -85,94 +86,90 @@ export function Home(): JSX.Element {
   };
 
   return (
-    <div className="h-full overflow-y-auto">
-      <header className="mx-auto flex max-w-5xl items-center justify-between px-6 py-6">
-        <div>
-          <h1 className="text-2xl font-bold">One Flower 一花一世界</h1>
-          <p className="text-sm text-ink-500">本地优先 · 多模式 AI · Skill 文风 · 一致性检查</p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            className="rounded border border-ink-200 px-3 py-1.5 text-sm hover:bg-ink-100"
-            onClick={() => navigate('/settings')}
-          >
-            设置
-          </button>
-          <button
-            type="button"
-            className="rounded border border-ink-200 px-3 py-1.5 text-sm hover:bg-ink-100"
-            onClick={() => void importBackup()}
-          >
-            导入备份
-          </button>
-          <button
-            type="button"
-            className="rounded bg-violet-600 px-3 py-1.5 text-sm text-white hover:bg-violet-700"
-            onClick={() => setCreating(true)}
-          >
-            新建书籍
-          </button>
-        </div>
-      </header>
-
-      {message && (
-        <div className="mx-auto mb-2 max-w-5xl px-6 text-sm text-violet-700">{message}</div>
-      )}
-
-      <main className="mx-auto max-w-5xl px-6 pb-10">
-        {books.length === 0 && !creating && (
-          <div className="rounded-lg border-2 border-dashed border-ink-200 p-16 text-center text-ink-400">
-            还没有书籍。点击「新建书籍」开始创作。
+    <div className="flex h-full">
+      <HomeSidebar />
+      <div className="min-w-0 flex-1 overflow-y-auto">
+        <header className="mx-auto flex max-w-5xl items-center justify-between px-6 py-6">
+          <div>
+            <h1 className="text-2xl font-bold">我的书架</h1>
+            <p className="text-sm text-ink-500">本地优先 · 多模式 AI · Skill 文风 · 一致性检查</p>
           </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              className="rounded border border-ink-200 px-3 py-1.5 text-sm hover:bg-ink-100"
+              onClick={() => void importBackup()}
+            >
+              导入备份
+            </button>
+            <button
+              type="button"
+              className="rounded bg-violet-600 px-3 py-1.5 text-sm text-white hover:bg-violet-700"
+              onClick={() => setCreating(true)}
+            >
+              新建书籍
+            </button>
+          </div>
+        </header>
+
+        {message && (
+          <div className="mx-auto mb-2 max-w-5xl px-6 text-sm text-violet-700">{message}</div>
         )}
 
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
-          {books.map((b) => (
-            <BookCard key={b.id} book={b} onOpen={() => navigate(`/editor/${b.id}`)} onDelete={() => void removeBook(b.id)} />
-          ))}
-
-          {creating && (
-            <div className="rounded-lg border border-violet-200 bg-white p-3">
-              <input
-                autoFocus
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="书名 *"
-                className="mb-2 w-full rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400"
-              />
-              <input
-                value={genre}
-                onChange={(e) => setGenre(e.target.value)}
-                placeholder="类型（武侠 / 科幻 / 悬疑…）"
-                className="mb-2 w-full rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400"
-              />
-              <input
-                value={author}
-                onChange={(e) => setAuthor(e.target.value)}
-                placeholder="作者"
-                className="mb-2 w-full rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400"
-              />
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  className="rounded bg-violet-600 px-2 py-1 text-xs text-white hover:bg-violet-700"
-                  onClick={() => void submit()}
-                >
-                  创建
-                </button>
-                <button
-                  type="button"
-                  className="rounded border border-ink-200 px-2 py-1 text-xs hover:bg-ink-100"
-                  onClick={() => setCreating(false)}
-                >
-                  取消
-                </button>
-              </div>
+        <main className="mx-auto max-w-5xl px-6 pb-10">
+          {books.length === 0 && !creating && (
+            <div className="rounded-lg border-2 border-dashed border-ink-200 p-16 text-center text-ink-400">
+              还没有书籍。点击「新建书籍」开始创作。
             </div>
           )}
-        </div>
-      </main>
+
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
+            {books.map((b) => (
+              <BookCard key={b.id} book={b} onOpen={() => navigate(`/editor/${b.id}`)} onDelete={() => void removeBook(b.id)} />
+            ))}
+
+            {creating && (
+              <div className="rounded-lg border border-violet-200 bg-white p-3">
+                <input
+                  autoFocus
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="书名 *"
+                  className="mb-2 w-full rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400"
+                />
+                <input
+                  value={genre}
+                  onChange={(e) => setGenre(e.target.value)}
+                  placeholder="类型（武侠 / 科幻 / 悬疑…）"
+                  className="mb-2 w-full rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400"
+                />
+                <input
+                  value={author}
+                  onChange={(e) => setAuthor(e.target.value)}
+                  placeholder="作者"
+                  className="mb-2 w-full rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400"
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    className="rounded bg-violet-600 px-2 py-1 text-xs text-white hover:bg-violet-700"
+                    onClick={() => void submit()}
+                  >
+                    创建
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded border border-ink-200 px-2 py-1 text-xs hover:bg-ink-100"
+                    onClick={() => setCreating(false)}
+                  >
+                    取消
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </main>
+      </div>
 
       {/* 启动自动检查发现新版本：下载弹窗 */}
       {update && (

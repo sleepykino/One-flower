@@ -8,6 +8,7 @@ import initSql from './migrations/001_init.sql?raw';
 import p1Sql from './migrations/002_p1_additions.sql?raw';
 import p2Sql from './migrations/003_p2_additions.sql?raw';
 import p21Sql from './migrations/004_p21_additions.sql?raw';
+import p21bSql from './migrations/005_p2_1b_inspiration.sql?raw';
 
 interface Migration {
   version: number;
@@ -18,7 +19,8 @@ const MIGRATIONS: Migration[] = [
   { version: 1, sql: initSql },
   { version: 2, sql: p1Sql },
   { version: 3, sql: p2Sql },
-  { version: 4, sql: p21Sql }
+  { version: 4, sql: p21Sql },
+  { version: 5, sql: p21bSql }
 ];
 
 export class Database {

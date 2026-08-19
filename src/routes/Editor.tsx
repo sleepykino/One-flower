@@ -16,6 +16,8 @@ import {
   History,
   Puzzle,
   BarChart3,
+  Mic,
+  FlaskConical,
   type LucideIcon
 } from 'lucide-react';
 import { useEditorStore } from '../store/editorStore';
@@ -36,6 +38,8 @@ import { MapEditor } from '../components/map/MapEditor';
 import { TimelineView } from '../components/timeline/TimelineView';
 import { NameGenerator } from '../components/namegen/NameGenerator';
 import { TaskIndicator } from '../components/task/TaskIndicator';
+import { CharacterInterview } from '../components/inspiration/CharacterInterview';
+import { WhatIfPanel } from '../components/inspiration/WhatIfPanel';
 import { getAppContext } from '../context/app-context';
 import type { LongFormSession } from '../services/longform/types';
 import { resolveProviderConfigIdForFeature } from '../services/ai/providerResolver';
@@ -50,7 +54,9 @@ type RightTab =
   | 'foreshadow'
   | 'history'
   | 'skills'
-  | 'stats';
+  | 'stats'
+  | 'interview' // P2.1-B M3：角色采访
+  | 'whatif'; // P2.1-B M4：推演器
 
 /** P2.1-M7 长文 tab 启用开关（Phase 7 已启用） */
 const LONGFORM_ENABLED = true;
@@ -82,6 +88,13 @@ const RIGHT_TAB_GROUPS: Array<{
       { key: 'history', title: '版本', icon: History },
       { key: 'skills', title: 'Skill', icon: Puzzle },
       { key: 'stats', title: '统计', icon: BarChart3 }
+    ]
+  },
+  {
+    label: '灵感',
+    tabs: [
+      { key: 'interview', title: '角色采访', icon: Mic },
+      { key: 'whatif', title: '如果…会怎样', icon: FlaskConical }
     ]
   }
 ];
@@ -379,6 +392,8 @@ export function Editor(): JSX.Element {
                 {tab === 'history' && <VersionHistory />}
                 {tab === 'skills' && <SkillPanel bookId={bookId} />}
                 {tab === 'stats' && <WritingStatsPanel bookId={bookId} />}
+                {tab === 'interview' && <CharacterInterview bookId={bookId} />}
+                {tab === 'whatif' && <WhatIfPanel bookId={bookId} />}
               </div>
             </div>
           </div>

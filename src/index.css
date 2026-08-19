@@ -95,3 +95,68 @@ body {
 .diff-remove {
   @apply bg-red-100 text-red-800 line-through;
 }
+
+/* ============ 轻量 Markdown 内容（灵感卡片等 AI 返回） ============ */
+.md-content h1,
+.md-content h2,
+.md-content h3,
+.md-content h4 {
+  @apply font-semibold;
+  margin: 0.7em 0 0.3em;
+  line-height: 1.4;
+}
+.md-content h1 {
+  font-size: 1.15em;
+}
+.md-content h2 {
+  font-size: 1.08em;
+}
+.md-content h3,
+.md-content h4 {
+  font-size: 1em;
+}
+.md-content p {
+  margin: 0.4em 0;
+}
+.md-content ul,
+.md-content ol {
+  margin: 0.4em 0;
+  padding-left: 1.5em;
+}
+.md-content ul {
+  list-style: disc;
+}
+.md-content ol {
+  list-style: decimal;
+}
+.md-content li {
+  margin: 0.15em 0;
+}
+.md-content blockquote {
+  @apply border-l-[3px] border-violet-300 text-ink-600;
+  margin: 0.5em 0;
+  padding: 0.15em 0.8em;
+}
+.md-content code {
+  @apply rounded bg-black/[0.06];
+  padding: 0.1em 0.35em;
+  font-size: 0.9em;
+}
+.md-content pre {
+  @apply rounded bg-black/[0.06];
+  margin: 0.5em 0;
+  padding: 0.6em 0.8em;
+  overflow-x: auto;
+}
+.md-content pre code {
+  padding: 0;
+  background: none;
+}
+.md-content a {
+  @apply text-violet-600 underline;
+}
+.md-content hr {
+  @apply border-ink-200;
+  margin: 0.8em 0;
+  border-top-width: 1px;
+}

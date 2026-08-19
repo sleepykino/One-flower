@@ -14,6 +14,7 @@ import type { Character } from '../../types';
 import { ConsistencyReportView } from './ConsistencyReport';
 import { TypoReportView } from './TypoReportView';
 import { LongFormPanel } from './LongFormPanel';
+import type { AvailablePerspective } from '../../services/inspiration/types';
 
 const MODES: Array<{ key: AIMode; label: string }> = [
   { key: 'continue', label: '续写' },
@@ -35,6 +36,9 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
   const [characters, setCharacters] = useState<Character[]>([]);
   const [selectedCharIds, setSelectedCharIds] = useState<string[]>([]);
   const [instruction, setInstruction] = useState('');
+  // P2.1-B M5：多视角重写（改写 tab 视角下拉，'' = 不切换视角 = 原有改写行为）
+  const [perspectives, setPerspectives] = useState<AvailablePerspective[]>([]);
+  const [perspectiveId, setPerspectiveId] = useState('');
   // 续写要求（可选）：引导续写方向，随提示词以【要求】段注入
   const [continueReq, setContinueReq] = useState('');
   const [scene, setScene] = useState('');
@@ -57,6 +61,15 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
     void getAppContext()
       .characterService.list(bookId)
       .then(setCharacters);
+  }, [bookId]);
+
+  // P2.1-B M5：加载本书可用视角（角色卡 + 固定非角色视角）
+  useEffect(() => {
+    setPerspectiveId('');
+    void getAppContext()
+      .multiPerspectiveRewriter.listPerspectives(bookId)
+      .then(setPerspectives)
+      .catch(() => setPerspectives([]));
   }, [bookId]);
 
   // P2.1-M5：读取当前章节节拍（编辑器节拍栏保存后广播刷新）
@@ -92,7 +105,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
     kind: 'continue' | 'rewrite' | 'dialogue',
     range: { from: number; to: number } | null
   ): Promise<void> => {
-    const { orchestrator } = getAppContext();
+    const { orchestrator, multiPerspectiveRewriter } = getAppContext();
     const api = useEditorStore.getState().editorApi;
     if (!api || !currentChapterId) {
       void alertDialog('请先选择要编辑的章节');
@@ -122,17 +135,33 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
           signal: controller.signal
         });
       } else if (kind === 'rewrite') {
-        iterable = orchestrator.rewrite({
-          bookId,
-          chapterId: currentChapterId,
-          selectedText: selectedText,
-          instruction,
-          recentChapters: recent,
-          aiReferences,
-          maxTokens: tokenValue(),
-          temperature: tempValue(),
-          signal: controller.signal
-        });
+        // P2.1-B M5：选了视角 -> 多视角重写（复用 rewrite 功能键，流式写临时节点）
+        const perspective = perspectives.find((p) => p.label === perspectiveId);
+        if (perspective) {
+          iterable = multiPerspectiveRewriter.rewrite({
+            bookId,
+            chapterId: currentChapterId,
+            selectedText,
+            perspective: perspective.label,
+            characterId: perspective.characterId,
+            tone: instruction.trim() || undefined,
+            maxTokens: tokenValue(),
+            temperature: tempValue(),
+            signal: controller.signal
+          });
+        } else {
+          iterable = orchestrator.rewrite({
+            bookId,
+            chapterId: currentChapterId,
+            selectedText: selectedText,
+            instruction,
+            recentChapters: recent,
+            aiReferences,
+            maxTokens: tokenValue(),
+            temperature: tempValue(),
+            signal: controller.signal
+          });
+        }
       } else {
         iterable = orchestrator.generateDialogue({
           bookId,
@@ -367,11 +396,32 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
             <div className="mb-2 rounded bg-ink-50 p-2 text-xs text-ink-600">
               {selectedText ? `已选中（${selectedText.length}字）：${selectedText.slice(0, 60)}…` : '请先在编辑器中选中要改写的文本'}
             </div>
+            {/* P2.1-B M5：视角下拉（默认"不切换视角"= 原有改写行为） */}
+            <div className="mb-2">
+              <div className="mb-1 text-xs font-medium text-ink-600">叙述视角</div>
+              <select
+                value={perspectiveId}
+                onChange={(e) => setPerspectiveId(e.target.value)}
+                disabled={streaming}
+                className="w-full rounded border border-ink-200 bg-white px-2 py-1 text-sm outline-none focus:border-violet-400 disabled:opacity-50"
+              >
+                <option value="">不切换视角（普通改写）</option>
+                {perspectives.map((p) => (
+                  <option key={p.label} value={p.label}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </div>
             <textarea
               rows={3}
               value={instruction}
               onChange={(e) => setInstruction(e.target.value)}
-              placeholder="改写要求，如：改为更紧张的氛围"
+              placeholder={
+                perspectiveId
+                  ? '改写要求（可选），如：更口语化、压缩篇幅'
+                  : '改写要求，如：改为更紧张的氛围'
+              }
               className="mb-2 w-full resize-none rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400"
             />
             <GenParams
@@ -382,7 +432,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
             />
             <button
               type="button"
-              disabled={streaming || !selectedText || !instruction.trim()}
+              disabled={streaming || !selectedText || (!instruction.trim() && !perspectiveId)}
               className="mt-3 w-full rounded bg-violet-600 py-1.5 text-sm text-white hover:bg-violet-700 disabled:opacity-40"
               onClick={() => {
                 const api = useEditorStore.getState().editorApi;
@@ -390,7 +440,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
                 void runStream('rewrite', range);
               }}
             >
-              {streaming ? '生成中…' : '开始改写'}
+              {streaming ? '生成中…' : perspectiveId ? `从${perspectiveId}重写` : '开始改写'}
             </button>
           </div>
         )}

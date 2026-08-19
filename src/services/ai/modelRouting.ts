@@ -20,9 +20,13 @@ export type FeatureKey =
   | 'summary'
   | 'namegen'
   | 'map'
-  | 'embedding';
+  | 'embedding'
+  | 'seed-gen'
+  | 'card-gen'
+  | 'interview'
+  | 'whatif';
 
-export type FeatureGroup = 'generate' | 'review' | 'assist' | 'vector';
+export type FeatureGroup = 'generate' | 'review' | 'assist' | 'vector' | 'inspiration';
 
 export interface FeatureMeta {
   key: FeatureKey;
@@ -35,7 +39,8 @@ export const FEATURE_GROUPS: Array<{ key: FeatureGroup; label: string; desc: str
   { key: 'generate', label: '生成（影响正文质量）', desc: '建议使用强模型' },
   { key: 'review', label: '规划与校验', desc: '中频任务，中档模型即可' },
   { key: 'assist', label: '后台辅助（量大）', desc: '每章自动运行，建议弱模型省钱' },
-  { key: 'vector', label: '向量', desc: '世界书与章节片段向量化检索' }
+  { key: 'vector', label: '向量', desc: '世界书与章节片段向量化检索' },
+  { key: 'inspiration', label: '灵感', desc: '种子/卡片/采访/推演等灵感辅助任务' }
 ];
 
 export const AI_FEATURES: FeatureMeta[] = [
@@ -52,7 +57,11 @@ export const AI_FEATURES: FeatureMeta[] = [
   { key: 'summary', label: '章节摘要', desc: '保存章节后自动生成（高频）', group: 'assist' },
   { key: 'namegen', label: '命名生成', desc: '角色/地点/招式/势力命名', group: 'assist' },
   { key: 'map', label: '地图生成', desc: '世界地图 AI 生成', group: 'assist' },
-  { key: 'embedding', label: '向量嵌入', desc: '世界书条目与章节片段向量化', group: 'vector' }
+  { key: 'embedding', label: '向量嵌入', desc: '世界书条目与章节片段向量化', group: 'vector' },
+  { key: 'seed-gen', label: '故事种子', desc: '题材+元素组合生成故事钩子', group: 'inspiration' },
+  { key: 'card-gen', label: '灵感卡片', desc: '每日灵感卡片生成', group: 'inspiration' },
+  { key: 'interview', label: '角色采访', desc: 'AI 扮演角色回答提问', group: 'inspiration' },
+  { key: 'whatif', label: '假设推演', desc: '"如果…会怎样"剧情影响推演', group: 'inspiration' }
 ];
 
 const KEY_BINDINGS = 'ai.featureModels';

@@ -37,6 +37,11 @@ import { TaskCenterService } from '../services/task/TaskCenterService';
 import { SettingInferenceService } from '../services/consistency/SettingInferenceService';
 import { LongFormService } from '../services/longform/LongFormService';
 import { UpdateService } from '../services/update/UpdateService';
+import { StorySeedService } from '../services/inspiration/StorySeedService';
+import { DailyInspirationService } from '../services/inspiration/DailyInspirationService';
+import { CharacterInterviewService } from '../services/inspiration/CharacterInterviewService';
+import { WhatIfSimulator } from '../services/inspiration/WhatIfSimulator';
+import { MultiPerspectiveRewriter } from '../services/inspiration/MultiPerspectiveRewriter';
 import { useTaskStore } from '../store/taskStore';
 import { createProvider } from '../services/ai/providers/LLMProvider';
 import type { LLMProvider } from '../services/ai/providers/LLMProvider';
@@ -82,6 +87,16 @@ export interface AppContext {
   longformService: LongFormService;
   /** 客户端更新：GitHub Release 检查 + 打开下载页 */
   updateService: UpdateService;
+  /** P2.1-B M1：故事种子生成器 */
+  storySeedService: StorySeedService;
+  /** P2.1-B M2：每日灵感卡片 */
+  dailyCardService: DailyInspirationService;
+  /** P2.1-B M3：角色采访 */
+  interviewService: CharacterInterviewService;
+  /** P2.1-B M4："如果…会怎样"推演器 */
+  whatIfSimulator: WhatIfSimulator;
+  /** P2.1-B M5：多视角重写（改写 tab 视角下拉） */
+  multiPerspectiveRewriter: MultiPerspectiveRewriter;
 }
 
 let ctx: AppContext | null = null;
@@ -212,6 +227,13 @@ export async function initApp(): Promise<AppContext> {
   // 客户端更新（方案 A：GitHub latest release 检查，浏览器打开下载页）
   const updateService = new UpdateService(appSettings);
 
+  // P2.1-B 灵感激发包：种子 / 每日卡片 / 角色采访 / 推演 / 多视角重写
+  const storySeedService = new StorySeedService(tauriBridge, db, wq, providerFactory, bookService, ragService);
+  const dailyCardService = new DailyInspirationService(tauriBridge, db, wq, providerFactory, appSettings);
+  const interviewService = new CharacterInterviewService(tauriBridge, db, wq, providerFactory, characterService);
+  const whatIfSimulator = new WhatIfSimulator(tauriBridge, db, wq, providerFactory);
+  const multiPerspectiveRewriter = new MultiPerspectiveRewriter(tauriBridge, db, wq, providerFactory, skillLoader);
+
   ctx = {
     bridge: tauriBridge,
     db,
@@ -241,7 +263,12 @@ export async function initApp(): Promise<AppContext> {
     tasks,
     inferenceService,
     longformService,
-    updateService
+    updateService,
+    storySeedService,
+    dailyCardService,
+    interviewService,
+    whatIfSimulator,
+    multiPerspectiveRewriter
   };
   return ctx;
 }
