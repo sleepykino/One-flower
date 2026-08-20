@@ -22,10 +22,13 @@ import { docToPlainText } from '../../utils/pmdoc';
 import {
   FONT_FAMILIES,
   FONT_SIZES,
+  LINE_HEIGHTS,
   loadFontSize,
   loadFontFamily,
+  loadLineHeight,
   saveFontSize,
-  saveFontFamily
+  saveFontFamily,
+  saveLineHeight
 } from '../../utils/editorAppearance';
 import type { ChapterBeat } from '../../services/chapter/ChapterService';
 import type { ProseMirrorDoc } from '../../types';
@@ -101,6 +104,7 @@ export function NovelEditor({ bookId }: { bookId: string }) {
   // 编辑器外观：字体/字号（localStorage 持久化，与设置页「外观」共用）
   const [fontSize, setFontSize] = useState<number>(loadFontSize);
   const [fontFamily, setFontFamily] = useState<string>(loadFontFamily);
+  const [lineHeight, setLineHeight] = useState<number>(loadLineHeight);
 
   // ============ P2.1-M5：章节节拍清单栏 ============
   const [beats, setBeats] = useState<ChapterBeat[]>([]);
@@ -160,6 +164,7 @@ export function NovelEditor({ bookId }: { bookId: string }) {
     const sync = (): void => {
       setFontSize(loadFontSize());
       setFontFamily(loadFontFamily());
+      setLineHeight(loadLineHeight());
     };
     window.addEventListener('editor-appearance-change', sync);
     return () => window.removeEventListener('editor-appearance-change', sync);
@@ -172,6 +177,10 @@ export function NovelEditor({ bookId }: { bookId: string }) {
   const changeFontFamily = (v: string): void => {
     setFontFamily(v);
     saveFontFamily(v);
+  };
+  const changeLineHeight = (v: number): void => {
+    setLineHeight(v);
+    saveLineHeight(v);
   };
   const fontCss = FONT_FAMILIES.find((f) => f.value === fontFamily)?.css ?? FONT_FAMILIES[0].css;
 
@@ -570,6 +579,18 @@ export function NovelEditor({ bookId }: { bookId: string }) {
               </option>
             ))}
           </select>
+          <select
+            value={lineHeight}
+            onChange={(e) => changeLineHeight(Number(e.target.value))}
+            title="行间距"
+            className="rounded border border-ink-200 bg-white px-1 py-0.5 text-xs outline-none focus:border-violet-400"
+          >
+            {LINE_HEIGHTS.map((l) => (
+              <option key={l.value} value={l.value}>
+                {l.label}
+              </option>
+            ))}
+          </select>
         </span>
       </div>
 
@@ -686,7 +707,8 @@ export function NovelEditor({ bookId }: { bookId: string }) {
             style={
               {
                 '--editor-font-size': `${fontSize}px`,
-                '--editor-font-family': fontCss
+                '--editor-font-family': fontCss,
+                '--editor-line-height': String(lineHeight)
               } as React.CSSProperties
             }
           >
