@@ -42,8 +42,10 @@ import { DailyInspirationService } from '../services/inspiration/DailyInspiratio
 import { CharacterInterviewService } from '../services/inspiration/CharacterInterviewService';
 import { WhatIfSimulator } from '../services/inspiration/WhatIfSimulator';
 import { MultiPerspectiveRewriter } from '../services/inspiration/MultiPerspectiveRewriter';
+import { ImageAssetService } from '../services/image/ImageAssetService';
+import { ImagePromptService } from '../services/image/ImagePromptService';
 import { useTaskStore } from '../store/taskStore';
-import { createProvider } from '../services/ai/providers/LLMProvider';
+import { createProvider, isLocalBaseUrl } from '../services/ai/providers/LLMProvider';
 import type { LLMProvider } from '../services/ai/providers/LLMProvider';
 
 export interface AppContext {
@@ -97,6 +99,10 @@ export interface AppContext {
   whatIfSimulator: WhatIfSimulator;
   /** P2.1-B M5：多视角重写（改写 tab 视角下拉） */
   multiPerspectiveRewriter: MultiPerspectiveRewriter;
+  /** P3：图片资产管理（封面/角色卡/正文插图，文件存 storageDir/assets） */
+  imageAssetService: ImageAssetService;
+  /** P3：两段式提示词转写（中文场景 -> 英文图片 prompt） */
+  imagePromptService: ImagePromptService;
 }
 
 let ctx: AppContext | null = null;
@@ -166,8 +172,12 @@ export async function initApp(): Promise<AppContext> {
       [configId]
     );
     if (!row) throw new Error('模型配置不存在');
+    const baseUrl = (row.base_url as string) ?? '';
     const apiKey = (await tauriBridge.keyStore.getSecret(`provider_${String(row.id)}`)) ?? '';
-    if (!apiKey) throw new Error(`配置「${String(row.name)}」未设置 API Key`);
+    // 本地端点（Ollama / ComfyUI 等 localhost 服务）允许无 API Key
+    if (!apiKey && !isLocalBaseUrl(baseUrl)) {
+      throw new Error(`配置「${String(row.name)}」未设置 API Key`);
+    }
     return createProvider(
       {
         id: String(row.id),
@@ -234,6 +244,10 @@ export async function initApp(): Promise<AppContext> {
   const whatIfSimulator = new WhatIfSimulator(tauriBridge, db, wq, providerFactory);
   const multiPerspectiveRewriter = new MultiPerspectiveRewriter(tauriBridge, db, wq, providerFactory, skillLoader);
 
+  // P3 图片能力：资产服务 + 提示词转写（生图 Provider 在组件侧经 resolveImageProvider 解析）
+  const imageAssetService = new ImageAssetService(tauriBridge, db, wq);
+  const imagePromptService = new ImagePromptService(tauriBridge, providerFactory);
+
   ctx = {
     bridge: tauriBridge,
     db,
@@ -268,7 +282,9 @@ export async function initApp(): Promise<AppContext> {
     dailyCardService,
     interviewService,
     whatIfSimulator,
-    multiPerspectiveRewriter
+    multiPerspectiveRewriter,
+    imageAssetService,
+    imagePromptService
   };
   return ctx;
 }

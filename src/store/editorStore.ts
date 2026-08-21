@@ -37,6 +37,8 @@ export interface EditorApi {
   searchAndScroll?(text: string): void;
   /** P2.1：查找并替换正文中第一处匹配文本（错字一键修正用），未找到返回 false */
   replaceFirstOccurrence?(search: string, replacement: string): boolean;
+  /** P3：在光标处插入正文插图（ImageNode），失败返回 false */
+  insertIllustration?(asset: { id: string; fileName: string; caption?: string }): boolean;
 }
 
 interface EditorStore {

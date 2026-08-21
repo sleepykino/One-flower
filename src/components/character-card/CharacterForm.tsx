@@ -11,6 +11,8 @@ import { getAppContext } from '../../context/app-context';
 import type { Character, CharacterSchema } from '../../types';
 import { SchemaBuilder } from './SchemaBuilder';
 import { parseSchemaFields, type CardField } from './schemaFields';
+import { ImagePicker } from '../image/ImagePicker';
+import { confirmDialog } from '../../native/dialog';
 
 export function CharacterForm({
   bookId,
@@ -24,6 +26,19 @@ export function CharacterForm({
   const [schema, setSchema] = useState<CharacterSchema | null>(null);
   const [schemaEditOpen, setSchemaEditOpen] = useState(false);
   const [tagsText, setTagsText] = useState('');
+  // P3：角色图片（头像/立绘，关联存 images 表 usage='character'）
+  const [charImageUrl, setCharImageUrl] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const reloadCharImage = async (): Promise<void> => {
+    if (!character) {
+      setCharImageUrl(null);
+      return;
+    }
+    const { imageAssetService } = getAppContext();
+    const asset = await imageAssetService.findByRef(bookId, 'character', character.id);
+    setCharImageUrl(asset ? await imageAssetService.resolveUrl(asset) : null);
+  };
 
   useEffect(() => {
     const load = async (): Promise<void> => {
@@ -37,8 +52,10 @@ export function CharacterForm({
           setTagsText('');
         }
       }
+      await reloadCharImage();
     };
     void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookId, character]);
 
   const fields: CardField[] = useMemo(
@@ -69,11 +86,27 @@ export function CharacterForm({
   const {
     register,
     handleSubmit,
+    getValues,
     formState: { errors }
   } = useForm<Record<string, string>>({
     resolver: zodResolver(zodSchema),
     defaultValues: initialData
   });
+
+  /** 设置角色图片（维护同一角色至多一张关联，旧图转图库） */
+  const setCharacterImage = async (assetId: string): Promise<void> => {
+    if (!character) return;
+    await getAppContext().imageAssetService.setCharacterImage(bookId, character.id, assetId);
+    await reloadCharImage();
+  };
+
+  /** 清除角色图片（解除关联，图片保留在图库） */
+  const clearCharacterImage = async (): Promise<void> => {
+    if (!character) return;
+    if (!(await confirmDialog('清除角色图片？（图片文件保留在图库，仅解除关联）'))) return;
+    await getAppContext().imageAssetService.clearCharacterImage(bookId, character.id);
+    await reloadCharImage();
+  };
 
   const submit = handleSubmit(async (values) => {
     const ctx = getAppContext();
@@ -127,6 +160,42 @@ export function CharacterForm({
       )}
 
       <form onSubmit={(e) => void submit(e)} className="flex-1 overflow-y-auto p-3">
+        {/* P3：角色图片（头像/立绘）：上传 / AI 生成（角色卡字段自动组场景）/ 图库选 */}
+        <div className="mb-3 flex items-center gap-3">
+          {charImageUrl ? (
+            <img src={charImageUrl} alt={character?.name ?? ''} className="h-20 w-20 rounded border border-ink-100 object-cover" />
+          ) : (
+            <div className="flex h-20 w-20 items-center justify-center rounded border border-dashed border-ink-200 bg-ink-50 text-xs text-ink-400">
+              暂无图片
+            </div>
+          )}
+          <div className="flex flex-col gap-1">
+            {character ? (
+              <>
+                <button
+                  type="button"
+                  className="rounded border border-ink-200 px-2 py-1 text-xs hover:bg-ink-100"
+                  onClick={() => setPickerOpen(true)}
+                >
+                  {charImageUrl ? '更换图片' : '设置图片'}
+                </button>
+                {charImageUrl && (
+                  <button
+                    type="button"
+                    className="rounded border border-ink-200 px-2 py-1 text-xs text-ink-500 hover:bg-ink-100"
+                    onClick={() => void clearCharacterImage()}
+                  >
+                    清除图片
+                  </button>
+                )}
+                <span className="text-[10px] text-ink-400">AI 生成按下方已填字段自动组场景</span>
+              </>
+            ) : (
+              <span className="text-[11px] text-ink-400">保存角色后可设置头像 / 立绘</span>
+            )}
+          </div>
+        </div>
+
         {fields.map((f) => (
           <div key={f.key} className="mb-3">
             <label className="mb-1 block text-xs font-medium text-ink-600">
@@ -194,6 +263,22 @@ export function CharacterForm({
           </button>
         </div>
       </form>
+
+      {pickerOpen && character && (
+        <ImagePicker
+          bookId={bookId}
+          scene={{
+            kind: 'character',
+            name: getValues('name') || character.name,
+            cardData: getValues() as Record<string, unknown>
+          }}
+          usage="character"
+          refId={character.id}
+          title={`${character.name} · 图片`}
+          onPicked={(asset) => setCharacterImage(asset.id)}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
     </div>
   );
 }

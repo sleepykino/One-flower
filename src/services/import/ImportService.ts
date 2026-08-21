@@ -29,11 +29,17 @@ interface BackupMeta {
   characterSchemas: Array<Record<string, unknown>>;
   worldbook: Array<Record<string, unknown>>;
   foreshadowings: Array<Record<string, unknown>>;
+  /** P3 v2：图片资产元数据（文件本体在 zip 的 assets/ 目录；v1 无此字段） */
+  images?: Array<Record<string, unknown>>;
 }
 
 export class ImportService {
   private bridge: NativeBridge & {
-    fs: { readBinaryFile(p: string): Promise<Uint8Array> };
+    fs: {
+      readBinaryFile(p: string): Promise<Uint8Array>;
+      writeBinaryFile(p: string, d: Uint8Array): Promise<void>;
+      ensureDir(p: string): Promise<void>;
+    };
   };
   private db: Database;
   private wq: WriteQueue;
@@ -116,7 +122,7 @@ export class ImportService {
     return { valid: errors.length === 0, errors };
   }
 
-  /** 从 .zip 备份包导入：流式解压逐章写入（新书籍 ID，避免冲突） */
+  /** 从 .zip 备份包导入：流式解压逐章写入（新书籍 ID，避免冲突）；v2 包恢复图片资产 */
   async importBackup(zipPath: string): Promise<{ bookId: string; chapterCount: number }> {
     const buffer = await this.bridge.fs.readBinaryFile(zipPath);
     const files = await this.unzip(buffer);
@@ -130,6 +136,15 @@ export class ImportService {
     await this.bridge.fs.ensureDir(`${storageDir}/chapters`);
 
     const oldToNewChapterId = new Map<string, string>();
+    // P3 v2：图片 ID 与角色 ID 均换新（避免与现有数据冲突），章节正文 imageBlock 引用同步重映射
+    const oldToNewImageId = new Map<string, string>();
+    for (const img of meta.images ?? []) {
+      oldToNewImageId.set(String(img.id ?? ''), crypto.randomUUID());
+    }
+    const oldToNewCharacterId = new Map<string, string>();
+    for (const c of meta.characters ?? []) {
+      oldToNewCharacterId.set(String(c.id ?? ''), crypto.randomUUID());
+    }
     const now = Date.now();
 
     // 逐章写入：章节行 + 正文文件 + FTS 索引
@@ -156,6 +171,8 @@ export class ImportService {
       const doc: ProseMirrorDoc = docRaw && isPMDoc(JSON.parse(this.decode(docRaw)))
         ? (JSON.parse(this.decode(docRaw)) as ProseMirrorDoc)
         : { type: 'doc', content: [{ type: 'paragraph' }] };
+      // P3 v2：正文 imageBlock 的 assetId 重映射到新图片 ID
+      remapImageAssetIds(doc, oldToNewImageId);
 
       const newChapterId = crypto.randomUUID();
       oldToNewChapterId.set(ch.id, newChapterId);
@@ -198,11 +215,12 @@ export class ImportService {
 
     // 角色卡 / 模板 / 世界书 / 伏笔
     for (const c of meta.characters ?? []) {
+      const newCharId = oldToNewCharacterId.get(String(c.id ?? '')) ?? crypto.randomUUID();
       stmts.push({
         sql: `INSERT INTO characters (id, book_id, name, schema_id, data, tags, created_at, updated_at)
               VALUES (?, ?, ?, NULL, ?, ?, ?, ?)`,
         params: [
-          crypto.randomUUID(),
+          newCharId,
           newBookId,
           String(c.name ?? ''),
           String(c.data ?? '{}'),
@@ -261,6 +279,47 @@ export class ImportService {
       });
     }
 
+    // P3 v2：恢复图片资产（zip assets/ -> {storageDir}/assets/ + 重建 images 表记录）
+    if (meta.version >= 2 && (meta.images?.length ?? 0) > 0) {
+      await this.bridge.fs.ensureDir(`${storageDir}/assets`);
+      for (const img of meta.images ?? []) {
+        const oldId = String(img.id ?? '');
+        const newId = oldToNewImageId.get(oldId) ?? crypto.randomUUID();
+        const fileName = String(img.file_name ?? '').replace(/\\/g, '/');
+        if (!fileName.startsWith('assets/')) continue;
+        const bytes = files.get(fileName);
+        if (!bytes) continue; // zip 中缺文件（导出时已缺失）：跳过该资产
+        await this.bridge.fs.writeBinaryFile(`${storageDir}/${fileName}`, bytes);
+        // usage='character' 时 ref_id 重映射到新角色 ID
+        const refId =
+          String(img.usage ?? '') === 'character' && img.ref_id
+            ? oldToNewCharacterId.get(String(img.ref_id)) ?? null
+            : null;
+        stmts.push({
+          sql: `INSERT INTO images (id, book_id, file_name, width, height, size_bytes, mime_type, source,
+                prompt, negative_prompt, provider_config_id, model, usage, ref_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          params: [
+            newId,
+            newBookId,
+            fileName,
+            Number(img.width ?? 0),
+            Number(img.height ?? 0),
+            Number(img.size_bytes ?? 0),
+            String(img.mime_type ?? 'image/png'),
+            String(img.source ?? 'upload'),
+            (img.prompt as string) ?? null,
+            (img.negative_prompt as string) ?? null,
+            (img.provider_config_id as string) ?? null,
+            (img.model as string) ?? null,
+            String(img.usage ?? 'library'),
+            refId,
+            Number(img.created_at ?? now)
+          ]
+        });
+      }
+    }
+
     await this.wq.enqueue(() =>
       this.db.transaction(async (tx) => {
         for (const s of stmts) {
@@ -271,4 +330,21 @@ export class ImportService {
 
     return { bookId: newBookId, chapterCount: meta.chapters.length };
   }
+}
+
+/** 就地重映射文档中 imageBlock 的 assetId（备份导入：图片 ID 换新） */
+function remapImageAssetIds(doc: ProseMirrorDoc, mapping: Map<string, string>): void {
+  if (mapping.size === 0) return;
+  const walk = (node: unknown): void => {
+    if (!node || typeof node !== 'object') return;
+    const n = node as { type?: string; attrs?: Record<string, unknown>; content?: unknown[] };
+    if (n.type === 'imageBlock' && n.attrs) {
+      const oldId = String(n.attrs.assetId ?? '');
+      const newId = oldId ? mapping.get(oldId) : undefined;
+      if (newId) n.attrs.assetId = newId;
+      return;
+    }
+    if (Array.isArray(n.content)) n.content.forEach(walk);
+  };
+  for (const block of (doc.content ?? []) as unknown[]) walk(block);
 }

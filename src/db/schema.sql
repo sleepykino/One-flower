@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS provider_configs (
   provider TEXT NOT NULL,
   base_url TEXT,
   model TEXT NOT NULL,
+  is_default INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
 );
 

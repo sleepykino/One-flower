@@ -10,6 +10,9 @@ import { getAppContext } from '../context/app-context';
 import { confirmDialog } from '../native/dialog';
 import { UpdateDialog } from '../components/update/UpdateDialog';
 import { HomeSidebar } from '../components/home/HomeSidebar';
+import { ImagePicker } from '../components/image/ImagePicker';
+import { resolveAssetUrl } from '../utils/assetUrl';
+import type { ImageAsset } from '../services/image/types';
 import type { UpdateInfo } from '../services/update/UpdateService';
 import type { Book } from '../types';
 
@@ -192,10 +195,40 @@ function BookCard({
   onOpen: () => void;
   onDelete: () => void;
 }): JSX.Element {
+  const loadBooks = useBookStore((s) => s.loadBooks);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  // cover_path 存相对 storageDir 路径，显示时解析为 asset 协议 URL
+  const coverUrl = book.coverPath
+    ? resolveAssetUrl(`${book.storageDir.replace(/\\/g, '/')}/${book.coverPath.replace(/\\/g, '/')}`)
+    : null;
+
+  /** 封面落定：回写 books.cover_path（相对路径） */
+  const setCover = async (asset: ImageAsset): Promise<void> => {
+    await getAppContext().bookService.update(book.id, { coverPath: asset.fileName });
+    await loadBooks();
+  };
+
   return (
     <div className="group cursor-pointer rounded-lg border border-ink-200 bg-white p-4 transition hover:border-violet-400 hover:shadow" onClick={onOpen}>
-      <div className="mb-3 flex h-28 items-center justify-center rounded bg-gradient-to-br from-violet-200 to-sky-200 text-3xl font-bold text-white">
-        {book.title.slice(0, 2)}
+      <div className="relative mb-3 h-28">
+        {coverUrl ? (
+          <img src={coverUrl} alt={book.title} className="h-full w-full rounded object-cover" />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center rounded bg-gradient-to-br from-violet-200 to-sky-200 text-3xl font-bold text-white">
+            {book.title.slice(0, 2)}
+          </div>
+        )}
+        <button
+          type="button"
+          className="absolute bottom-1 right-1 hidden rounded bg-black/50 px-1.5 py-0.5 text-[11px] text-white hover:bg-black/70 group-hover:block"
+          title="设置封面（上传 / AI 生成 / 图库）"
+          onClick={(e) => {
+            e.stopPropagation();
+            setPickerOpen(true);
+          }}
+        >
+          封面
+        </button>
       </div>
       <div className="flex items-center justify-between">
         <div className="min-w-0">
@@ -220,6 +253,17 @@ function BookCard({
           删除
         </button>
       </div>
+
+      {pickerOpen && (
+        <ImagePicker
+          bookId={book.id}
+          scene={{ kind: 'cover', book: { title: book.title, genre: book.genre, author: book.author } }}
+          usage="cover"
+          title={`《${book.title}》封面`}
+          onPicked={(asset) => setCover(asset)}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
     </div>
   );
 }

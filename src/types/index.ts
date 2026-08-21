@@ -82,6 +82,7 @@ export interface ProviderConfig {
   provider: 'openai_compat' | 'anthropic' | 'google';
   baseUrl: string | null;
   model: string;
+  isDefault: boolean;
   createdAt: number;
 }
 

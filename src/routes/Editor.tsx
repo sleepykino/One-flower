@@ -19,6 +19,7 @@ import {
   Mic,
   FlaskConical,
   Pencil,
+  ImageIcon,
   type LucideIcon
 } from 'lucide-react';
 import { useEditorStore } from '../store/editorStore';
@@ -41,11 +42,12 @@ import { NameGenerator } from '../components/namegen/NameGenerator';
 import { TaskIndicator } from '../components/task/TaskIndicator';
 import { CharacterInterview } from '../components/inspiration/CharacterInterview';
 import { WhatIfPanel } from '../components/inspiration/WhatIfPanel';
+import { ImageLibraryPanel } from '../components/image/ImageLibraryPanel';
 import { getAppContext } from '../context/app-context';
 import { alertDialog } from '../native/dialog';
 import type { LongFormSession } from '../services/longform/types';
 import { resolveProviderConfigIdForFeature } from '../services/ai/providerResolver';
-import { createProvider } from '../services/ai/providers/LLMProvider';
+import { createProvider, isLocalBaseUrl } from '../services/ai/providers/LLMProvider';
 
 type RightTab =
   | 'ai'
@@ -58,7 +60,8 @@ type RightTab =
   | 'skills'
   | 'stats'
   | 'interview' // P2.1-B M3：角色采访
-  | 'whatif'; // P2.1-B M4：推演器
+  | 'whatif' // P2.1-B M4：推演器
+  | 'library'; // P3：图库
 
 /** P2.1-M7 长文 tab 启用开关（Phase 7 已启用） */
 const LONGFORM_ENABLED = true;
@@ -81,7 +84,8 @@ const RIGHT_TAB_GROUPS: Array<{
       { key: 'context', title: '上下文', icon: Database },
       { key: 'characters', title: '角色', icon: Users },
       { key: 'worldbook', title: '世界书', icon: BookOpen },
-      { key: 'foreshadow', title: '伏笔', icon: GitBranch }
+      { key: 'foreshadow', title: '伏笔', icon: GitBranch },
+      { key: 'library', title: '图库', icon: ImageIcon }
     ]
   },
   {
@@ -188,8 +192,12 @@ export function Editor(): JSX.Element {
         [configId]
       );
       if (!row) throw new Error('模型配置不存在');
+      const baseUrl = (row.base_url as string) ?? '';
       const apiKey = (await bridge.keyStore.getSecret(`provider_${String(row.id)}`)) ?? '';
-      if (!apiKey) throw new Error(`配置「${String(row.name)}」未设置 API Key`);
+      // 本地端点（Ollama 等 localhost 服务）允许无 API Key
+      if (!apiKey && !isLocalBaseUrl(baseUrl)) {
+        throw new Error(`配置「${String(row.name)}」未设置 API Key`);
+      }
       const model = String(row.model);
       const provider = createProvider(
         {
@@ -440,6 +448,7 @@ export function Editor(): JSX.Element {
                 {tab === 'stats' && <WritingStatsPanel bookId={bookId} />}
                 {tab === 'interview' && <CharacterInterview bookId={bookId} />}
                 {tab === 'whatif' && <WhatIfPanel bookId={bookId} />}
+                {tab === 'library' && <ImageLibraryPanel bookId={bookId} />}
               </div>
             </div>
           </div>

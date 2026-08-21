@@ -116,10 +116,14 @@ export function ExportDialog({ bookId, onClose }: { bookId: string; onClose: () 
           </select>
           <div className="mt-1 text-[11px] text-ink-400">
             {format === 'backup'
-              ? '.zip 备份包（meta.json + chapters/），可用于迁移恢复'
+              ? '.zip 备份包（v2：meta.json + chapters/ + assets/ 图片资产），可用于迁移恢复'
               : format === 'docx'
-                ? 'Word 文档；全书导出含目录页、页眉书名与页脚页码（打开时按提示更新目录域）'
-                : '阅读格式导出，含章节标题与目录'}
+                ? 'Word 文档；全书导出含封面、目录页、页眉书名与页脚页码，正文插图内嵌（打开时按提示更新目录域）'
+                : format === 'epub'
+                  ? 'EPUB 电子书；含封面页、目录导航与正文插图'
+                  : format === 'markdown'
+                    ? 'Markdown 导出；正文插图随导出落盘到输出目录 images/（相对路径引用）'
+                    : '纯文本导出（忽略图片）'}
           </div>
         </div>
 

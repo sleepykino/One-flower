@@ -75,3 +75,23 @@ export function createProvider(config: ProviderConfig, apiKey: string): LLMProvi
 export function estimateTokens(text: string): number {
   return countTokens(text);
 }
+
+/**
+ * 本地端点判断：baseUrl 指向 localhost / 127.0.0.1 / [::1] 时视为本地 Provider
+ * （Ollama、ComfyUI 等），跳过 API Key 强制校验
+ */
+export function isLocalBaseUrl(baseUrl?: string | null): boolean {
+  if (!baseUrl) return false;
+  const trimmed = baseUrl.trim();
+  try {
+    const u = new URL(trimmed);
+    return (
+      u.hostname === 'localhost' ||
+      u.hostname === '127.0.0.1' ||
+      u.hostname === '[::1]' ||
+      u.hostname === '::1'
+    );
+  } catch {
+    return /^(https?:\/\/)?(localhost|127\.0\.0\.1|\[::1\])(:\d+)?([/?#].*)?$/i.test(trimmed);
+  }
+}

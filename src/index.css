@@ -76,6 +76,21 @@ body {
   @apply bg-amber-200 text-amber-700;
 }
 
+/* P3 正文插图节点（React NodeView 渲染，含图注与选中态工具条） */
+.node-imageBlock {
+  @apply relative select-none;
+}
+.node-imageBlock img {
+  @apply block w-full cursor-pointer rounded;
+}
+.node-imageBlock.ProseMirror-selectednode > img,
+.node-imageBlock[data-selected='true'] > img {
+  @apply ring-2 ring-violet-400;
+}
+.node-imageBlock figcaption {
+  @apply mt-1 text-center text-xs text-ink-500;
+}
+
 /* ============ 滚动条 ============ */
 ::-webkit-scrollbar {
   width: 8px;

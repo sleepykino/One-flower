@@ -130,7 +130,7 @@ export function BackupSection(): JSX.Element {
       </div>
 
       <p className="mt-3 text-[11px] leading-5 text-ink-400">
-        正文格式导出（Markdown / TXT / EPUB / Word）仍在编辑器「导出」对话框中；书架页也保留了备份导入入口。
+        正文格式导出（Markdown / TXT / EPUB / Word）在编辑器「导出」对话框中；书架页也保留了备份导入入口。
       </p>
     </div>
   );

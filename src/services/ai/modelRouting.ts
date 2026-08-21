@@ -24,9 +24,11 @@ export type FeatureKey =
   | 'seed-gen'
   | 'card-gen'
   | 'interview'
-  | 'whatif';
+  | 'whatif'
+  | 'image'
+  | 'image-prompt';
 
-export type FeatureGroup = 'generate' | 'review' | 'assist' | 'vector' | 'inspiration';
+export type FeatureGroup = 'generate' | 'review' | 'assist' | 'vector' | 'inspiration' | 'image';
 
 export interface FeatureMeta {
   key: FeatureKey;
@@ -40,7 +42,8 @@ export const FEATURE_GROUPS: Array<{ key: FeatureGroup; label: string; desc: str
   { key: 'review', label: '规划与校验', desc: '中频任务，中档模型即可' },
   { key: 'assist', label: '后台辅助（量大）', desc: '每章自动运行，建议弱模型省钱' },
   { key: 'vector', label: '向量', desc: '世界书与章节片段向量化检索' },
-  { key: 'inspiration', label: '灵感', desc: '种子/卡片/采访/推演等灵感辅助任务' }
+  { key: 'inspiration', label: '灵感', desc: '种子/卡片/采访/推演等灵感辅助任务' },
+  { key: 'image', label: '图片（需接入图片模型）', desc: '封面 / 角色卡 / 正文插图的生成与提示词转写' }
 ];
 
 export const AI_FEATURES: FeatureMeta[] = [
@@ -61,7 +64,19 @@ export const AI_FEATURES: FeatureMeta[] = [
   { key: 'seed-gen', label: '故事种子', desc: '题材+元素组合生成故事钩子', group: 'inspiration' },
   { key: 'card-gen', label: '灵感卡片', desc: '每日灵感卡片生成', group: 'inspiration' },
   { key: 'interview', label: '角色采访', desc: 'AI 扮演角色回答提问', group: 'inspiration' },
-  { key: 'whatif', label: '假设推演', desc: '"如果…会怎样"剧情影响推演', group: 'inspiration' }
+  { key: 'whatif', label: '假设推演', desc: '"如果…会怎样"剧情影响推演', group: 'inspiration' },
+  {
+    key: 'image',
+    label: '图片生成',
+    desc: '生图模型（需绑定模型为图片模型的配置）',
+    group: 'image'
+  },
+  {
+    key: 'image-prompt',
+    label: '图片提示词转写',
+    desc: '中文场景描述转写为专业图片 prompt（可选便宜对话模型）',
+    group: 'image'
+  }
 ];
 
 const KEY_BINDINGS = 'ai.featureModels';

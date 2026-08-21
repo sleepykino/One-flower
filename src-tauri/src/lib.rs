@@ -27,6 +27,7 @@ pub fn run() {
             commands::fs::ensure_dir,
             commands::fs::list_dir,
             commands::fs::delete_path,
+            commands::fs::copy_file,
             commands::fs::watch_dir,
             commands::fs::unwatch_dir,
             // db

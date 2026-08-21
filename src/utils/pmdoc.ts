@@ -37,11 +37,11 @@ function inlineText(node: PMNode): string {
   return '';
 }
 
-/** 块级段落文本列表（跳过 AI 临时节点） */
+/** 块级段落文本列表（跳过 AI 临时节点与图片节点） */
 export function blockTexts(doc: ProseMirrorDoc): string[] {
   const out: string[] = [];
   for (const block of (doc.content ?? []) as PMNode[]) {
-    if (block.type === 'aiTemp') continue;
+    if (block.type === 'aiTemp' || block.type === 'imageBlock') continue;
     if (block.type === 'heading') {
       out.push(`## ${blockText(block)}`);
     } else if (block.type === 'blockquote') {
@@ -60,13 +60,52 @@ function blockText(block: PMNode): string {
   return '';
 }
 
-/** 文档 → 纯文本（段落空行分隔） */
+/** 文档 -> 纯文本（段落空行分隔） */
 export function docToPlainText(doc: ProseMirrorDoc): string {
   return blockTexts(doc).join('\n\n');
 }
 
-/** 文档 → Markdown */
-export function docToMarkdown(doc: ProseMirrorDoc): string {
+/** 图片节点的导出视图属性 */
+export interface PMImageAttrs {
+  assetId: string;
+  fileName: string;
+  caption: string;
+  width: number; // 25 | 50 | 100（百分比）
+  align: string; // left | center | right
+}
+
+/** 导出期图片解析选项：attrs -> 引用路径（null 表示缺失，降级为占位文字） */
+export interface DocImageOptions {
+  resolveImageSrc?: (attrs: PMImageAttrs) => string | null;
+}
+
+function readImageAttrs(block: PMNode): PMImageAttrs {
+  return {
+    assetId: String(block.attrs?.assetId ?? ''),
+    fileName: String(block.attrs?.fileName ?? ''),
+    caption: String(block.attrs?.caption ?? ''),
+    width: Math.max(25, Math.min(100, Number(block.attrs?.width) || 100)),
+    align: String(block.attrs?.align ?? 'center')
+  };
+}
+
+/** 收集文档中全部图片节点的 assetId（导出前预载图片字节用） */
+export function collectImageAssetIds(doc: ProseMirrorDoc): string[] {
+  const out: string[] = [];
+  const walk = (node: PMNode): void => {
+    if (node.type === 'imageBlock') {
+      const id = String(node.attrs?.assetId ?? '');
+      if (id) out.push(id);
+      return;
+    }
+    for (const child of node.content ?? []) walk(child);
+  };
+  for (const block of (doc.content ?? []) as PMNode[]) walk(block);
+  return out;
+}
+
+/** 文档 -> Markdown（图片经 resolveImageSrc 转为引用，缺失降级占位文字） */
+export function docToMarkdown(doc: ProseMirrorDoc, opts?: DocImageOptions): string {
   const lines: string[] = [];
   for (const block of (doc.content ?? []) as PMNode[]) {
     switch (block.type) {
@@ -89,6 +128,18 @@ export function docToMarkdown(doc: ProseMirrorDoc): string {
         break;
       case 'aiTemp':
         break;
+      case 'imageBlock': {
+        const attrs = readImageAttrs(block);
+        const src = opts?.resolveImageSrc?.(attrs) ?? null;
+        if (!src) {
+          lines.push(`[图片缺失: ${attrs.fileName || attrs.assetId}]`);
+          break;
+        }
+        const alt = (attrs.caption || attrs.fileName).replace(/[\[\]]/g, '');
+        lines.push(`![${alt}](${src})`);
+        if (attrs.caption) lines.push(`*${attrs.caption}*`);
+        break;
+      }
       default:
         lines.push(blockText(block));
     }
@@ -105,8 +156,8 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-/** 文档 → HTML（EPUB 用） */
-export function docToHtml(doc: ProseMirrorDoc): string {
+/** 文档 -> HTML（EPUB 用；图片经 resolveImageSrc 转为 img src，缺失降级占位文字） */
+export function docToHtml(doc: ProseMirrorDoc, opts?: DocImageOptions): string {
   const parts: string[] = [];
   for (const block of (doc.content ?? []) as PMNode[]) {
     switch (block.type) {
@@ -126,6 +177,22 @@ export function docToHtml(doc: ProseMirrorDoc): string {
         break;
       case 'aiTemp':
         break;
+      case 'imageBlock': {
+        const attrs = readImageAttrs(block);
+        const src = opts?.resolveImageSrc?.(attrs) ?? null;
+        if (!src) {
+          parts.push(`<p class="image-missing">[图片缺失: ${escapeHtml(attrs.fileName || attrs.assetId)}]</p>`);
+          break;
+        }
+        const margin =
+          attrs.align === 'left' ? '0 auto 0 0' : attrs.align === 'right' ? '0 0 0 auto' : '0 auto';
+        const alt = escapeHtml(attrs.caption || attrs.fileName);
+        const captionHtml = attrs.caption ? `<figcaption>${escapeHtml(attrs.caption)}</figcaption>` : '';
+        parts.push(
+          `<figure class="image-block" style="width:${attrs.width}%;margin:${margin}"><img src="${escapeHtml(src)}" alt="${alt}"/>${captionHtml}</figure>`
+        );
+        break;
+      }
       default:
         parts.push(`<p>${escapeHtml(blockText(block))}</p>`);
     }

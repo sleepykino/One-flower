@@ -68,6 +68,16 @@ pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
     Ok(entries)
 }
 
+/// 复制文件（P3 图片上传入库用：外部图片 -> books/{id}/assets/）
+#[tauri::command]
+pub fn copy_file(src: String, dest: String) -> Result<(), String> {
+    let p = Path::new(&dest);
+    if let Some(parent) = p.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::copy(&src, p).map(|_| ()).map_err(|e| e.to_string())
+}
+
 /// 删除文件或目录（目录递归删除）
 #[tauri::command]
 pub fn delete_path(path: String) -> Result<(), String> {

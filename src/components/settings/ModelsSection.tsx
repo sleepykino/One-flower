@@ -23,6 +23,7 @@ export function ModelsSection(): JSX.Element {
   const loadConfigs = useSettingsStore((s) => s.loadConfigs);
   const saveConfig = useSettingsStore((s) => s.saveConfig);
   const removeConfig = useSettingsStore((s) => s.removeConfig);
+  const setDefaultConfig = useSettingsStore((s) => s.setDefaultConfig);
   const testConnection = useSettingsStore((s) => s.testConnection);
 
   const [editing, setEditing] = useState<{
@@ -187,6 +188,9 @@ export function ModelsSection(): JSX.Element {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <span className="font-medium">{c.name}</span>
+              {c.isDefault && (
+                <span className="rounded bg-violet-100 px-1.5 text-[10px] text-violet-700">默认</span>
+              )}
               <span className="rounded bg-ink-100 px-1.5 text-[10px] text-ink-500">
                 {c.provider === 'openai_compat' ? 'OpenAI 兼容' : c.provider}
               </span>
@@ -224,6 +228,15 @@ export function ModelsSection(): JSX.Element {
           >
             编辑
           </button>
+          {!c.isDefault && (
+            <button
+              type="button"
+              className="text-xs text-ink-500 hover:text-violet-600"
+              onClick={() => void setDefaultConfig(c.id)}
+            >
+              设为默认
+            </button>
+          )}
           <button
             type="button"
             className="text-xs text-ink-400 hover:text-red-600"
@@ -239,7 +252,7 @@ export function ModelsSection(): JSX.Element {
       ))}
 
       <p className="mt-3 text-[11px] leading-5 text-ink-400">
-        API Key 存于系统钥匙串（Windows 凭据管理器），不落数据库。书籍未绑定模型时默认使用第一组配置。
+        API Key 存于系统钥匙串（Windows 凭据管理器），不落数据库。书籍未在「模型分工」绑定模型时，使用「默认」配置；未设置默认则回退到第一组配置。
       </p>
 
       {/* 快捷接入弹窗（已添加过则传入 existingId 走更新） */}

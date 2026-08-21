@@ -9,7 +9,7 @@ import type { NativeBridge } from '../../native/NativeBridge';
 import type { Database } from '../../db/Database';
 import type { WriteQueue } from '../../db/WriteQueue';
 import type { LLMProvider, ChatMessage } from '../ai/providers/LLMProvider';
-import { createProvider } from '../ai/providers/LLMProvider';
+import { createProvider, isLocalBaseUrl } from '../ai/providers/LLMProvider';
 import { resolveProviderConfigIdForFeature } from '../ai/providerResolver';
 import type { NameGenParams, GeneratedName, NameFavorite, NameType, Gender } from './types';
 import { TYPE_LABEL } from './types';
@@ -50,8 +50,12 @@ export class NameGeneratorService {
       [configId]
     );
     if (!row) throw new Error('模型配置不存在');
+    const baseUrl = (row.base_url as string) ?? '';
     const apiKey = (await this.bridge.keyStore.getSecret(`provider_${String(row.id)}`)) ?? '';
-    if (!apiKey) throw new Error(`配置「${String(row.name)}」未设置 API Key`);
+    // 本地端点（Ollama 等localhost 服务）允许无 API Key
+    if (!apiKey && !isLocalBaseUrl(baseUrl)) {
+      throw new Error(`配置「${String(row.name)}」未设置 API Key`);
+    }
     const model = String(row.model);
     const provider = createProvider(
       {

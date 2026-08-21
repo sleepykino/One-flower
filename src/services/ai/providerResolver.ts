@@ -10,10 +10,14 @@ import type { NativeBridge } from '../../native/NativeBridge';
 import type { LLMProvider } from './providers/LLMProvider';
 import type { FeatureKey } from './modelRouting';
 
-/** 第一组配置的 configId（模型分工未指定时的全局默认） */
+/** 默认配置的 configId（模型分工未指定时的全局默认：优先被标记为默认的配置，无标记回退第一组） */
 export async function resolveDefaultProviderConfigId(
   bridge: NativeBridge
 ): Promise<string | null> {
+  const marked = await bridge.db.queryOne<{ id: string }>(
+    'SELECT id FROM provider_configs WHERE is_default = 1 ORDER BY created_at ASC LIMIT 1'
+  );
+  if (marked?.id) return marked.id;
   const first = await bridge.db.queryOne<{ id: string }>(
     'SELECT id FROM provider_configs ORDER BY created_at ASC LIMIT 1'
   );

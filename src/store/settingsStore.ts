@@ -16,6 +16,8 @@ interface SettingsStore {
     apiKey: string;
   }) => Promise<void>;
   removeConfig: (id: string) => Promise<void>;
+  /** 将某配置标记为默认（其它配置取消默认标记） */
+  setDefaultConfig: (id: string) => Promise<void>;
   /** 连接测试：发送极小请求验证配置与 Key */
   testConnection: (id: string) => Promise<{ ok: boolean; message: string }>;
 }
@@ -34,6 +36,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         provider: String(r.provider) as ProviderConfig['provider'],
         baseUrl: (r.base_url as string) ?? null,
         model: String(r.model),
+        isDefault: Number(r.is_default ?? 0) === 1,
         createdAt: Number(r.created_at)
       }))
     });
@@ -73,6 +76,15 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     await get().loadConfigs();
   },
 
+  setDefaultConfig: async (id) => {
+    const { bridge, wq } = getAppContext();
+    // 先清除全部默认标记，再标记目标配置（单条 SQL 原子完成）
+    await wq.enqueue(() =>
+      bridge.db.exec('UPDATE provider_configs SET is_default = (id = ?)', [id])
+    );
+    await get().loadConfigs();
+  },
+
   testConnection: async (id) => {
     const { bridge } = getAppContext();
     const row = await bridge.db.queryOne<Record<string, unknown>>(
@@ -80,8 +92,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       [id]
     );
     if (!row) return { ok: false, message: '配置不存在' };
-    const apiKey = await bridge.keyStore.getSecret(`provider_${id}`);
-    if (!apiKey) return { ok: false, message: '未设置 API Key' };
+    const apiKey = (await bridge.keyStore.getSecret(`provider_${id}`)) ?? '';
+    // 本地端点（Ollama 等 localhost 服务）允许无 API Key
+    if (!apiKey) {
+      const { isLocalBaseUrl } = await import('../services/ai/providers/LLMProvider');
+      if (!isLocalBaseUrl((row.base_url as string) ?? '')) {
+        return { ok: false, message: '未设置 API Key' };
+      }
+    }
     try {
       const { createProvider } = await import('../services/ai/providers/LLMProvider');
       const provider = createProvider(

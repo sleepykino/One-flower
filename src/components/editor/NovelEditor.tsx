@@ -6,7 +6,7 @@
  * - AI 流式临时节点操控（供 AIPanel 调用）
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import type { JSONContent } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
@@ -14,11 +14,15 @@ import { CharacterMention } from './nodes/CharacterMention';
 import { WorldbookRef } from './nodes/WorldbookRef';
 import { ChapterRef } from './nodes/ChapterRef';
 import { Dialogue } from './nodes/Dialogue';
+import { createImageNode } from './nodes/ImageNode';
 import { AITemporaryNode } from './extensions/AITemporaryNode';
-import { PasteHandler } from './extensions/PasteHandler';
+import { createPasteHandler } from './extensions/PasteHandler';
+import { ImageGenDialog } from '../image/ImageGenDialog';
 import { useEditorStore, type EditorApi } from '../../store/editorStore';
 import { getAppContext } from '../../context/app-context';
+import { alertDialog } from '../../native/dialog';
 import { docToPlainText } from '../../utils/pmdoc';
+import type { ImageAsset } from '../../services/image/types';
 import {
   FONT_FAMILIES,
   FONT_SIZES,
@@ -86,6 +90,7 @@ function buildTempParagraphs(schema: Editor['state']['schema'], raw: string) {
 export function NovelEditor({ bookId }: { bookId: string }) {
   const currentChapterId = useEditorStore((s) => s.currentChapterId);
   const chapters = useEditorStore((s) => s.chapters);
+  const selectedText = useEditorStore((s) => s.selectedText);
   const setSaveState = useEditorStore((s) => s.setSaveState);
   const setSelectedText = useEditorStore((s) => s.setSelectedText);
   const setEditorApi = useEditorStore((s) => s.setEditorApi);
@@ -97,14 +102,38 @@ export function NovelEditor({ bookId }: { bookId: string }) {
   const lastHashRef = useRef(0);
   /** AI 流式累计文本（appendAITemp 重建临时节点内容的基准） */
   const aiTextRef = useRef('');
+  /** 书籍 id 快照（扩展闭包读取，避免 useEditor 扩展数组随路由重建） */
+  const bookIdRef = useRef(bookId);
+  bookIdRef.current = bookId;
   const [popup, setPopup] = useState<PopupState | null>(null);
   const [characters, setCharacters] = useState<MentionItem[]>([]);
   const [worldbook, setWorldbook] = useState<MentionItem[]>([]);
   const [, forceTick] = useState(0);
+  // P3：插图生成对话框（选区生图链路入口）
+  const [imageGenOpen, setImageGenOpen] = useState(false);
   // 编辑器外观：字体/字号（localStorage 持久化，与设置页「外观」共用）
   const [fontSize, setFontSize] = useState<number>(loadFontSize);
   const [fontFamily, setFontFamily] = useState<string>(loadFontFamily);
   const [lineHeight, setLineHeight] = useState<number>(loadLineHeight);
+
+  // P3：正文插图节点（src 经 assetProtocol 解析）+ 图片粘贴/拖入处理
+  const imageNodeExt = useMemo(
+    () =>
+      createImageNode(async (fileName) => {
+        const bid = bookIdRef.current;
+        if (!bid) return null;
+        try {
+          return await getAppContext().imageAssetService.resolveFileUrl(bid, fileName);
+        } catch {
+          return null;
+        }
+      }),
+    []
+  );
+  const pasteHandlerExt = useMemo(
+    () => createPasteHandler({ getBookId: () => bookIdRef.current }),
+    []
+  );
 
   // ============ P2.1-M5：章节节拍清单栏 ============
   const [beats, setBeats] = useState<ChapterBeat[]>([]);
@@ -221,7 +250,8 @@ export function NovelEditor({ bookId }: { bookId: string }) {
       ChapterRef,
       Dialogue,
       AITemporaryNode,
-      PasteHandler
+      imageNodeExt,
+      pasteHandlerExt
     ],
     editorProps: {
       handleKeyDown: (view, event) => {
@@ -507,6 +537,16 @@ export function NovelEditor({ bookId }: { bookId: string }) {
         editor.view.dispatch(tr);
         scheduleSave();
         return true;
+      },
+      /** P3：在光标处插入正文插图（ImageNode） */
+      insertIllustration: (asset) => {
+        const ok = editor
+          .chain()
+          .focus()
+          .insertIllustration({ id: asset.id, fileName: asset.fileName, caption: asset.caption })
+          .run();
+        if (ok) scheduleSave();
+        return ok;
       }
     };
     setEditorApi(api);
@@ -532,6 +572,25 @@ export function NovelEditor({ bookId }: { bookId: string }) {
     setPopup({ type, x: coords.left, y: coords.bottom + 6 });
   };
 
+  /** P3：选区生图入口 -- 需先选中一段场景文字 */
+  const openIllustrationGen = (): void => {
+    if (!selectedText.trim()) {
+      void alertDialog('请先在正文中选中一段场景文字，再生成插图');
+      return;
+    }
+    setImageGenOpen(true);
+  };
+
+  /** P3：生成结果插入光标处（多张依次插入） */
+  const insertIllustrationAssets = (assets: ImageAsset[]): void => {
+    if (!editor) return;
+    for (const a of assets) {
+      editor.chain().insertIllustration({ id: a.id, fileName: a.fileName, caption: '' }).run();
+    }
+    editor.commands.focus();
+    scheduleSave();
+  };
+
   if (!editor) {
     return <div className="p-8 text-ink-400">编辑器加载中…</div>;
   }
@@ -553,6 +612,8 @@ export function NovelEditor({ bookId }: { bookId: string }) {
         <Sep />
         <TB onClick={() => openPopupManually('all')} title="插入引用（@角色 / 世界书 / 章节）">@引用</TB>
         <TB onClick={() => openPopupManually('worldbook')} title="插入世界书引用">[[条目]]</TB>
+        {/* P3：选区生图入口（选中一段场景文字后生成插图并插入光标处） */}
+        <TB onClick={openIllustrationGen} title="选中一段场景文字后，AI 生成插图插入光标处">插图</TB>
         {/* 字体 / 字号（编辑区显示设置，持久化） */}
         <span className="ml-auto flex items-center gap-1 text-xs">
           <select
@@ -728,6 +789,22 @@ export function NovelEditor({ bookId }: { bookId: string }) {
           chapters={chapters.map((c) => ({ id: c.id, label: c.title }))}
           onPick={insertMention}
           onClose={() => setPopup(null)}
+        />
+      )}
+
+      {/* P3：选区生图 -> 多候选挑选 -> 插入光标处 */}
+      {imageGenOpen && currentChapterId && (
+        <ImageGenDialog
+          bookId={bookId}
+          scene={{
+            kind: 'illustration',
+            chapterTitle: chapters.find((c) => c.id === currentChapterId)?.title ?? '',
+            selectedText
+          }}
+          usage="illustration"
+          title="生成正文插图"
+          onConfirm={(assets) => insertIllustrationAssets(assets)}
+          onClose={() => setImageGenOpen(false)}
         />
       )}
     </div>

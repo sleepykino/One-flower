@@ -55,6 +55,7 @@ const fs: FileSystemAdapter & {
   readBinaryFile(p: string): Promise<Uint8Array>;
   writeBinaryFile(p: string, data: Uint8Array): Promise<void>;
   deletePath(p: string): Promise<void>;
+  copyFile(src: string, dest: string): Promise<void>;
 } = {
   async readFile(path: string): Promise<string> {
     return invoke<string>('read_file', { path });
@@ -77,6 +78,9 @@ const fs: FileSystemAdapter & {
   },
   async deletePath(path: string): Promise<void> {
     return invoke('delete_path', { path });
+  },
+  async copyFile(src: string, dest: string): Promise<void> {
+    return invoke('copy_file', { src, dest });
   },
   watchDir(path: string, onChange: (event: FileChangeEvent) => void): () => void {
     let disposed = false;

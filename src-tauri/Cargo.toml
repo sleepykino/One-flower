@@ -12,7 +12,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# protocol-asset：P3 assetProtocol（本地图片经 asset 协议显示，scope 限 appDataDir）
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-http = "2"
 serde = { version = "1", features = ["derive"] }

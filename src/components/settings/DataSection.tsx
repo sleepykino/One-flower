@@ -61,7 +61,7 @@ export function DataSection(): JSX.Element {
         </div>
       </div>
       <p className="mt-3 text-[11px] leading-5 text-ink-400">
-        备份导出/导入已移至「备份与恢复」子页；正文格式导出（Markdown / TXT / EPUB / Word）在编辑器「导出」对话框中。
+        数据存放、skill文件位置。
       </p>
     </div>
   );

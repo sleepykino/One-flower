@@ -13,11 +13,26 @@ export function CharacterList({ bookId }: { bookId: string }): JSX.Element {
   const [characters, setCharacters] = useState<Character[]>([]);
   const [editing, setEditing] = useState<Character | 'new' | null>(null);
   const [showGraph, setShowGraph] = useState(false);
+  // P3：角色头像 URL（characterId -> asset 协议 URL，取 usage='character' 最新一张）
+  const [charImages, setCharImages] = useState<Record<string, string>>({});
 
   const load = async (): Promise<void> => {
     const ctx = getAppContext();
     await ctx.characterService.ensureDefaultSchema(bookId);
     setCharacters(await ctx.characterService.list(bookId));
+    try {
+      const assets = await ctx.imageAssetService.listByBook(bookId, 'character');
+      const entries = await Promise.all(
+        assets.map(async (a) => [a.refId ?? '', await ctx.imageAssetService.resolveUrl(a)] as const)
+      );
+      const map: Record<string, string> = {};
+      for (const [refId, url] of entries) {
+        if (refId && !map[refId]) map[refId] = url; // created_at DESC，首见即最新
+      }
+      setCharImages(map);
+    } catch {
+      setCharImages({});
+    }
     window.dispatchEvent(new Event('novel-mentions-refresh'));
   };
 
@@ -107,9 +122,17 @@ export function CharacterList({ bookId }: { bookId: string }): JSX.Element {
             className="group mb-1 flex cursor-pointer items-center gap-2 rounded border border-ink-100 bg-white px-2 py-1.5 hover:border-violet-300"
             onClick={() => setEditing(c)}
           >
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-100 text-sm font-medium text-violet-700">
-              {c.name.slice(0, 1)}
-            </div>
+            {charImages[c.id] ? (
+              <img
+                src={charImages[c.id]}
+                alt={c.name}
+                className="h-8 w-8 shrink-0 rounded-full object-cover"
+              />
+            ) : (
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-violet-100 text-sm font-medium text-violet-700">
+                {c.name.slice(0, 1)}
+              </div>
+            )}
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-medium">{c.name}</div>
               <div className="truncate text-xs text-ink-400">
