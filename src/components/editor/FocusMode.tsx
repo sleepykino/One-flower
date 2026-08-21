@@ -45,7 +45,8 @@ const THEME_UI: Record<
   },
   night: {
     label: '夜间',
-    container: 'bg-[#1c1c1e] text-[#d6d3cd]',
+    // focus-night 供 FOCUS_CSS 针对性覆盖正文元素颜色（引用/对白/分隔线等）
+    container: 'focus-night bg-[#1c1c1e] text-[#d6d3cd]',
     bar: 'bg-white/10 text-[#d6d3cd]',
     btnIdle: 'border-white/30 bg-white/10 text-current hover:bg-white/20',
     btnActive: 'border-white/50 bg-white/80 text-ink-900'
@@ -57,8 +58,10 @@ const THEME_UI: Record<
  * - ProseMirror 透明并继承主题文字色（NovelEditor 自带白底被中和）
  * - 隐藏 NovelEditor 工具栏、去掉其编辑区白底 / 内边距 / 内部滚动，
  *   让本容器（overflow-y-auto）成为唯一滚动容器
- * 注：nth-child(2) 对应 NovelEditor 的编辑区（第 1 个子 div 是工具栏），
- *     不影响其后条件渲染的 @ / [[ 弹窗
+ * 注：NovelEditor 的编辑区为两层嵌套（P2.1-M5 节拍栏改版后）：
+ *   外层 div（.relative.flex，第 2 个子节点）内含节拍栏 aside、展开按钮
+ *   与真正的滚动编辑层（bg-white overflow-y-auto），两层均需中和白底；
+ *   沉浸模式下节拍栏与展开按钮一并隐藏
  */
 const FOCUS_CSS = `
 .focus-root .ProseMirror { background: transparent !important; color: inherit !important; min-height: 60vh; }
@@ -71,6 +74,24 @@ const FOCUS_CSS = `
   overflow: visible !important;
   border-bottom: none !important;
 }
+.focus-root .novel-editor > div:nth-child(2) > aside,
+.focus-root .novel-editor > div:nth-child(2) > button { display: none !important; }
+.focus-root .novel-editor > div:nth-child(2) > div {
+  background: transparent !important;
+  padding: 0 !important;
+  overflow: visible !important;
+}
+/* 夜间主题：正文元素按浅色设计的颜色改为夜间可读（不影响标准/护眼主题） */
+.focus-root.focus-night .ProseMirror blockquote {
+  color: inherit !important;
+  border-color: rgba(255, 255, 255, 0.25) !important;
+}
+.focus-root.focus-night .ProseMirror p.dialogue {
+  color: inherit !important;
+  border-color: rgba(52, 211, 153, 0.45) !important;
+}
+.focus-root.focus-night .ProseMirror hr { border-color: rgba(255, 255, 255, 0.2) !important; }
+.focus-root.focus-night .ProseMirror p.is-editor-empty:first-child::before { color: rgba(214, 211, 205, 0.4) !important; }
 `;
 
 interface FocusModeProps {
