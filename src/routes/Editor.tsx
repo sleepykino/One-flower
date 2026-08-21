@@ -18,6 +18,7 @@ import {
   BarChart3,
   Mic,
   FlaskConical,
+  Pencil,
   type LucideIcon
 } from 'lucide-react';
 import { useEditorStore } from '../store/editorStore';
@@ -41,6 +42,7 @@ import { TaskIndicator } from '../components/task/TaskIndicator';
 import { CharacterInterview } from '../components/inspiration/CharacterInterview';
 import { WhatIfPanel } from '../components/inspiration/WhatIfPanel';
 import { getAppContext } from '../context/app-context';
+import { alertDialog } from '../native/dialog';
 import type { LongFormSession } from '../services/longform/types';
 import { resolveProviderConfigIdForFeature } from '../services/ai/providerResolver';
 import { createProvider } from '../services/ai/providers/LLMProvider';
@@ -129,6 +131,8 @@ export function Editor(): JSX.Element {
   const [searchOpen, setSearchOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [bookTitle, setBookTitle] = useState('');
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
   // P2：工具 overlay + 沉浸模式
@@ -211,6 +215,24 @@ export function Editor(): JSX.Element {
 
   const currentChapter = chapters.find((c) => c.id === currentChapterId);
 
+  /** 重命名当前书籍 */
+  const startRename = (): void => {
+    setTitleDraft(bookTitle);
+    setEditingTitle(true);
+  };
+
+  const saveRename = async (): Promise<void> => {
+    const name = titleDraft.trim();
+    setEditingTitle(false);
+    if (!name || name === bookTitle) return;
+    try {
+      await getAppContext().bookService.update(bookId, { title: name });
+      setBookTitle(name);
+    } catch (e) {
+      alertDialog(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   return (
     <div className="flex h-full flex-col">
       {/* 顶栏 */}
@@ -222,7 +244,31 @@ export function Editor(): JSX.Element {
         >
           ← 书架
         </button>
-        <div className="font-medium">{bookTitle}</div>
+        {editingTitle ? (
+          <input
+            autoFocus
+            className="w-56 rounded border border-violet-300 px-2 py-0.5 text-sm font-medium focus:outline-none"
+            value={titleDraft}
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onBlur={() => void saveRename()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void saveRename();
+              if (e.key === 'Escape') setEditingTitle(false);
+            }}
+          />
+        ) : (
+          <div className="group flex items-center gap-1">
+            <span className="font-medium">{bookTitle}</span>
+            <button
+              type="button"
+              className="rounded p-0.5 text-ink-400 opacity-0 hover:bg-ink-100 hover:text-ink-700 focus:opacity-100 group-hover:opacity-100"
+              title="重命名书籍"
+              onClick={startRename}
+            >
+              <Pencil size={13} />
+            </button>
+          </div>
+        )}
         <div className="text-xs text-ink-400">
           {currentChapter ? `${currentChapter.title} · ${currentChapter.wordCount} 字` : '未选择章节'}
         </div>
