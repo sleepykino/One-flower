@@ -28,7 +28,7 @@ import {
   isValidHookPattern,
   parseHookRules
 } from '../../services/ai/ProjectDirectiveService';
-import type { HookApplyResult, HookRule } from '../../services/ai/ProjectDirectiveService';
+import type { DirectiveStatus, HookApplyResult, HookRule } from '../../services/ai/ProjectDirectiveService';
 import { renderMarkdown } from '../../utils/markdown';
 import { alertDialog, confirmDialog } from '../../native/dialog';
 
@@ -63,6 +63,7 @@ export function DirectiveModal({ bookId, onClose }: { bookId: string; onClose: (
   const [origAgents, setOrigAgents] = useState('');
   const [origHook, setOrigHook] = useState('');
   const [loaded, setLoaded] = useState(false);
+  const [status, setStatus] = useState<DirectiveStatus | null>(null);
   const [agentsView, setAgentsView] = useState<AgentsView>('split');
   const [hookView, setHookView] = useState<'rules' | 'source'>('rules');
   // 规则测试沙盒
@@ -72,11 +73,16 @@ export function DirectiveModal({ bookId, onClose }: { bookId: string; onClose: (
   useEffect(() => {
     void (async () => {
       const pd = getAppContext().projectDirectives;
-      const [a, h] = await Promise.all([pd.getAgentsMd(bookId), pd.getHookMd(bookId)]);
+      const [a, h, st] = await Promise.all([
+        pd.getAgentsMd(bookId),
+        pd.getHookMd(bookId),
+        pd.getStatus(bookId)
+      ]);
       setAgents(a);
       setHook(h);
       setOrigAgents(a);
       setOrigHook(h);
+      setStatus(st);
       setLoaded(true);
     })().catch(() => setLoaded(true));
   }, [bookId]);
@@ -94,6 +100,20 @@ export function DirectiveModal({ bookId, onClose }: { bookId: string; onClose: (
         .replace(/\s/g, '').length,
     [agents]
   );
+
+  /** FileCard 生效徽标：灰=未创建，琥珀=已创建但无实质内容，绿=实际生效 */
+  const agentsBadge = useMemo(() => {
+    if (!status?.agentsCreated) return { tone: 'gray' as const, label: '未创建' };
+    return status.agentsActive
+      ? { tone: 'green' as const, label: '已生效' }
+      : { tone: 'amber' as const, label: '未生效' };
+  }, [status]);
+  const hookBadge = useMemo(() => {
+    if (!status?.hookCreated) return { tone: 'gray' as const, label: '未创建' };
+    return rules.length > 0
+      ? { tone: 'green' as const, label: `已生效 ${rules.length} 条` }
+      : { tone: 'amber' as const, label: '无生效规则' };
+  }, [status, rules]);
 
   /** 结构化编辑后整体重建 hook.md（保留头部注释） */
   const serializeRules = (next: HookRule[]): void => {
@@ -128,10 +148,23 @@ export function DirectiveModal({ bookId, onClose }: { bookId: string; onClose: (
       await pd.saveHookMd(bookId, hook);
       setOrigAgents(agents);
       setOrigHook(hook);
+      setStatus(await pd.getStatus(bookId));
       onClose();
     } catch (e) {
       void alertDialog(`保存失败：${e instanceof Error ? e.message : String(e)}`);
     }
+  };
+
+  /** 插入示例模板：先确认，避免新手把示例当默认配置直接保存 */
+  const insertTemplate = async (kind: FileKey): Promise<void> => {
+    const ok = await confirmDialog(
+      kind === 'agents'
+        ? '将填入示例模板（示例条目已注释，不会生效）。请改写为本书实际内容后再保存——保存后内容会以最高优先级注入所有 AI 生成。确定插入？'
+        : '将填入示例规则（已全部注释，不会生效，请在源码页面查看）。去掉行首 # 并改写后保存才会执行；block 规则会丢弃命中输出并自动重试，请谨慎使用。确定插入？'
+    );
+    if (!ok) return;
+    if (kind === 'agents') setAgents(AGENTS_TEMPLATE);
+    else setHook(HOOK_TEMPLATE);
   };
 
   const requestClose = async (): Promise<void> => {
@@ -165,6 +198,7 @@ export function DirectiveModal({ bookId, onClose }: { bookId: string; onClose: (
               name="agents.md"
               desc="全局指令书，优先级最高"
               meta={`约 ${agentsChars} 字`}
+              badge={agentsBadge}
               onClick={() => setFile('agents')}
             />
             <FileCard
@@ -173,6 +207,7 @@ export function DirectiveModal({ bookId, onClose }: { bookId: string; onClose: (
               name="hook.md"
               desc="输出校验与替换规则"
               meta={`${rules.length} 条规则`}
+              badge={hookBadge}
               onClick={() => setFile('hook')}
             />
             <div className="mt-4 rounded border border-ink-100 bg-white p-2.5 text-[11px] leading-relaxed text-ink-500">
@@ -200,11 +235,16 @@ export function DirectiveModal({ bookId, onClose }: { bookId: string; onClose: (
                   <button
                     type="button"
                     className="text-xs text-violet-600 hover:underline"
-                    onClick={() => setAgents(AGENTS_TEMPLATE)}
+                    onClick={() => void insertTemplate('agents')}
                   >
-                    填入模板
+                    插入示例
                   </button>
                 </div>
+                {!status?.agentsCreated && (
+                  <div className="border-b border-amber-100 bg-amber-50/60 px-4 py-2 text-[11px] leading-relaxed text-amber-700">
+                    尚未创建，当前不会注入任何指令。agents.md 保存后会以最高优先级影响本书所有 AI 生成（续写 / 改写 / 对白 / 检查 / 长文 / 剧本），适合写世界观铁律、称谓规范、写作禁令。不确定写法可点「插入示例」参考——示例已注释，不会生效。
+                  </div>
+                )}
                 <div className="flex min-h-0 flex-1">
                   {agentsView !== 'preview' && (
                     <textarea
@@ -221,7 +261,7 @@ export function DirectiveModal({ bookId, onClose }: { bookId: string; onClose: (
                   {agentsView !== 'edit' && (
                     <div className="min-h-0 flex-1 overflow-y-auto p-5">
                       {agents.trim() === '' ? (
-                        <div className="text-xs text-ink-400">暂无内容，切换到「编辑」或填入模板开始。</div>
+                        <div className="text-xs text-ink-400">暂无内容。可在「编辑」中直接书写，或点上方「插入示例」参考。</div>
                       ) : (
                         <div
                           className="md-content text-sm leading-relaxed text-ink-800"
@@ -246,11 +286,16 @@ export function DirectiveModal({ bookId, onClose }: { bookId: string; onClose: (
                   <button
                     type="button"
                     className="text-xs text-violet-600 hover:underline"
-                    onClick={() => setHook(HOOK_TEMPLATE)}
+                    onClick={() => void insertTemplate('hook')}
                   >
-                    填入模板
+                    插入示例
                   </button>
                 </div>
+                {!status?.hookCreated && (
+                  <div className="border-b border-amber-100 bg-amber-50/60 px-4 py-2 text-[11px] leading-relaxed text-amber-700">
+                    尚未创建，当前没有任何输出校验。hook.md 会在每次生成完成后自动执行：替换直接修改正文、提醒仅作提示、阻断会丢弃本次输出并自动重试一次。留空不影响任何功能；可点「插入示例」参考写法。
+                  </div>
+                )}
                 <div className="min-h-0 flex-1 overflow-y-auto p-4">
                   {hookView === 'source' ? (
                     <textarea
@@ -267,7 +312,7 @@ export function DirectiveModal({ bookId, onClose }: { bookId: string; onClose: (
                     <div className="space-y-2">
                       {rules.length === 0 && (
                         <div className="rounded border border-dashed border-ink-200 p-4 text-center text-xs text-ink-400">
-                          暂无规则。点击下方「添加规则」，或切到「源码」填入模板。
+                          暂无生效规则。点击下方「添加规则」新建，或切到「源码」改写示例。
                         </div>
                       )}
                       {rules.map((r, i) => (
@@ -368,6 +413,13 @@ export function DirectiveModal({ bookId, onClose }: { bookId: string; onClose: (
   );
 }
 
+/** 徽标配色：灰=未创建，琥珀=未生效，绿=已生效 */
+const BADGE_TONE: Record<'green' | 'amber' | 'gray', string> = {
+  green: 'text-emerald-600',
+  amber: 'text-amber-600',
+  gray: 'text-ink-400'
+};
+
 /** 左侧文件导航卡片 */
 function FileCard({
   active,
@@ -375,6 +427,7 @@ function FileCard({
   name,
   desc,
   meta,
+  badge,
   onClick
 }: {
   active: boolean;
@@ -382,6 +435,7 @@ function FileCard({
   name: string;
   desc: string;
   meta: string;
+  badge: { tone: 'green' | 'amber' | 'gray'; label: string };
   onClick: () => void;
 }): JSX.Element {
   return (
@@ -399,6 +453,10 @@ function FileCard({
           {icon}
         </span>
         <span className={`font-mono text-xs font-semibold ${active ? 'text-violet-700' : 'text-ink-700'}`}>{name}</span>
+        <span className={`ml-auto flex items-center gap-1 text-[10px] ${BADGE_TONE[badge.tone]}`} title={badge.label}>
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-current" />
+          {badge.label}
+        </span>
       </div>
       <div className="mt-1.5 text-[11px] text-ink-500">{desc}</div>
       <div className="text-[11px] text-ink-400">{meta}</div>

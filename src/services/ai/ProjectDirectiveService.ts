@@ -29,30 +29,42 @@ export interface HookApplyResult {
   blocked: HookHit[]; // block 命中（需要重试）
 }
 
+/** 示例条目一律注释化：原样保存不会注入任何示例指令，改写并去掉注释后才生效 */
 export const AGENTS_TEMPLATE = `# 本书全局指令（agents.md）
 <!-- 注入所有 AI 生成模式的系统提示词最高优先级处，优先级高于 Skill 与全局提示词 -->
+<!-- 以下示例仅供参照写法：改写成你这本书的规则，去掉行首注释后保存才会生效 -->
 
 ## 世界观铁律
-- （例）本世界为古代武侠，不存在热兵器与电力
+<!-- - （例）本世界为古代武侠，不存在热兵器与电力 -->
 
 ## 称谓规范
-- （例）主角陆沉，旁人称「陆公子」，不直呼其名
+<!-- - （例）主角陆沉，旁人称「陆公子」，不直呼其名 -->
 
 ## 写作禁令
-- （例）避免滥用「仿佛」「恍若」类比喻词
+<!-- - （例）避免滥用「仿佛」「恍若」类比喻词 -->
 `;
 
+/** 示例规则全部注释化（# 前缀）：parseHookRules 跳过注释行，原样保存不会有任何规则生效 */
 export const HOOK_TEMPLATE = `# AI 输出规则（hook.md）
 <!-- 每行一条规则，# 开头为注释。生成完成后按顺序执行 -->
 <!-- 语法：replace /正则/flags => 替换文本 -->
 <!--       warn   /正则/flags => 提醒内容 -->
-<!--       block  /正则/flags => 原因（命中则自动重新生成一次） -->
+<!--       block  /正则/flags => 原因（命中则丢弃本次输出并自动重试一次） -->
 <!-- 匹配部分也可直接写关键词（按字面匹配） -->
+<!-- 以下示例规则已注释、不会生效：改写并去掉行首 # 后保存才会执行 -->
 
-replace /老头子/g => 老者
-warn /突然|忽然/g => 过渡词密集，注意节奏
-block /手枪|步枪|炸弹/g => 世界观为古代武侠，不允许热兵器
+# replace /老头子/g => 老者
+# warn /突然|忽然/g => 过渡词密集，注意节奏
+# block /手枪|步枪|炸弹/g => 世界观为古代武侠，不允许热兵器
 `;
+
+/** UI 状态查询结果：agents/hook 是否已创建、是否实际生效 */
+export interface DirectiveStatus {
+  agentsCreated: boolean;
+  agentsActive: boolean; // 有实质正文，会注入所有 AI 生成
+  hookCreated: boolean;
+  hookRuleCount: number; // 生效规则数（注释行不计入）
+}
 
 export class ProjectDirectiveService {
   private bridge: NativeBridge;
@@ -78,12 +90,11 @@ export class ProjectDirectiveService {
     }
   }
 
-  /** 读取本书 agents.md 原文（未创建返回模板，便于首次编辑） */
+  /** 读取本书 agents.md 原文（未创建返回空串，由 UI 决定空态与示例展示） */
   async getAgentsMd(bookId: string): Promise<string> {
     const dir = await this.storageDirOf(bookId);
     if (!dir) return '';
-    const raw = await this.readFileSafe(`${dir}/agents.md`);
-    return raw !== '' ? raw : AGENTS_TEMPLATE;
+    return this.readFileSafe(`${dir}/agents.md`);
   }
 
   async saveAgentsMd(bookId: string, content: string): Promise<void> {
@@ -92,18 +103,33 @@ export class ProjectDirectiveService {
     await this.bridge.fs.writeFile(`${dir}/agents.md`, content);
   }
 
-  /** 读取本书 hook.md 原文（未创建返回模板） */
+  /** 读取本书 hook.md 原文（未创建返回空串） */
   async getHookMd(bookId: string): Promise<string> {
     const dir = await this.storageDirOf(bookId);
     if (!dir) return '';
-    const raw = await this.readFileSafe(`${dir}/hook.md`);
-    return raw !== '' ? raw : HOOK_TEMPLATE;
+    return this.readFileSafe(`${dir}/hook.md`);
   }
 
   async saveHookMd(bookId: string, content: string): Promise<void> {
     const dir = await this.storageDirOf(bookId);
     if (!dir) throw new Error('书籍不存在，无法保存 hook.md');
     await this.bridge.fs.writeFile(`${dir}/hook.md`, content);
+  }
+
+  /** UI 状态查询：两文件是否已创建、agents 是否有实质正文、hook 生效规则数 */
+  async getStatus(bookId: string): Promise<DirectiveStatus> {
+    const dir = await this.storageDirOf(bookId);
+    if (!dir) return { agentsCreated: false, agentsActive: false, hookCreated: false, hookRuleCount: 0 };
+    const [agentsRaw, hookRaw] = await Promise.all([
+      this.readFileSafe(`${dir}/agents.md`),
+      this.readFileSafe(`${dir}/hook.md`)
+    ]);
+    return {
+      agentsCreated: agentsRaw !== '',
+      agentsActive: this.effectiveAgents(agentsRaw) !== undefined,
+      hookCreated: hookRaw !== '',
+      hookRuleCount: parseHookRules(hookRaw).length
+    };
   }
 
   /** 注入用：本书 agents.md 有效正文（文件不存在或实质为空返回 undefined） */

@@ -60,8 +60,30 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
   };
   // hook.md 后处理命中（replace/warn/block 结构化展示）
   const [hookHits, setHookHits] = useState<HookHit[] | null>(null);
+  // block 命中后自动重试的原因（透明化：用户需知道发生过拦截重试）
+  const [hookRetried, setHookRetried] = useState<string | null>(null);
   // 本书指令（agents.md / hook.md）编辑弹窗
   const [directivesOpen, setDirectivesOpen] = useState(false);
+  // 指令生效提示：agents.md 注入标记与 hook.md 规则数（指令弹窗保存后刷新）
+  const [agentsActive, setAgentsActive] = useState(false);
+  const [hookCount, setHookCount] = useState(0);
+
+  const refreshDirectiveHints = (): void => {
+    void getAppContext()
+      .projectDirectives.getStatus(bookId)
+      .then((st) => {
+        setAgentsActive(st.agentsActive);
+        setHookCount(st.hookRuleCount);
+      })
+      .catch(() => {
+        setAgentsActive(false);
+        setHookCount(0);
+      });
+  };
+
+  useEffect(() => {
+    refreshDirectiveHints();
+  }, [bookId]);
   const tokenValue = (): number | undefined =>
     Number.isFinite(maxTokens) && maxTokens > 0 ? Math.floor(maxTokens) : undefined;
 
@@ -152,6 +174,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
     }
     const controller = useAIStore.getState().startStream();
     setHookHits(null);
+    setHookRetried(null);
 
     // P2.1-M2：透传当前文档引用标记（orchestrator 注入 forcedRefs 全文）
     const aiReferences = api.getAiReferences();
@@ -231,6 +254,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
         const blocked = await applyHooks();
         if (blocked && attempt === 0 && kind !== 'dialogue') {
           api.discardAITemp();
+          setHookRetried(blocked);
           feedback = `上一次生成违反了本书规则：${blocked}。请重新生成，严格避免上述问题。`;
           continue;
         }
@@ -396,18 +420,35 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
         </button>
       </div>
 
-      {/* 本书指令入口（agents.md 全局指令 + hook.md 输出规则） */}
+      {/* 本书指令入口（agents.md 全局指令 + hook.md 输出规则）+ 生效状态提示（窄栏单行） */}
       {!longform && (
-        <div className="flex border-b border-ink-100 px-3 py-1.5">
+        <div className="flex shrink-0 items-center justify-between whitespace-nowrap border-b border-ink-100 px-3 py-1.5">
           <button
             type="button"
-            className="flex items-center gap-1.5 rounded px-1.5 py-0.5 text-xs text-ink-500 hover:bg-ink-100 hover:text-violet-600"
+            title="agents.md 全局指令 · hook.md 输出规则"
+            className="flex shrink-0 items-center gap-1.5 rounded px-1.5 py-0.5 text-xs text-ink-500 hover:bg-ink-100 hover:text-violet-600"
             onClick={() => setDirectivesOpen(true)}
           >
             <BookOpen size={13} />
             本书指令
-            <span className="font-mono text-[10px] text-ink-400">agents.md · hook.md</span>
           </button>
+          <div className="flex shrink-0 items-center gap-2 text-[10px]">
+            {agentsActive && (
+              <span
+                className="flex items-center gap-1 text-emerald-600"
+                title="agents.md 有实质内容，已注入本书所有 AI 生成"
+              >
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-current" />
+                已注入
+              </span>
+            )}
+            {hookCount > 0 && (
+              <span className="flex items-center gap-1 text-amber-600" title="hook.md 输出规则生效中，每次生成后自动执行">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-current" />
+                校验{hookCount}条
+              </span>
+            )}
+          </div>
         </div>
       )}
 
@@ -583,11 +624,16 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
         )}
 
         {/* hook.md 后处理命中卡片 */}
-        {hookHits && hookHits.length > 0 && (
+        {(hookHits?.length || hookRetried) && (
           <div className="mx-3 mb-3 rounded-lg border border-amber-200 bg-amber-50/70 p-2.5">
             <div className="mb-1.5 text-xs font-medium text-amber-700">hook 规则已应用</div>
+            {hookRetried && (
+              <div className="mb-1.5 rounded border border-red-100 bg-red-50/70 px-2 py-1 text-[11px] leading-relaxed text-red-600">
+                首次生成被阻断规则拦截（{hookRetried}），已按规则自动重新生成。如非预期，请检查「本书指令 → hook.md」。
+              </div>
+            )}
             <div className="space-y-1">
-              {hookHits.map((h, i) => (
+              {hookHits?.map((h, i) => (
                 <div key={i} className="flex items-center gap-2 text-xs">
                   <span
                     className={`shrink-0 rounded px-1.5 py-0.5 font-medium ${
@@ -676,8 +722,16 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
           )}
         </div>
       )}
-      {/* 本书指令编辑弹窗 */}
-      {directivesOpen && <DirectiveModal bookId={bookId} onClose={() => setDirectivesOpen(false)} />}
+      {/* 本书指令编辑弹窗（关闭时刷新生效状态提示） */}
+      {directivesOpen && (
+        <DirectiveModal
+          bookId={bookId}
+          onClose={() => {
+            setDirectivesOpen(false);
+            refreshDirectiveHints();
+          }}
+        />
+      )}
     </div>
   );
 }
