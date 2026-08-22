@@ -273,6 +273,21 @@ export interface MapNode {
   zIndex?: number;
   /** 描述（导出/展示时可检索） */
   desc?: string;
+  /** HSV 调色（P4.1：贴图素材 Konva filters.HSV；缺省不调色；saturation/brightness 1 = 原样） */
+  hueShift?: number;
+  saturation?: number;
+  brightness?: number;
+  /** marker 文字样式（P4.1） */
+  textStyle?: {
+    fontFamily?: string;
+    fontSize?: number;
+    fontColor?: string;
+    strokeColor?: string;
+    /** 描边宽 0 = 无 */
+    strokeWidth?: number;
+    /** 竖排 */
+    vertical?: boolean;
+  };
 }
 
 /** 节点连线（道路 / 航线 / 河流走向等） */
@@ -294,15 +309,26 @@ export interface MapConnection {
   waypoints?: Array<{ x: number; y: number }>;
 }
 
-/** 地图 data JSON 结构（maps.data 列）。version 由 migrate.ts 管理，P4-M3 起 = 1；
- * 后续结构演化（多图层 tileLayers / 素材引用等）走 version + 迁移函数分支 */
+/** 单个瓦片覆盖层（P4.1 v2：多层地形，数组序 = 渲染顺序底->顶） */
+export interface MapTileLayer {
+  id: string;
+  name: string;
+  visible: boolean;
+  tiles: MapTiles;
+}
+
+/** 地图 data JSON 结构（maps.data 列）。version 由 migrate.ts 管理，P4.1 起 = 2；
+ * 结构演化一律走 version + 迁移函数分支 */
 export interface MapData {
   version: number;
   nodes: MapNode[];
   connections: MapConnection[];
   desc?: string;
   bg?: MapBackgroundTransform;
-  tiles?: MapTiles;
+  /** v2：多层瓦片（v1 的 tiles 迁移为 tileLayers[0]） */
+  tileLayers?: MapTileLayer[];
+  /** 当前激活瓦片层索引（笔刷/填充目标层） */
+  activeTileLayer?: number;
 }
 
 /** 底图变换（存 data JSON；图片文件存 appData，background 存相对路径） */
@@ -327,8 +353,10 @@ export interface NovelMap {
   bg?: MapBackgroundTransform;
   /** 地图描述 */
   desc?: string;
-  /** 瓦片地形层（可无） */
-  tiles?: MapTiles;
+  /** 瓦片地形覆盖层（v2：多层，数组序 = 渲染顺序；空数组 = 无地形） */
+  tileLayers: MapTileLayer[];
+  /** 当前激活瓦片层索引 */
+  activeTileLayer: number;
   nodes: MapNode[];
   connections: MapConnection[];
   createdAt: number;

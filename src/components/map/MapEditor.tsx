@@ -1,19 +1,22 @@
 /**
- * 地图编辑器（参考「易制地图」全面升级）
- * - 顶部：撤销/重做、缩放控制（滚轮/按钮）、AI 生成、保存、导出 PNG
- * - 左侧：地图列表 / 工具 / 元件库（分类图标，点击进入连续放置模式）/ 图层显隐
- * - 画布：网格底纹、底图（上传/拖动/锁定）、滚轮锚定缩放、抓手平移、
- *   节点右键菜单（复制/置顶/置底/删除）、Esc 停止放置
- * - 右侧：MapInspector 属性面板（地图/节点/连线）
- * 历史栈快照 { nodes, connections }（地图元信息不参与撤销），上限 50 步
+ * 地图编辑器（P4.1 重设计，参考「易制地图」）
+ * - 顶部：撤销/重做、缩放、自动布局、预设生成、AI 生成、导出 PNG（透明/倍率）、插入正文、保存
+ * - 左侧：地图列表 / 工具 / 地形（笔刷目标层 + 仅覆盖已有地形 + 自定义纹理）/ 元件库 / 素材库 / 瓦片图层管理
+ * - 画布：多层瓦片（离屏 canvas 按层堆叠）、贴图素材节点（imageCache + HSV）、
+ *   连线折线拐点（Shift 追加 + 手柄拖动）、marker 文字样式（描边/竖排）、节点 Ctrl+C/V
+ * - 右侧：MapInspector 属性面板
+ * 历史栈快照 { nodes, connections, tileLayers }（地图元信息不参与撤销），上限 50 步
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import Konva from 'konva';
 import { Stage, Layer, Group, Circle, Rect, Line, Arrow, Text, Image } from 'react-konva';
 import { open, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { getAppContext } from '../../context/app-context';
 import { alertDialog, confirmDialog } from '../../native/dialog';
+import { useEditorStore } from '../../store/editorStore';
 import { MapEditorService } from '../../services/map/MapEditorService';
+import { MapAssetService, type MapAsset } from '../../services/map/MapAssetService';
 import {
   ICON_LIBRARY,
   LAYER_LABELS,
@@ -22,17 +25,22 @@ import {
   createEmptyTiles,
   iconEmoji,
   iconLabel,
-  terrainDef,
   type LayerVisibility,
   type MapBackgroundTransform,
   type MapConnection,
   type MapNode,
+  type MapTileLayer,
   type MapTiles,
   type NovelMap
 } from '../../services/map/types';
-import { generateTerrain, scatterSettlements } from '../../services/map/terrainGen';
+import type { ScatterSite } from '../../services/map/terrainGen';
 import { drawTileCell, renderTilesToCanvas } from '../../services/map/tileRender';
+import { autoLayoutNodes } from '../../services/map/autoLayout';
+import { getCachedImage, loadAssetImage } from './imageCache';
 import { MapInspector } from './MapInspector';
+import { MapAssetPanel } from './MapAssetPanel';
+import { MapGenDialog, type GenResult } from './MapGenDialog';
+import { resolveImageProvider } from '../../services/ai/providers/ImageProvider';
 
 interface MapEditorProps {
   bookId: string;
@@ -47,11 +55,11 @@ type Tool = 'select' | 'pan' | 'connect' | 'region' | 'delete' | 'brush' | 'eras
 const TOOLS: Array<{ value: Tool; label: string; hint: string }> = [
   { value: 'select', label: '选择', hint: '选择：点击选中，拖拽移动；右键节点快捷菜单' },
   { value: 'pan', label: '抓手', hint: '抓手：拖拽平移画布（滚轮缩放随时可用）' },
-  { value: 'brush', label: '笔刷', hint: '笔刷（B）：按住左键涂抹绘制地形瓦片，左侧选地形与笔刷大小' },
-  { value: 'eraser', label: '橡皮', hint: '橡皮（E）：按住左键擦除地形瓦片' },
-  { value: 'fill', label: '填充', hint: '填充：点击瓦片，同地形的连通区域整体替换为当前地形' },
-  { value: 'picker', label: '吸管', hint: '吸管：点击瓦片取地形为当前笔刷，并自动切回笔刷' },
-  { value: 'connect', label: '连线', hint: '连线：依次点击两个地点节点创建道路/航线' },
+  { value: 'brush', label: '笔刷', hint: '笔刷（B）：涂抹地形瓦片到当前激活层，左侧选地形与笔刷大小' },
+  { value: 'eraser', label: '橡皮', hint: '橡皮（E）：擦除当前激活层的地形瓦片' },
+  { value: 'fill', label: '填充', hint: '填充：同地形的连通区域整体替换为当前地形（激活层）' },
+  { value: 'picker', label: '吸管', hint: '吸管：取可见最顶层瓦片地形为当前笔刷，并自动切回笔刷' },
+  { value: 'connect', label: '连线', hint: '连线：依次点击两个地点节点；Shift+点击画布追加折线拐点' },
   { value: 'region', label: '区域', hint: '区域：依次点击添加顶点，双击闭合生成区域，Esc 取消' },
   { value: 'delete', label: '删除', hint: '删除：点击节点或连线删除' }
 ];
@@ -154,8 +162,18 @@ interface CtxMenu {
   nodeId: string;
 }
 
+/** 贴图素材的 HSV 滤镜判定（全部默认值时不启用滤镜，省 cache 开销） */
+function hasHsv(node: MapNode): boolean {
+  return (
+    (node.hueShift !== undefined && node.hueShift !== 0) ||
+    (node.saturation !== undefined && node.saturation !== 1) ||
+    (node.brightness !== undefined && node.brightness !== 1)
+  );
+}
+
 export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): JSX.Element {
   const svc = useMemo(() => new MapEditorService(getAppContext().db, getAppContext().wq), []);
+  const assetSvc = useMemo(() => new MapAssetService(getAppContext().bridge), []);
 
   const [maps, setMaps] = useState<NovelMap[]>([]);
   const [currentMap, setCurrentMap] = useState<NovelMap | null>(null);
@@ -163,21 +181,20 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
   const [saveStatus, setSaveStatus] = useState('');
 
   const [tool, setTool] = useState<Tool>('select');
-  /** 元件库连续放置：图标 id，null 表示未在放置 */
+  /** 连续放置：内置图标 id 或 'asset:{素材id}'，null 表示未在放置 */
   const [placeIcon, setPlaceIcon] = useState<string | null>(null);
-  /** 瓦片地形笔刷：地形 id 与大小档位（1/2/3 -> 半径 0/1/2 格） */
+  /** 瓦片地形笔刷：地形 id（内置或 'asset:tile:{id}'）与大小档位（1/2/3 -> 半径 0/1/2 格） */
   const [terrainBrush, setTerrainBrush] = useState('grass');
   const [brushSize, setBrushSize] = useState(1);
-  /** 随机地形生成参数 */
+  /** P4.1：仅覆盖已有地形（笔刷限制在已有瓦片范围内，用于陆地刷植被等覆盖纹理） */
+  const [brushMask, setBrushMask] = useState(false);
+  /** 预设生成向导（P4.1-M3） */
   const [genOpen, setGenOpen] = useState(false);
-  const [genSea, setGenSea] = useState(0.42);
-  const [genRough, setGenRough] = useState(1);
-  const [genIsland, setGenIsland] = useState(true);
-  const [genScatter, setGenScatter] = useState(true);
-  const [genCount, setGenCount] = useState(6);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedConnId, setSelectedConnId] = useState<string | null>(null);
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
+  /** 连线绘制中的拐点（Shift+点击追加，创建连线时附着） */
+  const [connectWaypoints, setConnectWaypoints] = useState<Array<{ x: number; y: number }>>([]);
   const [draftPoints, setDraftPoints] = useState<number[]>([]);
 
   const [view, setView] = useState<ViewTransform>({ x: 0, y: 0, scale: 1 });
@@ -191,6 +208,10 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
   const [entries, setEntries] = useState<Array<{ id: string; title: string }>>([]);
   const [renameDraft, setRenameDraft] = useState<string | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
+  /** AI 生成底图（P4.1-M5） */
+  const [aiBgOpen, setAiBgOpen] = useState(false);
+  const [aiBgPrompt, setAiBgPrompt] = useState('');
+  const [aiBgBusy, setAiBgBusy] = useState(false);
   /** 左右工具面板折叠（画布顶部按钮切换） */
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
@@ -199,13 +220,26 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
   const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null);
   const bgUrlRef = useRef<string | null>(null);
 
-  /** 瓦片层离屏 canvas（Konva 单张 Image 引用，涂抹期间增量重绘） */
-  const [tileCanvas, setTileCanvas] = useState<HTMLCanvasElement | null>(null);
-  const tileCtxRef = useRef<CanvasRenderingContext2D | null>(null);
-  /** 涂抹进行中：在瓦片副本上作画 + canvas 增量重绘，抬笔才写回 state（历史仅记一步） */
+  /** 各瓦片层离屏 canvas（数组序 = 层序；涂抹期间增量重绘对应层） */
+  const [tileCanvases, setTileCanvases] = useState<HTMLCanvasElement[]>([]);
+  const tileCtxsRef = useRef<Array<CanvasRenderingContext2D | null>>([]);
+  /** 涂抹进行中：在激活层瓦片副本上作画 + canvas 增量重绘，抬笔才写回 state（历史仅记一步） */
   const paintingRef = useRef(false);
+  const strokeLayerIdxRef = useRef(0);
   const strokeTilesRef = useRef<MapTiles | null>(null);
+  const strokeMaskRef = useRef<Uint8Array | null>(null);
   const lastCellRef = useRef(-1);
+
+  /** 素材库（贴图 + 瓦片纹理）与加载状态 */
+  const [assetsById, setAssetsById] = useState<Map<string, MapAsset>>(new Map());
+  const [imgTick, setImgTick] = useState(0);
+  /** 节点剪贴板（Ctrl+C/V） */
+  const clipboardRef = useRef<MapNode | null>(null);
+  /** 导出选项 */
+  const [exportTransparent, setExportTransparent] = useState(false);
+  const [exportScale, setExportScale] = useState(2);
+  /** 导出/插入进行中：临时隐藏选区装饰 */
+  const [capturing, setCapturing] = useState(false);
 
   // 画布尺寸：容器 div offsetWidth/Height，ResizeObserver 跟随
   const containerRef = useRef<HTMLDivElement>(null);
@@ -220,7 +254,12 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
   // 每张地图首次进入自动「适应画布」一次
   const fittedForRef = useRef<string | null>(null);
 
-  /** 初始化：拉取地图列表（为空则自动建一张） */
+  /** 激活瓦片层索引（容错 clamp 到有效范围） */
+  const activeLayerIdx = currentMap
+    ? clamp(currentMap.activeTileLayer ?? 0, 0, Math.max(0, currentMap.tileLayers.length - 1))
+    : 0;
+
+  /** 初始化：拉取地图列表（为空则自动建一张）+ 素材库（含内置包 + 预载贴图） */
   useEffect(() => {
     if (bootedRef.current) return;
     bootedRef.current = true;
@@ -231,8 +270,38 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
       }
       setMaps(list);
       setCurrentMap(list[0] ?? null);
+      try {
+        await reloadAssets();
+      } catch (e) {
+        // 素材库初始化失败不阻塞编辑器（如迁移缺失时仅记录）
+        console.warn('[Map] 素材库加载失败:', e);
+      }
     })();
   }, [bookId, svc]);
+
+  /** 素材加载：入库内置包 + 解析 URL + 预载进 imageCache（完成后 bump tick 触发重渲染） */
+  const reloadAssets = async (): Promise<void> => {
+    await assetSvc.ensureBuiltin();
+    const list = await assetSvc.list();
+    const map = new Map<string, MapAsset>(list.map((a): [string, MapAsset] => [a.id, a]));
+    setAssetsById(map);
+    let changed = false;
+    for (const a of list) {
+      if (getCachedImage(a.id)) continue;
+      try {
+        const url = await assetSvc.resolveUrl(a.id);
+        if (url) {
+          void loadAssetImage(a.id, url).then((img) => {
+            if (img) setImgTick((t) => t + 1);
+          });
+          changed = true;
+        }
+      } catch {
+        /* 单个素材失败跳过 */
+      }
+    }
+    if (changed) setImgTick((t) => t + 1);
+  };
 
   /** 世界书条目（关联下拉用） */
   useEffect(() => {
@@ -302,18 +371,30 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     };
   }, [currentMap?.id, currentMap?.background]);
 
-  /** 瓦片层 -> 离屏 canvas：tiles 引用变化时全量重绘（撤销/生成/切图后） */
+  /** 瓦片层 -> 离屏 canvas 数组：tileLayers 引用或贴图加载完成时全量重绘 */
   useEffect(() => {
-    const tiles = currentMap?.tiles;
-    if (!tiles) {
-      setTileCanvas(null);
-      tileCtxRef.current = null;
+    const tls = currentMap?.tileLayers ?? [];
+    if (tls.length === 0) {
+      setTileCanvases([]);
+      tileCtxsRef.current = [];
       return;
     }
-    const canvas = renderTilesToCanvas(tiles);
-    tileCtxRef.current = canvas.getContext('2d');
-    setTileCanvas(canvas);
-  }, [currentMap?.tiles]);
+    const canvases = tls.map((l) => renderTilesToCanvas(l.tiles));
+    tileCtxsRef.current = canvases.map((c) => c.getContext('2d'));
+    setTileCanvases(canvases);    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentMap?.tileLayers, imgTick]);
+
+  /** 瓦片层最大范围（适应画布用） */
+  const tileExtent = useMemo(() => {
+    const tls = currentMap?.tileLayers ?? [];
+    let w = 0;
+    let h = 0;
+    for (const l of tls) {
+      w = Math.max(w, l.tiles.cols * l.tiles.size);
+      h = Math.max(h, l.tiles.rows * l.tiles.size);
+    }
+    return { w, h };
+  }, [currentMap?.tileLayers]);
 
   const nodeById = useMemo(
     () => new Map<string, MapNode>((currentMap?.nodes ?? []).map((n): [string, MapNode] => [n.id, n])),
@@ -351,8 +432,8 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
   function fitView(map: NovelMap | null): void {
     if (!map || size.width === 0 || size.height === 0) return;
     // 瓦片范围可能超过画布设定尺寸，取两者最大值适配
-    const w = Math.max(map.width, map.tiles ? map.tiles.cols * map.tiles.size : 0);
-    const h = Math.max(map.height, map.tiles ? map.tiles.rows * map.tiles.size : 0);
+    const w = Math.max(map.width, tileExtent.w);
+    const h = Math.max(map.height, tileExtent.h);
     const s = Math.min(size.width / (w + 80), size.height / (h + 80));
     setView({
       scale: s,
@@ -382,7 +463,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
   // ---------- 历史与数据变更 ----------
 
   const snap = (m: NovelMap): string =>
-    JSON.stringify({ nodes: m.nodes, connections: m.connections, tiles: m.tiles });
+    JSON.stringify({ nodes: m.nodes, connections: m.connections, tileLayers: m.tileLayers });
 
   /** 结构变更入口：coalesce=true 时 700ms 内的连续变更合并为一步历史 */
   const mutate = (fn: (m: NovelMap) => NovelMap, coalesce = false): void => {
@@ -397,7 +478,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     setDirty(true);
   };
 
-  /** 地图元信息（名称/尺寸/底图等）不参与撤销 */
+  /** 地图元信息（名称/尺寸/底图/图层显隐/激活层等）不参与撤销 */
   const patchMap = (patch: Partial<NovelMap>): void => {
     if (!currentMap) return;
     setCurrentMap({ ...currentMap, ...patch });
@@ -419,8 +500,24 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     setSelectedNodeId(null);
     setSelectedConnId(null);
     setConnectFrom(null);
+    setConnectWaypoints([]);
     setDraftPoints([]);
     setCtxMenu(null);
+  };
+
+  const applySnap = (raw: string): void => {
+    if (!currentMap) return;
+    const parsed = JSON.parse(raw) as {
+      nodes?: MapNode[];
+      connections?: MapConnection[];
+      tileLayers?: MapTileLayer[];
+    };
+    setCurrentMap({
+      ...currentMap,
+      nodes: parsed.nodes ?? [],
+      connections: parsed.connections ?? [],
+      tileLayers: parsed.tileLayers ?? []
+    });
   };
 
   const undo = (): void => {
@@ -428,13 +525,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     const prev = past[past.length - 1];
     setPast((p) => p.slice(0, -1));
     setFuture((f) => [snap(currentMap), ...f].slice(0, HISTORY_LIMIT));
-    const parsed = JSON.parse(prev) as { nodes?: MapNode[]; connections?: MapConnection[]; tiles?: MapTiles };
-    setCurrentMap({
-      ...currentMap,
-      nodes: parsed.nodes ?? [],
-      connections: parsed.connections ?? [],
-      tiles: parsed.tiles
-    });
+    applySnap(prev);
     lastPushAt.current = 0;
     setDirty(true);
     clearSel();
@@ -445,13 +536,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     const next = future[0];
     setFuture((f) => f.slice(1));
     setPast((p) => [...p.slice(-(HISTORY_LIMIT - 1)), snap(currentMap)]);
-    const parsed = JSON.parse(next) as { nodes?: MapNode[]; connections?: MapConnection[]; tiles?: MapTiles };
-    setCurrentMap({
-      ...currentMap,
-      nodes: parsed.nodes ?? [],
-      connections: parsed.connections ?? [],
-      tiles: parsed.tiles
-    });
+    applySnap(next);
     lastPushAt.current = 0;
     setDirty(true);
     clearSel();
@@ -491,6 +576,75 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     setCtxMenu(null);
   };
 
+  // ---------- 瓦片图层操作（P4.1-M2） ----------
+
+  const layerDims = (): { cols: number; rows: number } => {
+    if (!currentMap) return { cols: 50, rows: 32 };
+    return {
+      cols: Math.max(8, Math.ceil(currentMap.width / TILE_SIZE)),
+      rows: Math.max(8, Math.ceil(currentMap.height / TILE_SIZE))
+    };
+  };
+
+  const addTileLayer = (): void => {
+    if (!currentMap) return;
+    const { cols, rows } = layerDims();
+    const layer: MapTileLayer = {
+      id: crypto.randomUUID(),
+      name: `图层 ${currentMap.tileLayers.length + 1}`,
+      visible: true,
+      tiles: createEmptyTiles(cols, rows)
+    };
+    mutate((m) => ({
+      ...m,
+      tileLayers: [...m.tileLayers, layer],
+      activeTileLayer: m.tileLayers.length
+    }));
+  };
+
+  const removeTileLayer = (idx: number): void => {
+    if (!currentMap) return;
+    void (async () => {
+      if (currentMap.tileLayers.length <= 1) {
+        if (!(await confirmDialog('删除唯一的瓦片图层？'))) return;
+      }
+      mutate((m) => {
+        const next = m.tileLayers.filter((_, i) => i !== idx);
+        return { ...m, tileLayers: next, activeTileLayer: clamp(m.activeTileLayer, 0, Math.max(0, next.length - 1)) };
+      });
+    })();
+  };
+
+  const moveTileLayer = (idx: number, dir: -1 | 1): void => {
+    if (!currentMap) return;
+    const to = idx + dir;
+    if (to < 0 || to >= currentMap.tileLayers.length) return;
+    mutate((m) => {
+      const next = [...m.tileLayers];
+      [next[idx], next[to]] = [next[to], next[idx]];
+      return { ...m, tileLayers: next, activeTileLayer: to };
+    });
+  };
+
+  const renameTileLayer = (idx: number, name: string): void => {
+    if (!currentMap) return;
+    mutate((m) => ({
+      ...m,
+      tileLayers: m.tileLayers.map((l, i) => (i === idx ? { ...l, name } : l))
+    }));
+  };
+
+  const toggleTileLayerVisible = (idx: number): void => {
+    if (!currentMap) return;
+    patchMap({
+      tileLayers: currentMap.tileLayers.map((l, i) => (i === idx ? { ...l, visible: !l.visible } : l))
+    });
+  };
+
+  const setActiveTileLayer = (idx: number): void => {
+    patchMap({ activeTileLayer: idx });
+  };
+
   // ---------- 地图列表操作 ----------
 
   const syncMapInList = (map: NovelMap): void => {
@@ -507,16 +661,22 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
 
   const switchMap = async (id: string): Promise<void> => {
     if (!currentMap || currentMap.id === id) return;
-    if (dirty) {
-      await svc.saveMap(currentMap);
-      syncMapInList(currentMap);
+    try {
+      if (dirty) {
+        await svc.saveMap(currentMap);
+        syncMapInList(currentMap);
+      }
+      const next = await svc.getMap(id);
+      if (!next) throw new Error('地图不存在');
+      setCurrentMap(next);
+      setDirty(false);
+      setRenameDraft(null);
+      setPast([]);
+      setFuture([]);
+      clearSel();
+    } catch (e) {
+      void alertDialog(`切换地图失败：${e instanceof Error ? e.message : String(e)}`);
     }
-    setCurrentMap(await svc.getMap(id));
-    setDirty(false);
-    setRenameDraft(null);
-    setPast([]);
-    setFuture([]);
-    clearSel();
   };
 
   const handleCreate = async (): Promise<void> => {
@@ -575,6 +735,14 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     setSelectedConnId(null);
   };
 
+  /** 放置目标名称（内置图标或素材名） */
+  const placeLabel = (icon: string): string => {
+    if (icon.startsWith('asset:')) {
+      return assetsById.get(icon.slice('asset:'.length))?.name ?? '素材';
+    }
+    return iconLabel(icon);
+  };
+
   /** 屏幕坐标 -> 画布坐标 */
   const toCanvasPos = (pos: { x: number; y: number }): { x: number; y: number } => ({
     x: (pos.x - view.x) / view.scale,
@@ -586,23 +754,37 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     if (!stage || e.target !== stage || !currentMap) return;
     const pos = stage.getPointerPosition();
     if (!pos) return;
-    // 连续放置模式（元件库）
+    // 连续放置模式（元件库/素材库）
     if (placeIcon) {
       addNode(
-        { type: 'location', label: iconLabel(placeIcon), shape: 'icon', icon: placeIcon, radius: 24, color: '#7c3aed' },
+        {
+          type: 'location',
+          label: placeLabel(placeIcon),
+          shape: 'icon',
+          icon: placeIcon,
+          radius: placeIcon.startsWith('asset:') ? 30 : 24,
+          color: '#7c3aed'
+        },
         toCanvasPos(pos)
       );
       return;
     }
     const p = toCanvasPos(pos);
     if (tool === 'connect') {
-      setConnectFrom(null);
+      // Shift+点击：追加折线拐点；普通点击空白：取消本次连线
+      if (e.evt?.shiftKey && connectFrom) {
+        setConnectWaypoints((wps) => [...wps, { x: Math.round(p.x), y: Math.round(p.y) }]);
+      } else {
+        setConnectFrom(null);
+        setConnectWaypoints([]);
+      }
     } else if (tool === 'region') {
       setDraftPoints((pts) => [...pts, Math.round(p.x), Math.round(p.y)]);
     } else if (tool === 'select' || tool === 'delete') {
       setSelectedNodeId(null);
       setSelectedConnId(null);
       setConnectFrom(null);
+      setConnectWaypoints([]);
     }
   };
 
@@ -660,6 +842,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
       if (node.type !== 'location') return;
       if (!connectFrom) {
         setConnectFrom(node.id);
+        setConnectWaypoints([]);
       } else if (connectFrom !== node.id) {
         const conn: MapConnection = {
           id: crypto.randomUUID(),
@@ -669,14 +852,17 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
           style: 'solid',
           lineType: 'curve',
           width: 2,
-          arrow: false
+          arrow: false,
+          waypoints: connectWaypoints.length > 0 ? connectWaypoints : undefined
         };
         mutate((m) => ({ ...m, connections: [...m.connections, conn] }));
         setConnectFrom(null);
+        setConnectWaypoints([]);
         setSelectedConnId(conn.id);
         setSelectedNodeId(null);
       } else {
         setConnectFrom(null);
+        setConnectWaypoints([]);
       }
     } else if (tool === 'delete') {
       removeNode(node.id);
@@ -692,7 +878,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     }
   };
 
-  // ---------- 瓦片涂抹（笔刷/橡皮/填充/吸管） ----------
+  // ---------- 瓦片涂抹（笔刷/橡皮/填充/吸管，目标 = 激活层） ----------
 
   const paintMode = isPaintTool(tool);
 
@@ -704,10 +890,27 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     return row * tiles.cols + col;
   }
 
+  /** 构造「仅覆盖已有地形」掩码：激活层自身或其下任意层非空的格 */
+  function buildMask(layerIdx: number, tiles: MapTiles): Uint8Array | null {
+    if (!currentMap) return null;
+    const mask = new Uint8Array(tiles.cols * tiles.rows);
+    let any = 0;
+    for (let i = 0; i <= layerIdx && i < currentMap.tileLayers.length; i++) {
+      const src = currentMap.tileLayers[i].tiles;
+      if (src.cols !== tiles.cols || src.rows !== tiles.rows) continue;
+      for (let j = 0; j < mask.length; j++) {
+        if (src.data[j] !== '') {
+          mask[j] = 1;
+          any = 1;
+        }
+      }
+    }
+    return any ? mask : mask.fill(1); // 全空层不限制（否则刷不出第一笔）
+  }
+
   /** 以 (col,row) 为中心圆形盖章（brushSize 档位 1/2/3 -> 半径 0/1/2 格），同步增量重绘离屏 canvas */
-  function stampBrush(tiles: MapTiles, col: number, row: number, value: string): void {
+  function stampBrush(tiles: MapTiles, col: number, row: number, value: string, ctx: CanvasRenderingContext2D | null, mask: Uint8Array | null): void {
     const radius = brushSize - 1;
-    const ctx = tileCtxRef.current;
     for (let dy = -radius; dy <= radius; dy++) {
       for (let dx = -radius; dx <= radius; dx++) {
         if (dx * dx + dy * dy > radius * radius + 0.01) continue; // 圆形覆盖
@@ -715,6 +918,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
         const r = row + dy;
         if (c < 0 || c >= tiles.cols || r < 0 || r >= tiles.rows) continue;
         const i = r * tiles.cols + c;
+        if (mask && mask[i] === 0) continue; // 仅覆盖已有地形
         if (tiles.data[i] === value) continue;
         tiles.data[i] = value;
         if (ctx) drawTileCell(ctx, tiles, c, r, value);
@@ -723,7 +927,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     if (ctx) stageRef.current?.batchDraw();
   }
 
-  /** 涂抹按下：吸管取色 / 油漆桶连通填充 / 笔刷橡皮开启一笔（副本作画，抬笔写回） */
+  /** 涂抹按下：吸管取色（可见最顶层）/ 油漆桶连通填充 / 笔刷橡皮开启一笔（副本作画，抬笔写回） */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleStageMouseDownPaint = (e: any): void => {
     if (!paintMode || !currentMap) return;
@@ -735,44 +939,56 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     const px = (pointer.x - view.x) / view.scale;
     const py = (pointer.y - view.y) / view.scale;
 
-    // 首笔且地图无瓦片层：创建并落下第一笔（独立历史步，可撤销回无地形状态）
-    if (!currentMap.tiles) {
-      const fresh = createEmptyTiles(
-        Math.max(2, Math.ceil(currentMap.width / TILE_SIZE)),
-        Math.max(2, Math.ceil(currentMap.height / TILE_SIZE))
-      );
+    // 激活层不存在：创建并落下第一笔（独立历史步，可撤销回无地形状态）
+    if (currentMap.tileLayers.length === 0) {
+      const { cols, rows } = layerDims();
+      const fresh = createEmptyTiles(cols, rows);
       const idx = tileCellAt(px, py, fresh);
       if (idx < 0) return;
       const col = idx % fresh.cols;
       const row = (idx - col) / fresh.cols;
-      stampBrush(fresh, col, row, tool === 'eraser' ? '' : terrainBrush);
-      mutate((m) => ({ ...m, tiles: fresh }));
+      stampBrush(fresh, col, row, tool === 'eraser' ? '' : terrainBrush, null, null);
+      const layer: MapTileLayer = { id: crypto.randomUUID(), name: '地形', visible: true, tiles: fresh };
+      mutate((m) => ({ ...m, tileLayers: [layer], activeTileLayer: 0 }));
       return;
     }
 
-    const tiles = currentMap.tiles;
+    const layerIdx = activeLayerIdx;
+
+    // 吸管：从可见最顶层取地形
+    if (tool === 'picker') {
+      for (let i = currentMap.tileLayers.length - 1; i >= 0; i--) {
+        const l = currentMap.tileLayers[i];
+        if (!l.visible) continue;
+        const idx = tileCellAt(px, py, l.tiles);
+        if (idx >= 0 && l.tiles.data[idx] !== '') {
+          setTerrainBrush(l.tiles.data[idx]);
+          break;
+        }
+      }
+      setTool('brush');
+      return;
+    }
+
+    const tiles = currentMap.tileLayers[layerIdx].tiles;
     const idx = tileCellAt(px, py, tiles);
     if (idx < 0) return;
     const col = idx % tiles.cols;
     const row = (idx - col) / tiles.cols;
 
-    if (tool === 'picker') {
-      const picked = tiles.data[idx];
-      if (picked) setTerrainBrush(picked);
-      setTool('brush');
-      return;
-    }
     if (tool === 'fill') {
       const next = floodFillTiles(tiles, col, row, terrainBrush);
-      if (next !== tiles) mutate((m) => ({ ...m, tiles: next }));
+      if (next !== tiles) mutate((m) => ({ ...m, tileLayers: m.tileLayers.map((l, i) => (i === layerIdx ? { ...l, tiles: next } : l)) }));
       return;
     }
-    // brush / eraser：在瓦片副本上作画，抬笔写回（历史仅记一步）
+    // brush / eraser：在激活层瓦片副本上作画，抬笔写回（历史仅记一步）
     paintingRef.current = true;
+    strokeLayerIdxRef.current = layerIdx;
     lastCellRef.current = idx;
     const copy: MapTiles = { ...tiles, data: [...tiles.data] };
     strokeTilesRef.current = copy;
-    stampBrush(copy, col, row, tool === 'eraser' ? '' : terrainBrush);
+    strokeMaskRef.current = brushMask && tool === 'brush' ? buildMask(layerIdx, tiles) : null;
+    stampBrush(copy, col, row, tool === 'eraser' ? '' : terrainBrush, tileCtxsRef.current[layerIdx] ?? null, strokeMaskRef.current);
   };
 
   /** 涂抹拖动：按格去重后连续盖章 */
@@ -792,17 +1008,24 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     lastCellRef.current = idx;
     const col = idx % tiles.cols;
     const row = (idx - col) / tiles.cols;
-    stampBrush(tiles, col, row, tool === 'eraser' ? '' : terrainBrush);
+    stampBrush(tiles, col, row, tool === 'eraser' ? '' : terrainBrush, tileCtxsRef.current[strokeLayerIdxRef.current] ?? null, strokeMaskRef.current);
   };
 
-  /** 抬笔：把一笔的瓦片副本写回 state（mutate 快照为落笔前状态，恰为一笔一步） */
+  /** 抬笔：把一笔的瓦片副本写回激活层（mutate 快照为落笔前状态，恰为一笔一步） */
   const endStroke = (): void => {
     if (!paintingRef.current) return;
     paintingRef.current = false;
     const tiles = strokeTilesRef.current;
+    const layerIdx = strokeLayerIdxRef.current;
     strokeTilesRef.current = null;
+    strokeMaskRef.current = null;
     lastCellRef.current = -1;
-    if (tiles) mutate((m) => ({ ...m, tiles }));
+    if (tiles) {
+      mutate((m) => ({
+        ...m,
+        tileLayers: m.tileLayers.map((l, i) => (i === layerIdx ? { ...l, tiles } : l))
+      }));
+    }
   };
 
   /** 抬笔兜底：无论鼠标在何处松开都结束一笔 */
@@ -812,52 +1035,67 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     return () => window.removeEventListener('mouseup', up);
   });
 
-  /** 随机生成：分形噪声地形 + 可选聚居点撒点（转为地点节点追加） */
-  const runTerrainGen = (): void => {
+  /** 预设生成结果落地（P4.1-M3）：新建层或覆盖激活层 + 聚居点节点追加 */
+  const applyGenResult = (result: GenResult): void => {
     if (!currentMap) return;
-    const cols = Math.max(8, Math.ceil(currentMap.width / TILE_SIZE));
-    const rows = Math.max(8, Math.ceil(currentMap.height / TILE_SIZE));
-    const seed = Math.floor(Math.random() * 2 ** 31);
-    const tiles = generateTerrain({
-      cols,
-      rows,
-      seed,
-      seaLevel: genSea,
-      roughness: genRough,
-      island: genIsland
-    });
-    if (genScatter) {
-      const sites = scatterSettlements(tiles, seed, genCount);
-      if (sites.length > 0) {
-        const idBase = `site_${Date.now()}`;
-        const nodes: MapNode[] = sites.map((s, i) => ({
-          id: `${idBase}_${i}`,
-          type: 'location' as const,
-          label: s.label,
-          x: s.x,
-          y: s.y,
-          shape: 'icon' as const,
-          icon: s.icon,
-          color: '#d97706',
-          desc: '随机生成聚居点'
-        }));
-        mutate((m) => ({ ...m, tiles, nodes: [...m.nodes, ...nodes] }));
-        setGenOpen(false);
-        return;
+    const layerName = `生成 ${new Date().toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' })}`;
+    const apply = (m: NovelMap): NovelMap => {
+      let tileLayers: MapTileLayer[];
+      let active: number;
+      if (result.newLayer || m.tileLayers.length === 0) {
+        tileLayers = [...m.tileLayers, { id: crypto.randomUUID(), name: layerName, visible: true, tiles: result.tiles }];
+        active = tileLayers.length - 1;
+      } else {
+        tileLayers = m.tileLayers.map((l, i) => (i === activeLayerIdx ? { ...l, tiles: result.tiles } : l));
+        active = activeLayerIdx;
       }
+      return { ...m, tileLayers, activeTileLayer: active };
+    };
+    if (result.settlements.length > 0) {
+      const idBase = `site_${Date.now()}`;
+      const nodes: MapNode[] = result.settlements.map((s: ScatterSite, i) => ({
+        id: `${idBase}_${i}`,
+        type: 'location' as const,
+        label: s.label,
+        x: s.x,
+        y: s.y,
+        shape: 'icon' as const,
+        icon: s.icon,
+        color: '#d97706',
+        desc: '随机生成聚居点'
+      }));
+      mutate((m) => ({ ...apply(m), nodes: [...m.nodes, ...nodes] }));
+    } else {
+      mutate(apply);
     }
-    mutate((m) => ({ ...m, tiles }));
     setGenOpen(false);
   };
 
-  /** 清空瓦片层（保留网格规格，全部置空） */
+  /** 清空激活层瓦片（保留网格规格，全部置空） */
   const clearTiles = (): void => {
-    const tiles = currentMap?.tiles;
-    if (!tiles) return;
+    if (!currentMap || currentMap.tileLayers.length === 0) return;
+    const layerIdx = activeLayerIdx;
+    const tiles = currentMap.tileLayers[layerIdx].tiles;
     void (async () => {
-      if (!(await confirmDialog('确定清空全部地形瓦片？此操作可用撤销恢复。'))) return;
-      mutate((m) => ({ ...m, tiles: createEmptyTiles(tiles.cols, tiles.rows, tiles.size) }));
+      if (!(await confirmDialog('确定清空当前激活图层的全部地形瓦片？此操作可用撤销恢复。'))) return;
+      mutate((m) => ({
+        ...m,
+        tileLayers: m.tileLayers.map((l, i) =>
+          i === layerIdx ? { ...l, tiles: createEmptyTiles(tiles.cols, tiles.rows, tiles.size) } : l
+        )
+      }));
     })();
+  };
+
+  /** 自动布局（P4.1-M4）：力导向重排地点节点，结果压撤销栈 */
+  const runAutoLayout = (): void => {
+    if (!currentMap) return;
+    const next = autoLayoutNodes(currentMap.nodes, currentMap.connections, {
+      width: currentMap.width,
+      height: currentMap.height
+    });
+    if (next === currentMap.nodes) return;
+    mutate((m) => ({ ...m, nodes: next }));
   };
 
   // ---------- 键盘快捷键 ----------
@@ -881,6 +1119,16 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
           e.preventDefault();
           duplicateNode(selectedNodeId);
         }
+      } else if (ctrl && e.key.toLowerCase() === 'c') {
+        if (selNode) clipboardRef.current = selNode;
+      } else if (ctrl && e.key.toLowerCase() === 'v') {
+        const src = clipboardRef.current;
+        if (src && currentMap) {
+          const p = toCanvasPos({ x: size.width / 2 + 20, y: size.height / 2 + 20 });
+          const copy: MapNode = { ...src, id: crypto.randomUUID(), x: Math.round(p.x), y: Math.round(p.y) };
+          mutate((m) => ({ ...m, nodes: [...m.nodes, copy] }));
+          setSelectedNodeId(copy.id);
+        }
       } else if (e.key.toLowerCase() === 'b') {
         setTool('brush');
       } else if (e.key.toLowerCase() === 'e') {
@@ -892,8 +1140,10 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
         if (placeIcon) setPlaceIcon(null);
         else if (ctxMenu) setCtxMenu(null);
         else if (draftPoints.length > 0) setDraftPoints([]);
-        else if (connectFrom) setConnectFrom(null);
-        else clearSel();
+        else if (connectFrom) {
+          setConnectFrom(null);
+          setConnectWaypoints([]);
+        } else clearSel();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -923,6 +1173,34 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     }
   };
 
+  /** AI 生成底图（P4.1-M5）：走 image 功能路由，写 maps/{id}_bg.png（复用底图显示/锁定/备份机制） */
+  const runAiBg = async (): Promise<void> => {
+    if (!currentMap || !aiBgPrompt.trim()) return;
+    setAiBgBusy(true);
+    try {
+      const { bridge } = getAppContext();
+      const { provider } = await resolveImageProvider(bridge, bookId);
+      const images = await provider.generate({
+        prompt: `${aiBgPrompt.trim()}，俯视图，地图，奇幻风格，top-down fantasy map view, illustrated`,
+        size: '1536x1024',
+        count: 1
+      });
+      if (images.length === 0) throw new Error('生图返回为空');
+      const appDir = await bridge.storage.appDataDir();
+      const rel = `maps/${currentMap.id}_bg.png`;
+      await bridge.fs.ensureDir(`${appDir}/maps`);
+      await bridge.fs.writeBinaryFile(`${appDir}/${rel}`, images[0].bytes);
+      patchMap({ background: rel, bg: undefined });
+      setAiBgOpen(false);
+      setAiBgPrompt('');
+      setSaveStatus('AI 底图已生成');
+    } catch (err) {
+      void alertDialog(`AI 底图生成失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setAiBgBusy(false);
+    }
+  };
+
   const removeBg = (): void => {
     patchMap({ background: undefined, bg: undefined });
     setBgImage(null);
@@ -942,42 +1220,95 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     });
   };
 
-  // ---------- 导出 PNG ----------
+  // ---------- 导出 PNG / 插入正文（P4.1-M5） ----------
+
+  /** 临时切换到捕获态（隐藏选区装饰/按透明选项隐藏底图与底色），双 rAF 后回调再还原 */
+  const withCapture = async (fn: () => void): Promise<void> => {
+    setSelectedNodeId(null);
+    setSelectedConnId(null);
+    setConnectFrom(null);
+    setConnectWaypoints([]);
+    setDraftPoints([]);
+    setCapturing(true);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    fn();
+    setCapturing(false);
+  };
 
   const exportPng = async (): Promise<void> => {
     const stage = stageRef.current;
     if (!stage || !currentMap) return;
     const prev = view;
-    setSelectedNodeId(null);
-    setSelectedConnId(null);
-    setConnectFrom(null);
-    setDraftPoints([]);
     setView({ x: 0, y: 0, scale: 1 });
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    const url = stage.toDataURL({
-      x: 0,
-      y: 0,
-      width: currentMap.width,
-      height: currentMap.height,
-      pixelRatio: 2
+    await withCapture(() => {
+      const url = stage.toDataURL({
+        x: 0,
+        y: 0,
+        width: currentMap.width,
+        height: currentMap.height,
+        pixelRatio: exportScale
+      });
+      void (async () => {
+        const safeName = currentMap.name.replace(/[\\/:*?"<>|]/g, '_');
+        const target = await saveDialog({
+          defaultPath: `${safeName}.png`,
+          filters: [{ name: 'PNG 图片', extensions: ['png'] }]
+        });
+        if (!target || typeof target !== 'string') return;
+        try {
+          const { bridge } = getAppContext();
+          await bridge.fs.writeBinaryFile(target, base64ToU8(url.split(',')[1] ?? ''));
+          setSaveStatus(`已导出 PNG（${exportScale}x）`);
+        } catch (err) {
+          void alertDialog(`导出失败：${err instanceof Error ? err.message : String(err)}`);
+        }
+      })();
     });
     setView(prev);
-    const safeName = currentMap.name.replace(/[\\/:*?"<>|]/g, '_');
-    const target = await saveDialog({
-      defaultPath: `${safeName}.png`,
-      filters: [{ name: 'PNG 图片', extensions: ['png'] }]
-    });
-    if (!target || typeof target !== 'string') return;
-    try {
-      const { bridge } = getAppContext();
-      await bridge.fs.writeBinaryFile(target, base64ToU8(url.split(',')[1] ?? ''));
-      setSaveStatus('已导出 PNG');
-    } catch (err) {
-      void alertDialog(`导出失败：${err instanceof Error ? err.message : String(err)}`);
-    }
   };
 
-  // ---------- AI 生成 ----------
+  /** 插入正文（P4.1-M5）：当前地图导出 PNG 入图片资产并插入编辑器光标处 */
+  const insertToDoc = async (): Promise<void> => {
+    const stage = stageRef.current;
+    if (!stage || !currentMap) return;
+    const prev = view;
+    setView({ x: 0, y: 0, scale: 1 });
+    await withCapture(() => {
+      const url = stage.toDataURL({
+        x: 0,
+        y: 0,
+        width: currentMap.width,
+        height: currentMap.height,
+        pixelRatio: 2
+      });
+      void (async () => {
+        try {
+          const { imageAssetService } = getAppContext();
+          const bytes = base64ToU8(url.split(',')[1] ?? '');
+          const asset = await imageAssetService.importFromBytes(
+            bookId,
+            bytes,
+            'image/png',
+            'illustration',
+            null
+          );
+          const ok = useEditorStore.getState().editorApi?.insertIllustration?.({
+            id: asset.id,
+            fileName: asset.fileName,
+            caption: currentMap.name
+          });
+          if (!ok) throw new Error('插入失败：请先在编辑器中选择章节与光标位置');
+          setSaveStatus('已插入正文');
+          onClose();
+        } catch (err) {
+          void alertDialog(`插入正文失败：${err instanceof Error ? err.message : String(err)}`);
+        }
+      })();
+    });
+    setView(prev);
+  };
+
+  // ---------- AI 生成（节点 JSON） ----------
 
   const runAiGenerate = async (): Promise<void> => {
     if (!aiGenerateMap || !aiPrompt.trim()) return;
@@ -1024,6 +1355,85 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
   const nodeLabelText = (node: MapNode): string =>
     node.worldbookEntryId ? `${node.label} 📄` : node.label;
 
+  /** 贴图素材节点渲染（imageCache + HSV 滤镜；未加载完成显示占位框） */
+  const renderAssetStamp = (node: MapNode, boxSize: number): JSX.Element => {
+    const assetId = node.icon!.slice('asset:'.length);
+    const img = getCachedImage(assetId);
+    const useFilter = hasHsv(node);
+    if (!img) {
+      // 占位虚线框（素材加载完成或缺失均短暂可见）
+      return (
+        <Rect
+          width={boxSize}
+          height={boxSize}
+          offsetX={boxSize / 2}
+          offsetY={boxSize / 2}
+          stroke="#b8a8d8"
+          dash={[4, 3]}
+          strokeWidth={1.5}
+          listening={false}
+        />
+      );
+    }
+    return (
+      <Image
+        image={img}
+        width={boxSize}
+        height={boxSize}
+        offsetX={boxSize / 2}
+        offsetY={boxSize / 2}
+        filters={useFilter ? [Konva.Filters.HSV] : undefined}
+        hue={node.hueShift ?? 0}
+        saturation={node.saturation ?? 1}
+        value={node.brightness ?? 1}
+        ref={(n: any): void => {
+          if (!n) return;
+          if (useFilter) n.cache();
+          else n.clearCache();
+        }}
+        listening={false}
+      />
+    );
+  };
+
+  /** marker 文字（样式增强：字号/字色/描边/竖排） */
+  const renderMarkerText = (label: string, node: MapNode): JSX.Element => {
+    const ts = node.textStyle;
+    const fontSize = ts?.fontSize ?? 13;
+    const fill = ts?.fontColor ?? '#23211e';
+    const stroke = ts?.strokeColor;
+    const strokeWidth = ts?.strokeWidth ?? 0;
+    if (ts?.vertical) {
+      return (
+        <Group x={12} y={-6} listening={false}>
+          {label.split('').map((ch, i) => (
+            <Text
+              key={i}
+              text={ch}
+              y={i * fontSize}
+              fontSize={fontSize}
+              fill={fill}
+              stroke={stroke}
+              strokeWidth={strokeWidth > 0 ? strokeWidth : undefined}
+            />
+          ))}
+        </Group>
+      );
+    }
+    return (
+      <Text
+        text={label}
+        x={12}
+        y={-8}
+        fontSize={fontSize}
+        fill={fill}
+        stroke={stroke}
+        strokeWidth={strokeWidth > 0 ? strokeWidth : undefined}
+        listening={false}
+      />
+    );
+  };
+
   /** 渲染单个节点 */
   const renderNode = (node: MapNode): JSX.Element => {
     const selected = selectedNodeId === node.id;
@@ -1034,6 +1444,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     const s = node.scale ?? 1;
     const rot = node.rotation ?? 0;
     const opacity = node.opacity ?? 1;
+    void imgTick; // 贴图加载完成后触发重渲染
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const commonProps: Record<string, any> = {
@@ -1091,7 +1502,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
       );
     }
 
-    // 文字标注：小圆点 + 右侧文字
+    // 文字标注：小圆点 + 右侧文字（样式增强）
     if (node.type === 'marker') {
       return (
         <Group key={node.id} x={node.x} y={node.y} scaleX={s} scaleY={s} opacity={opacity} {...commonProps}>
@@ -1101,7 +1512,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
             stroke={highlight ? '#7c3aed' : '#fff'}
             strokeWidth={highlight ? 3 : 1.5}
           />
-          <Text text={label} x={12} y={-8} fontSize={13} fill="#23211e" listening={false} />
+          {renderMarkerText(label, node)}
           {linkedTitle && <Text text={linkedTitle} x={12} y={8} fontSize={11} fill="#8a8070" listening={false} />}
         </Group>
       );
@@ -1113,7 +1524,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     const h = node.height ?? 32;
     const ys = node.points?.filter((_, i) => i % 2 === 1) ?? [];
     const bottom = node.shape === 'rect' ? h / 2 : node.shape === 'polygon' ? Math.max(...ys, 0) : r;
-    const emojiSize = node.shape === 'icon' ? Math.round(r * 1.05) : Math.round(Math.min(w, h) * 0.6);
+    const isAssetIcon = node.shape === 'icon' && node.icon?.startsWith('asset:') === true;
 
     return (
       <Group key={node.id} x={node.x} y={node.y} scaleX={s} scaleY={s} opacity={opacity} {...commonProps}>
@@ -1162,17 +1573,21 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
           ) : (
             <Circle radius={r} fill={node.color} stroke={highlight ? '#7c3aed' : '#fff'} strokeWidth={highlight ? 3 : 2} />
           )}
-          {node.icon && (
-            <Text
-              text={iconEmoji(node.icon)}
-              fontSize={emojiSize}
-              fill="#fff"
-              align="center"
-              width={node.shape === 'rect' ? w : r * 2}
-              x={node.shape === 'rect' ? -w / 2 : -r}
-              y={node.shape === 'rect' ? -emojiSize * 0.62 : -r * 0.62}
-              listening={false}
-            />
+          {isAssetIcon ? (
+            renderAssetStamp(node, Math.round(r * 1.6))
+          ) : (
+            node.icon && (
+              <Text
+                text={iconEmoji(node.icon)}
+                fontSize={Math.round(r * 1.05)}
+                fill="#fff"
+                align="center"
+                width={r * 2}
+                x={-r}
+                y={-r * 0.62}
+                listening={false}
+              />
+            )
           )}
         </Group>
         {/* 标签不随旋转，保持可读 */}
@@ -1184,7 +1599,31 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     );
   };
 
-  /** 渲染单条连线：Arrow（可选弧线/箭头）+ 中点 label */
+  /** 折线/平滑连线全长中点（label 定位用） */
+  const polylineMid = (pts: number[]): { x: number; y: number } => {
+    let total = 0;
+    const segs: number[] = [];
+    for (let i = 2; i < pts.length; i += 2) {
+      const len = Math.hypot(pts[i] - pts[i - 2], pts[i + 1] - pts[i - 1]);
+      segs.push(len);
+      total += len;
+    }
+    let remain = total / 2;
+    for (let i = 0; i < segs.length; i++) {
+      if (remain <= segs[i] || i === segs.length - 1) {
+        const t = segs[i] === 0 ? 0 : remain / segs[i];
+        const j = (i + 1) * 2;
+        return {
+          x: pts[j - 2] + (pts[j] - pts[j - 2]) * t,
+          y: pts[j - 1] + (pts[j + 1] - pts[j - 1]) * t
+        };
+      }
+      remain -= segs[i];
+    }
+    return { x: pts[0], y: pts[1] };
+  };
+
+  /** 渲染单条连线：折线/平滑（含 waypoints 拐点）+ 全长中点 label + 选中态拐点手柄 */
   const renderConn = (conn: MapConnection): JSX.Element | null => {
     const a = nodeById.get(conn.fromNodeId);
     const b = nodeById.get(conn.toNodeId);
@@ -1192,13 +1631,14 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     const selected = selectedConnId === conn.id;
     const color = conn.color ?? '#8a8070';
     const width = conn.width ?? 2;
-    const mx = (a.x + b.x) / 2;
-    const my = (a.y + b.y) / 2;
-    const curve = conn.lineType === 'curve';
-    let points = [a.x, a.y, b.x, b.y];
-    let labelX = mx;
-    let labelY = my;
-    if (curve) {
+    const wps = conn.waypoints ?? [];
+    const smooth = conn.lineType === 'curve';
+    let points: number[];
+    let labelPos: { x: number; y: number };
+    if (wps.length === 0 && smooth) {
+      // 原弧线语义：中点垂向偏移的控制点
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2;
       const dx = b.x - a.x;
       const dy = b.y - a.y;
       const len = Math.hypot(dx, dy) || 1;
@@ -1206,8 +1646,10 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
       const cx = mx + (-dy / len) * sag;
       const cy = my + (dx / len) * sag;
       points = [a.x, a.y, cx, cy, b.x, b.y];
-      labelX = 0.25 * a.x + 0.5 * cx + 0.25 * b.x;
-      labelY = 0.25 * a.y + 0.5 * cy + 0.25 * b.y;
+      labelPos = { x: 0.25 * a.x + 0.5 * cx + 0.25 * b.x, y: 0.25 * a.y + 0.5 * cy + 0.25 * b.y };
+    } else {
+      points = [a.x, a.y, ...wps.flatMap((w) => [w.x, w.y]), b.x, b.y];
+      labelPos = polylineMid(points);
     }
     const boxW = Math.max(conn.label.length * 12 + 10, 30);
     const onClick = (e: any): void => {
@@ -1218,7 +1660,8 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
       <Group key={conn.id}>
         <Arrow
           points={points}
-          bezier={curve}
+          tension={wps.length > 0 && smooth ? 0.4 : 0}
+          bezier={wps.length === 0 && smooth}
           stroke={selected ? '#7c3aed' : color}
           strokeWidth={selected ? width + 1.5 : width}
           lineCap="round"
@@ -1229,7 +1672,17 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
           hitStrokeWidth={16}
           onClick={onClick}
         />
-        <Group x={labelX} y={labelY} onClick={onClick}>
+        {/* 连线绘制中的临时拐点预览 */}
+        {selectedNodeId === null && connectFrom === a.id && connectWaypoints.length > 0 && (
+          <Line
+            points={[a.x, a.y, ...connectWaypoints.flatMap((w) => [w.x, w.y])]}
+            stroke="#7c3aed"
+            strokeWidth={1.5}
+            dash={[6, 4]}
+            listening={false}
+          />
+        )}
+        <Group x={labelPos.x} y={labelPos.y} onClick={onClick}>
           <Rect
             x={-boxW / 2}
             y={-10}
@@ -1243,14 +1696,40 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
           />
           <Text text={conn.label} x={-boxW / 2} y={-7} width={boxW} align="center" fontSize={12} fill="#524c44" />
         </Group>
+        {/* 选中态拐点手柄：拖动改位置，双击删除 */}
+        {selected &&
+          !capturing &&
+          wps.map((wp, i) => (
+            <Circle
+              key={i}
+              x={wp.x}
+              y={wp.y}
+              radius={6}
+              fill="#fff"
+              stroke="#7c3aed"
+              strokeWidth={2}
+              draggable
+              onDragEnd={(e: any): void => {
+                const next = [...wps];
+                next[i] = { x: Math.round(e.target.x()), y: Math.round(e.target.y()) };
+                patchConn(conn.id, { waypoints: next }, false);
+              }}
+              onDblClick={(e: any): void => {
+                e.cancelBubble = true;
+                patchConn(conn.id, { waypoints: wps.filter((_, j) => j !== i) }, false);
+              }}
+            />
+          ))}
       </Group>
     );
   };
 
   const zoomPct = Math.round(view.scale * 100);
   const hint = placeIcon
-    ? `放置「${iconLabel(placeIcon)}」：点击画布放置（可连续），Esc 或右键停止`
-    : TOOL_HINT[tool];
+    ? `放置「${placeLabel(placeIcon)}」：点击画布放置（可连续），Esc 或右键停止`
+    : tool === 'connect' && connectFrom
+      ? '连线中：点击目标地点完成；Shift+点击画布追加拐点；Esc 取消'
+      : TOOL_HINT[tool];
   const cursorClass =
     placeIcon || tool === 'region' || tool === 'connect' || paintMode
       ? 'cursor-crosshair'
@@ -1260,13 +1739,39 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
           ? 'cursor-pointer'
           : '';
 
+  const activeLayer = currentMap?.tileLayers[activeLayerIdx] ?? null;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="flex h-[94vh] w-[min(1500px,97vw)] flex-col overflow-hidden rounded bg-white shadow-2xl">
         {/* 标题栏 + 顶部工具栏 */}
         <div className="flex items-center justify-between gap-2 border-b border-ink-200 px-4 py-1.5">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="text-sm font-semibold">地图编辑</span>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0 text-sm font-semibold">地图编辑</span>
+            {/* 地图切换下拉（左栏列表之外的显式入口） */}
+            {currentMap && (
+              <select
+                value={currentMap.id}
+                className="min-w-0 max-w-40 truncate rounded border border-ink-200 px-1.5 py-0.5 text-xs outline-none hover:border-violet-300"
+                title="切换地图"
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === '__new__') {
+                    e.target.value = currentMap.id;
+                    void handleCreate();
+                  } else {
+                    void switchMap(v);
+                  }
+                }}
+              >
+                {maps.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+                <option value="__new__">＋ 新建地图…</option>
+              </select>
+            )}
             {currentMap && (
               <span className="truncate text-xs text-ink-400">{dirty ? '有未保存修改' : saveStatus || '就绪'}</span>
             )}
@@ -1319,11 +1824,12 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
             </div>
             <button
               type="button"
-              className="rounded border border-ink-200 px-2 py-1 text-sm hover:bg-ink-100"
-              onClick={() => void exportPng()}
-              title="导出为 PNG 图片（2x）"
+              className="rounded border border-ink-200 px-2 py-1 text-sm hover:bg-ink-100 disabled:opacity-40"
+              disabled={!currentMap}
+              title="力导向自动排布地点节点（可撤销）"
+              onClick={runAutoLayout}
             >
-              导出 PNG
+              自动布局
             </button>
             <button
               type="button"
@@ -1331,10 +1837,10 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
                 genOpen ? 'border-emerald-300 text-emerald-700' : 'border-ink-200 hover:bg-ink-100'
               }`}
               disabled={!currentMap}
-              title="分形噪声随机生成瓦片地形（可撒聚居点）"
+              title="预设地形生成（环岛/群岛/大陆等，seeded 可复现）"
               onClick={() => setGenOpen((v) => !v)}
             >
-              随机地形
+              预设生成
             </button>
             {aiGenerateMap && (
               <button
@@ -1345,6 +1851,22 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
                 AI 生成
               </button>
             )}
+            <button
+              type="button"
+              className="rounded border border-ink-200 px-2 py-1 text-sm hover:bg-ink-100"
+              onClick={() => void exportPng()}
+              title={`导出为 PNG 图片（${exportScale}x${exportTransparent ? '，透明背景' : ''}）`}
+            >
+              导出 PNG
+            </button>
+            <button
+              type="button"
+              className="rounded border border-ink-200 px-2 py-1 text-sm hover:bg-ink-100"
+              onClick={() => void insertToDoc()}
+              title="当前地图导出为 PNG 插入正文光标处（作为插图）"
+            >
+              插入正文
+            </button>
             <button
               type="button"
               className="rounded border border-violet-300 px-2 py-1 text-sm text-violet-700 hover:bg-violet-50"
@@ -1457,8 +1979,24 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
               ))}
             </div>
 
-            {/* 瓦片地形：笔刷大小 + 地形选择 */}
+            {/* 瓦片地形：目标层 + 笔刷大小 + 仅覆盖已有 + 地形选择 */}
             <div className="mt-3 border-t border-ink-200 px-3 pb-1 pt-2.5 text-sm font-medium">地形</div>
+            <div className="flex items-center gap-1 px-2 pb-1 text-xs text-ink-500">
+              <span className="shrink-0">目标层</span>
+              <select
+                className="min-w-0 flex-1 rounded border border-ink-200 px-1 py-0.5 text-xs"
+                value={String(activeLayerIdx)}
+                disabled={(currentMap?.tileLayers.length ?? 0) === 0}
+                onChange={(e) => setActiveTileLayer(Number(e.target.value))}
+              >
+                {(currentMap?.tileLayers ?? []).map((l, i) => (
+                  <option key={l.id} value={String(i)}>
+                    {i + 1}. {l.name}
+                  </option>
+                ))}
+                {(currentMap?.tileLayers.length ?? 0) === 0 && <option value="0">（无图层）</option>}
+              </select>
+            </div>
             <div className="flex items-center gap-1 px-2 pb-1.5 text-xs text-ink-500">
               <span className="shrink-0">笔刷</span>
               {[1, 2, 3].map((s) => (
@@ -1474,18 +2012,24 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
                   {s}
                 </button>
               ))}
-              <span className="ml-auto shrink-0" title={terrainDef(terrainBrush)?.label ?? terrainBrush}>
-                当前：{terrainDef(terrainBrush)?.emoji ?? '⬜'} {terrainDef(terrainBrush)?.label ?? terrainBrush}
-              </span>
+              <label className="ml-auto flex shrink-0 items-center gap-1" title="笔刷限制在已有地形范围内（陆地刷植被等覆盖纹理）">
+                <input
+                  type="checkbox"
+                  className="accent-violet-600"
+                  checked={brushMask}
+                  onChange={(e) => setBrushMask(e.target.checked)}
+                />
+                仅覆盖已有
+              </label>
             </div>
             <div className="px-2 pb-2">
-              <TerrainPanel selected={terrainBrush} onSelect={setTerrainBrush} />
+              <TerrainPanel selected={terrainBrush} onSelect={setTerrainBrush} tileAssets={assetsById} />
             </div>
 
             {/* 元件库 */}
             <div className="mt-3 flex items-center justify-between border-t border-ink-200 px-3 pb-1 pt-2.5">
               <span className="text-sm font-medium">元件库</span>
-              {placeIcon && (
+              {placeIcon && !placeIcon.startsWith('asset:') && (
                 <button type="button" className="text-xs text-violet-600 hover:underline" onClick={() => setPlaceIcon(null)}>
                   停止放置
                 </button>
@@ -1503,22 +2047,117 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
               />
             </div>
 
-            {/* 图层显隐 */}
-            <div className="mt-auto border-t border-ink-200 px-3 pb-1 pt-2.5 text-sm font-medium">图层</div>
-            <div className="grid grid-cols-2 gap-1 px-2 pb-3">
-              {LAYER_LABELS.map((l) => (
-                <button
-                  key={l.key}
-                  type="button"
-                  className={`rounded border px-1 py-1 text-xs ${
-                    layers[l.key] ? 'border-ink-200 text-ink-600' : 'border-ink-200 bg-ink-100 text-ink-400'
-                  }`}
-                  onClick={() => setLayers((v) => ({ ...v, [l.key]: !v[l.key] }))}
-                >
-                  {layers[l.key] ? '👁 ' : '🚫 '}
-                  {l.label}
+            {/* 素材库（P4.1） */}
+            <div className="mt-3 flex items-center justify-between border-t border-ink-200 px-3 pb-1 pt-2.5">
+              <span className="text-sm font-medium">素材库</span>
+              {placeIcon?.startsWith('asset:') && (
+                <button type="button" className="text-xs text-violet-600 hover:underline" onClick={() => setPlaceIcon(null)}>
+                  停止放置
                 </button>
-              ))}
+              )}
+            </div>
+            <div className="px-2 pb-2">
+              <MapAssetPanel
+                selected={placeIcon}
+                onSelect={(ref) => {
+                  setPlaceIcon(ref);
+                  setTool('select');
+                  setSelectedNodeId(null);
+                  setSelectedConnId(null);
+                }}
+                selectedTile={terrainBrush.startsWith('asset:tile:') ? terrainBrush : null}
+                onSelectTile={(terrainId) => {
+                  if (terrainId) {
+                    setTerrainBrush(terrainId);
+                    setTool('brush');
+                  }
+                }}
+                onChanged={() => void reloadAssets()}
+              />
+            </div>
+
+            {/* 瓦片图层管理 + 图层显隐 */}
+            <div className="mt-auto border-t border-ink-200 px-3 pb-1 pt-2.5 text-sm font-medium">图层</div>
+            <div className="px-2 pb-2">
+              <div className="mb-1 flex items-center justify-between text-xs text-ink-500">
+                <span>瓦片图层（{(currentMap?.tileLayers.length ?? 0)}）</span>
+                <button
+                  type="button"
+                  className="rounded border border-ink-200 px-1.5 py-0.5 text-[11px] hover:bg-ink-100"
+                  onClick={addTileLayer}
+                >
+                  + 新建层
+                </button>
+              </div>
+              <div className="mb-2 space-y-0.5">
+                {(currentMap?.tileLayers ?? []).map((l, i) => (
+                  <div
+                    key={l.id}
+                    className={`flex items-center gap-1 rounded border px-1.5 py-0.5 text-xs ${
+                      i === activeLayerIdx ? 'border-violet-300 bg-violet-50' : 'border-ink-100'
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      title={l.visible ? '隐藏该层' : '显示该层'}
+                      className="shrink-0"
+                      onClick={() => toggleTileLayerVisible(i)}
+                    >
+                      {l.visible ? '👁' : '🚫'}
+                    </button>
+                    <input
+                      className="min-w-0 flex-1 bg-transparent text-xs outline-none"
+                      value={l.name}
+                      onChange={(e) => renameTileLayer(i, e.target.value)}
+                      title="图层名（直接编辑）"
+                    />
+                    <button
+                      type="button"
+                      title="上移（渲染更靠上）"
+                      className="shrink-0 text-ink-400 hover:text-ink-700"
+                      onClick={() => moveTileLayer(i, -1)}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      title="下移"
+                      className="shrink-0 text-ink-400 hover:text-ink-700"
+                      onClick={() => moveTileLayer(i, 1)}
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      title="删除该层"
+                      className="shrink-0 text-red-400 hover:text-red-600"
+                      onClick={() => removeTileLayer(i)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                {(currentMap?.tileLayers.length ?? 0) === 0 && (
+                  <div className="rounded border border-dashed border-ink-200 px-2 py-1.5 text-[11px] text-ink-400">
+                    无瓦片图层。笔刷落下第一笔会自动创建，或点「+ 新建层」/「预设生成」。
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-1">
+                {LAYER_LABELS.map((l) => (
+                  <button
+                    key={l.key}
+                    type="button"
+                    className={`rounded border px-1 py-1 text-xs ${
+                      layers[l.key] ? 'border-ink-200 text-ink-600' : 'border-ink-200 bg-ink-100 text-ink-400'
+                    }`}
+                    onClick={() => setLayers((v) => ({ ...v, [l.key]: !v[l.key] }))}
+                  >
+                    {layers[l.key] ? '👁 ' : '🚫 '}
+                    {l.label}
+                  </button>
+                ))}
+              </div>
             </div>
             </div>
           </aside>
@@ -1552,23 +2191,24 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
                 onContextMenu={handleStageContextMenu}
               >
                 <Layer>
-                  {/* 画布底 + 边界 + 网格 */}
+                  {/* 画布底 + 边界 + 网格（透明导出时底色省略） */}
                   <Rect
                     x={0.5}
                     y={0.5}
                     width={Math.max(currentMap.width - 1, 1)}
                     height={Math.max(currentMap.height - 1, 1)}
-                    fill="#fdfcf8"
+                    fill={exportTransparent && capturing ? undefined : '#fdfcf8'}
                     stroke="#c9c2b4"
                     strokeWidth={1}
                     dash={[6, 6]}
                     listening={false}
                   />
-                  {gridLines.map((g, i) => (
-                    <Line key={i} points={g.points} stroke="#ece7dc" strokeWidth={1} listening={false} />
-                  ))}
-                  {/* 底图层 */}
-                  {layers.bg && bgImage && (
+                  {!(exportTransparent && capturing) &&
+                    gridLines.map((g, i) => (
+                      <Line key={i} points={g.points} stroke="#ece7dc" strokeWidth={1} listening={false} />
+                    ))}
+                  {/* 底图层（透明导出时省略） */}
+                  {layers.bg && bgImage && !(exportTransparent && capturing) && (
                     <Image
                       image={bgImage}
                       x={bg.x}
@@ -1584,10 +2224,14 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
                       }}
                     />
                   )}
-                  {/* 瓦片地形层：离屏 canvas 单张 Image（绘制工具在 Stage 事件直接作画） */}
-                  {layers.tile && tileCanvas && currentMap.tiles && (
-                    <Image image={tileCanvas} x={0} y={0} listening={false} />
-                  )}
+                  {/* 多层瓦片（数组序 = 渲染顺序底->顶，每层一张离屏 canvas Image；
+                      以 tileLayers 为准遍历，canvas 未就绪/失效的层跳过，避免切换地图时的暂态越界） */}
+                  {layers.tile &&
+                    currentMap.tileLayers.map((l, i) =>
+                      l.visible !== false && tileCanvases[i] ? (
+                        <Image key={l.id} image={tileCanvases[i]} x={0} y={0} listening={false} />
+                      ) : null
+                    )}
                   {/* 连线在下、节点在上（涂抹工具时让位） */}
                   {layers.conn && <Group listening={!paintMode}>{currentMap.connections.map(renderConn)}</Group>}
                   {layers.region && (
@@ -1619,6 +2263,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
             )}
             <div className="pointer-events-none absolute bottom-2 left-2 rounded bg-white/90 px-2 py-1 text-xs text-ink-500 shadow-sm">
               {hint}
+              {activeLayer && paintMode && ` · 当前层：${activeLayerIdx + 1}. ${activeLayer.name}`}
             </div>
             {/* 左右面板折叠按钮 */}
             <button
@@ -1647,21 +2292,26 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
               }`}
             >
               <MapInspector
-              map={currentMap}
-              entries={entries}
-              node={selNode}
-              conn={selConn}
-              onPatchMap={patchMap}
-              onPatchNode={(id, patch) => patchNode(id, patch, true)}
-              onPatchConn={(id, patch) => patchConn(id, patch, true)}
-              onRemoveNode={removeNode}
-              onRemoveConn={removeConn}
-              onDuplicateNode={duplicateNode}
-              onZIndex={zIndexOp}
-              onUploadBg={() => void uploadBg()}
-              onRemoveBg={removeBg}
-              onResetBg={resetBg}
-            />
+                map={currentMap}
+                entries={entries}
+                node={selNode}
+                conn={selConn}
+                onPatchMap={patchMap}
+                onPatchNode={(id, patch) => patchNode(id, patch, true)}
+                onPatchConn={(id, patch) => patchConn(id, patch, true)}
+                onRemoveNode={removeNode}
+                onRemoveConn={removeConn}
+                onDuplicateNode={duplicateNode}
+                onZIndex={zIndexOp}
+                onUploadBg={() => void uploadBg()}
+                onRemoveBg={removeBg}
+                onResetBg={resetBg}
+                onAiBg={() => setAiBgOpen(true)}
+                exportTransparent={exportTransparent}
+                exportScale={exportScale}
+                onExportTransparent={setExportTransparent}
+                onExportScale={setExportScale}
+              />
             </div>
           )}
 
@@ -1721,97 +2371,48 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
               </div>
             </div>
           )}
-          {/* 随机地形生成浮层 */}
-          {genOpen && currentMap && (
+
+          {/* AI 底图浮层（P4.1-M5） */}
+          {aiBgOpen && currentMap && (
             <div className="absolute right-64 top-4 z-10 w-80 rounded border border-ink-200 bg-white p-3 shadow-lg">
-              <div className="mb-2 text-sm font-medium">随机生成地形</div>
-              <label className="block text-xs text-ink-500">
-                海平面 {Math.round(genSea * 100)}%（越高水域越多）
-                <input
-                  type="range"
-                  min={0.25}
-                  max={0.6}
-                  step={0.01}
-                  value={genSea}
-                  className="mt-0.5 w-full accent-emerald-600"
-                  onChange={(e) => setGenSea(Number(e.target.value))}
-                />
-              </label>
-              <label className="mt-2 block text-xs text-ink-500">
-                起伏度 {genRough.toFixed(1)}（越大地形越破碎）
-                <input
-                  type="range"
-                  min={0.5}
-                  max={1.5}
-                  step={0.1}
-                  value={genRough}
-                  className="mt-0.5 w-full accent-emerald-600"
-                  onChange={(e) => setGenRough(Number(e.target.value))}
-                />
-              </label>
-              <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-ink-600">
-                <label className="flex items-center gap-1">
-                  <input
-                    type="checkbox"
-                    checked={genIsland}
-                    onChange={(e) => setGenIsland(e.target.checked)}
-                    className="accent-emerald-600"
-                  />
-                  岛屿（边缘为海）
-                </label>
-                <label className="flex items-center gap-1">
-                  <input
-                    type="checkbox"
-                    checked={genScatter}
-                    onChange={(e) => setGenScatter(e.target.checked)}
-                    className="accent-emerald-600"
-                  />
-                  聚居点撒点
-                </label>
-                {genScatter && (
-                  <label className="flex items-center gap-1">
-                    数量
-                    <input
-                      type="number"
-                      min={1}
-                      max={20}
-                      value={genCount}
-                      className="w-14 rounded border border-ink-200 px-1 py-0.5 text-xs outline-none focus:border-emerald-400"
-                      onChange={(e) => setGenCount(clamp(Number(e.target.value) || 1, 1, 20))}
-                    />
-                  </label>
-                )}
+              <div className="mb-1 text-sm font-medium">AI 生成底图</div>
+              <div className="mb-2 text-[11px] leading-4 text-ink-400">
+                走「模型分工 → 视觉生成 → 图片生成」路由，生成 1536×1024 风格化底图，写入本图底图层（可拖动/锁定）。
               </div>
-              <div className="mt-3 flex justify-between gap-2">
+              <textarea
+                className="h-16 w-full resize-none rounded border border-ink-200 p-2 text-sm outline-none focus:border-violet-300"
+                placeholder="描述底图风格，如：古风手绘大陆，泛黄羊皮纸质感"
+                value={aiBgPrompt}
+                onChange={(e) => setAiBgPrompt(e.target.value)}
+              />
+              <div className="mt-2 flex justify-end gap-2">
                 <button
                   type="button"
-                  className="rounded border border-red-200 px-2 py-1 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
-                  disabled={!currentMap.tiles}
-                  onClick={clearTiles}
+                  className="rounded border border-ink-200 px-2 py-1 text-sm hover:bg-ink-100"
+                  onClick={() => setAiBgOpen(false)}
                 >
-                  清空地形
+                  取消
                 </button>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    className="rounded border border-ink-200 px-2 py-1 text-sm hover:bg-ink-100"
-                    onClick={() => setGenOpen(false)}
-                  >
-                    取消
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded border border-emerald-300 px-2 py-1 text-sm text-emerald-700 hover:bg-emerald-50"
-                    onClick={runTerrainGen}
-                  >
-                    生成
-                  </button>
-                </div>
-              </div>
-              <div className="mt-2 text-[11px] leading-relaxed text-ink-400">
-                生成会覆盖现有瓦片地形（可撤销）；聚居点作为地点节点追加，撒点后可再手工微调。
+                <button
+                  type="button"
+                  disabled={aiBgBusy || !aiBgPrompt.trim()}
+                  className="rounded border border-violet-300 px-2 py-1 text-sm text-violet-700 hover:bg-violet-50 disabled:opacity-50"
+                  onClick={() => void runAiBg()}
+                >
+                  {aiBgBusy ? '生成中…' : '生成底图'}
+                </button>
               </div>
             </div>
+          )}
+
+          {/* 预设地形生成向导（P4.1-M3） */}
+          {genOpen && currentMap && (
+            <MapGenDialog
+              cols={Math.max(8, Math.ceil(currentMap.width / TILE_SIZE))}
+              rows={Math.max(8, Math.ceil(currentMap.height / TILE_SIZE))}
+              onClose={() => setGenOpen(false)}
+              onGenerate={applyGenResult}
+            />
           )}
         </div>
       </div>
@@ -1860,15 +2461,22 @@ function IconLibraryPanel(props: { selected: string | null; onSelect: (id: strin
         ))}
       </div>
       <p className="mt-1.5 text-xs leading-4 text-ink-400">
-        点击图标后在画布连续放置；按住风格统一可选多个同类。Esc 停止。
+        点击图标后在画布连续放置；Esc 停止。需要自定义贴图请在下方「素材库」上传。
       </p>
     </div>
   );
 }
 
-/** 地形面板：分类 chips + 地形色块网格（选中即设为笔刷地形） */
-function TerrainPanel(props: { selected: string; onSelect: (id: string) => void }): JSX.Element {
+/** 地形面板：分类 chips + 地形色块网格（选中即设为笔刷地形）；自定义瓦片纹理追加为额外分组 */
+function TerrainPanel(props: {
+  selected: string;
+  onSelect: (id: string) => void;
+  tileAssets: Map<string, MapAsset>;
+}): JSX.Element {
+  const customTiles = Array.from(props.tileAssets.values()).filter((a) => a.usage === 'tile');
+  const isCustom = props.selected.startsWith('asset:tile:');
   const [cat, setCat] = useState<string>(() => {
+    if (isCustom) return '__custom__';
     const hit = TERRAIN_LIBRARY.find((c) => c.terrains.some((t) => t.id === props.selected));
     return (hit ?? TERRAIN_LIBRARY[0]).key;
   });
@@ -1888,25 +2496,59 @@ function TerrainPanel(props: { selected: string; onSelect: (id: string) => void 
             {c.label}
           </button>
         ))}
-      </div>
-      <div className="mt-1.5 grid grid-cols-6 gap-1">
-        {current.terrains.map((t) => (
+        {customTiles.length > 0 && (
           <button
-            key={t.id}
             type="button"
-            title={`${t.label}（设为笔刷地形）`}
-            className={`flex h-8 items-center justify-center rounded border text-base leading-none ${
-              props.selected === t.id ? 'border-emerald-500 ring-1 ring-emerald-300' : 'border-ink-200 hover:bg-ink-100'
+            className={`rounded px-1.5 py-0.5 text-xs ${
+              '__custom__' === cat ? 'bg-emerald-50 text-emerald-700' : 'text-ink-500 hover:bg-ink-100'
             }`}
-            style={{ backgroundColor: t.color }}
-            onClick={() => props.onSelect(t.id)}
+            onClick={() => setCat('__custom__')}
           >
-            {t.emoji}
+            自定义纹理
           </button>
-        ))}
+        )}
       </div>
+      {cat === '__custom__' ? (
+        <div className="mt-1.5 grid grid-cols-3 gap-1">
+          {customTiles.map((a) => {
+            const terrainId = `asset:tile:${a.id}`;
+            return (
+              <button
+                key={a.id}
+                type="button"
+                title={`${a.name}（设为笔刷地形）`}
+                className={`truncate rounded border px-1 py-1 text-[11px] ${
+                  props.selected === terrainId
+                    ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-300'
+                    : 'border-ink-200 hover:bg-ink-100'
+                }`}
+                onClick={() => props.onSelect(terrainId)}
+              >
+                {a.name}
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="mt-1.5 grid grid-cols-6 gap-1">
+          {current.terrains.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              title={`${t.label}（设为笔刷地形）`}
+              className={`flex h-8 items-center justify-center rounded border text-base leading-none ${
+                props.selected === t.id ? 'border-emerald-500 ring-1 ring-emerald-300' : 'border-ink-200 hover:bg-ink-100'
+              }`}
+              style={{ backgroundColor: t.color }}
+              onClick={() => props.onSelect(t.id)}
+            >
+              {t.emoji}
+            </button>
+          ))}
+        </div>
+      )}
       <p className="mt-1.5 text-xs leading-4 text-ink-400">
-        选地形后用笔刷（B）涂抹；橡皮（E）擦除、油漆桶连通填充、吸管取地形。
+        选地形后用笔刷（B）涂抹到目标层；橡皮（E）擦除、油漆桶连通填充、吸管取地形。自定义纹理在「素材库 → 瓦片纹理」上传。
       </p>
     </div>
   );

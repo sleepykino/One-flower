@@ -30,6 +30,9 @@ export interface FileSystemAdapter {
   watchDir(path: string, onChange: (event: FileChangeEvent) => void): () => void;
   ensureDir(path: string): Promise<void>;
   listDir(path: string): Promise<DirEntry[]>;
+  /** 二进制读写（图片/地图素材等；tauri-bridge 已实现） */
+  readBinaryFile(path: string): Promise<Uint8Array>;
+  writeBinaryFile(path: string, data: Uint8Array): Promise<void>;
 }
 
 export interface DatabaseAdapter {

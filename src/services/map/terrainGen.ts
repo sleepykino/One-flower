@@ -117,6 +117,114 @@ export function generateTerrain(opts: TerrainGenOptions): MapTiles {
   return tiles;
 }
 
+// ============ 预设生成（P4.1-M3） ============
+
+import { TERRAIN_PRESETS, type TerrainPreset } from './terrainPresets';
+
+/** 气候色系 -> 湿度偏置 */
+function paletteMoisture(palette: string): number {
+  if (palette === 'arid') return -0.16;
+  if (palette === 'tropical') return 0.14;
+  return 0;
+}
+
+/**
+ * 预设地形生成（seeded 可复现；同 preset + params + seed 逐瓦片一致）
+ * 高度场 = 预设形状掩蔽（多中心径向衰减 / 环形 / 半平面）+ 分形噪声扰动；
+ * 海平面按 landRatio 分位切割（陆地占比语义精确）；对称参数做镜像采样
+ */
+export function generateTerrainPreset(
+  presetKey: string,
+  values: Record<string, number | string>,
+  seed: number,
+  cols: number,
+  rows: number
+): MapTiles {
+  const presetMeta = TERRAIN_PRESETS.find((p) => p.key === presetKey);
+  const rng = mulberry32(seed ^ 0x9e3779b9);
+  const landRatio = Math.min(0.75, Math.max(0.08, Number(values.landRatio ?? 0.32)));
+  const roughness = Math.min(1.4, Math.max(0.2, Number(values.roughness ?? 0.7)));
+  const symmetry = String(values.symmetry ?? 'none');
+  const moistureBias = paletteMoisture(String(values.palette ?? 'temperate'));
+  const freq = 7 / Math.max(cols, rows);
+  const persistence = 0.42 * roughness;
+
+  // 预设形状中心（seeded，位于画布中部区域）
+  const centers: Array<{ x: number; y: number; r: number; shape: number }> = [];
+  const cx = (cols - 1) / 2;
+  const cy = (rows - 1) / 2;
+  const maxD = Math.hypot(cx, cy) || 1;
+  const islandCount = Math.max(1, Math.round(Number(values.islandCount ?? 1)));
+  if (presetKey === 'archipelago') {
+    for (let i = 0; i < islandCount; i++) {
+      const ang = rng() * Math.PI * 2;
+      const dist = (0.15 + rng() * 0.65) * maxD;
+      centers.push({
+        x: cx + Math.cos(ang) * dist,
+        y: cy + Math.sin(ang) * dist,
+        r: maxD * (0.14 + rng() * 0.12),
+        shape: 1.6
+      });
+    }
+  } else if (presetKey === 'pangaea') {
+    centers.push({ x: cx, y: cy, r: maxD * 1.35, shape: 1.2 });
+  } else if (presetKey === 'peninsula') {
+    // 自上边缘伸入：窄长形状
+    centers.push({ x: cx, y: rows * 0.2, r: maxD * 0.85, shape: 2.4 });
+  } else {
+    const rScale = presetKey === 'lowIsland' ? 0.55 : presetKey === 'highIsland' ? 0.72 : presetKey === 'atoll' ? 0.5 : 0.95;
+    centers.push({ x: cx, y: cy, r: maxD * rScale, shape: presetKey === 'highIsland' ? 2.2 : 1.4 });
+  }
+
+  /** 预设形状掩蔽 [0,1] */
+  const maskOf = (x: number, y: number): number => {
+    if (presetKey === 'atoll') {
+      // 环形：距主中心 R 的环带
+      const d = Math.hypot(x - cx, y - cy) / (centers[0].r || 1);
+      return Math.exp(-Math.pow((d - 0.85) / 0.3, 2));
+    }
+    let best = 0;
+    for (const c of centers) {
+      const d = Math.hypot(x - c.x, y - c.y) / c.r;
+      const v = Math.max(0, 1 - Math.pow(d, c.shape));
+      if (v > best) best = v;
+    }
+    return best;
+  };
+
+  const height = new Float64Array(cols * rows);
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      // 对称：镜像采样左半 / 上半
+      const sx = symmetry === 'x' ? Math.min(x, cols - 1 - x) : x;
+      const sy = symmetry === 'y' ? Math.min(y, rows - 1 - y) : y;
+      const noise = fractal(sx * freq, sy * freq, seed, 5, persistence);
+      const mask = maskOf(sx, sy);
+      let e = mask * 0.72 + noise * 0.42 - 0.14;
+      if (presetKey === 'highIsland' || presetKey === 'continent' || presetKey === 'pangaea') {
+        e += Math.pow(mask, 2) * 0.18; // 内陆抬升（山地倾向）
+      }
+      height[y * cols + x] = e;
+    }
+  }
+
+  // 海平面 = (1 - landRatio) 分位（陆地占比语义精确）
+  const sorted = Float64Array.from(height).sort();
+  const sea = sorted[Math.min(sorted.length - 1, Math.floor((1 - landRatio) * sorted.length))];
+
+  const tiles: MapTiles = { cols, rows, size: TILE_SIZE, data: new Array<string>(cols * rows).fill('') };
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const i = y * cols + x;
+      const m = fractal((x + 331) * freq * 0.8, (y + 173) * freq * 0.8, seed + 7777, 3, 0.5) + moistureBias;
+      tiles.data[i] = classify(height[i], m, sea);
+    }
+  }
+  return tiles;
+}
+
+export type { TerrainPreset };
+
 /** 适合聚居的地形 */
 const SETTLE_OK = new Set(['grass', 'plain', 'sand', 'farm', 'forest', 'pine', 'jungle', 'autumn', 'hill', 'desert']);
 const WATER = new Set(['deepwater', 'water']);

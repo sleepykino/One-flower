@@ -33,7 +33,8 @@ function rowToMap(r: MapRow): NovelMap {
     background: r.background_path ?? undefined,
     bg: data.bg,
     desc: data.desc,
-    tiles: data.tiles,
+    tileLayers: data.tileLayers ?? [],
+    activeTileLayer: data.activeTileLayer ?? 0,
     nodes: data.nodes,
     connections: data.connections,
     createdAt: r.created_at,
@@ -59,6 +60,8 @@ export class MapEditorService {
       name,
       width: 1600,
       height: 1000,
+      tileLayers: [],
+      activeTileLayer: 0,
       nodes: [],
       connections: [],
       createdAt: now,
@@ -74,7 +77,7 @@ export class MapEditorService {
           map.name,
           map.width,
           map.height,
-          JSON.stringify({ version: MAP_DATA_VERSION, nodes: [], connections: [] }),
+          JSON.stringify({ version: MAP_DATA_VERSION, nodes: [], connections: [], tileLayers: [] }),
           map.createdAt,
           map.updatedAt
         ]
@@ -99,7 +102,8 @@ export class MapEditorService {
             connections: map.connections,
             desc: map.desc,
             bg: map.bg,
-            tiles: map.tiles
+            tileLayers: map.tileLayers,
+            activeTileLayer: map.activeTileLayer
           }),
           Date.now(),
           map.id
@@ -154,7 +158,8 @@ export class MapEditorService {
             connections: copy.connections,
             desc: copy.desc,
             bg: copy.bg,
-            tiles: copy.tiles
+            tileLayers: copy.tileLayers,
+            activeTileLayer: copy.activeTileLayer
           }),
           copy.createdAt,
           copy.updatedAt

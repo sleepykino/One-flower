@@ -1,11 +1,11 @@
 /**
- * 地图属性面板（参考「易制地图」右侧设置窗）
- * - 未选中：地图属性（名称/描述/画布尺寸/底图管理）
- * - 选中节点：名称/图标元件库/形状尺寸/缩放/旋转/透明度/颜色/层级/世界书关联/描述
- * - 选中连线：名称/线型/曲直/线宽/颜色/箭头
+ * 地图属性面板（P4.1 增强）
+ * - 节点：名称 / 图标（内置图标 + 我的素材双 tab）/ 形状尺寸 / 缩放旋转透明 / HSV 调色 / 文字样式（marker）
+ * - 连线：名称 / 线型 / 折线拐点编辑（waypoints）
+ * - 地图：名称 / 尺寸 / 底图（上传 + AI 生成）/ 导出选项（透明背景 / 倍率）
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ICON_LIBRARY,
   PALETTE,
@@ -13,6 +13,8 @@ import {
   type MapNode,
   type NovelMap
 } from '../../services/map/types';
+import { MapAssetService, type MapAsset } from '../../services/map/MapAssetService';
+import { getAppContext } from '../../context/app-context';
 
 interface MapInspectorProps {
   map: NovelMap;
@@ -29,6 +31,13 @@ interface MapInspectorProps {
   onUploadBg: () => void;
   onRemoveBg: () => void;
   onResetBg: () => void;
+  /** AI 生成底图（P4.1-M5） */
+  onAiBg: () => void;
+  /** 导出选项（P4.1-M5） */
+  exportTransparent: boolean;
+  exportScale: number;
+  onExportTransparent: (v: boolean) => void;
+  onExportScale: (v: number) => void;
 }
 
 const TYPE_LABEL: Record<MapNode['type'], string> = {
@@ -96,54 +105,136 @@ function PaletteRow(props: { value: string; onChange: (c: string) => void }): JS
   );
 }
 
-/** 图标元件选择器：分类 chips + emoji 网格 */
+/** 图标元件选择器：内置图标 / 我的素材双 tab（P4.1） */
 function IconPicker(props: { value?: string; onChange: (iconId: string | undefined) => void }): JSX.Element {
+  const isAsset = props.value?.startsWith('asset:') ?? false;
+  const [tab, setTab] = useState<'builtin' | 'mine'>(isAsset ? 'mine' : 'builtin');
   const [cat, setCat] = useState(() => {
-    if (!props.value) return ICON_LIBRARY[0].key;
+    if (!props.value || isAsset) return ICON_LIBRARY[0].key;
     return ICON_LIBRARY.find((c) => c.icons.some((i) => i.id === props.value))?.key ?? ICON_LIBRARY[0].key;
   });
   const current = ICON_LIBRARY.find((c) => c.key === cat) ?? ICON_LIBRARY[0];
+  const [assets, setAssets] = useState<MapAsset[]>([]);
+  const [urls, setUrls] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (tab !== 'mine') return;
+    void (async () => {
+      const svc = new MapAssetService(getAppContext().bridge);
+      await svc.ensureBuiltin();
+      const list = await svc.list({ usage: 'stamp' });
+      setAssets(list);
+      const map: Record<string, string> = {};
+      for (const a of list) {
+        try {
+          map[a.id] = await svc.resolveUrl(a.id);
+        } catch {
+          map[a.id] = '';
+        }
+      }
+      setUrls(map);
+    })();
+  }, [tab]);
+
   return (
     <div>
-      <div className="flex flex-wrap gap-1">
-        {ICON_LIBRARY.map((c) => (
-          <button
-            key={c.key}
-            type="button"
-            className={`rounded px-1.5 py-0.5 text-xs ${
-              c.key === cat ? 'bg-violet-50 text-violet-700' : 'text-ink-500 hover:bg-ink-100'
-            }`}
-            onClick={() => setCat(c.key)}
-          >
-            {c.label}
-          </button>
-        ))}
-      </div>
-      <div className="mt-1.5 grid grid-cols-6 gap-1">
+      <div className="mb-1 flex gap-2 text-xs">
         <button
           type="button"
-          title="无图标"
-          className={`flex h-8 items-center justify-center rounded border text-xs ${
-            !props.value ? 'border-violet-300 bg-violet-50' : 'border-ink-200 hover:bg-ink-100'
-          }`}
-          onClick={() => props.onChange(undefined)}
+          className={`rounded px-1.5 py-0.5 ${tab === 'builtin' ? 'bg-violet-50 font-medium text-violet-700' : 'text-ink-500 hover:bg-ink-100'}`}
+          onClick={() => setTab('builtin')}
         >
-          无
+          内置图标
         </button>
-        {current.icons.map((i) => (
-          <button
-            key={i.id}
-            type="button"
-            title={i.label}
-            className={`flex h-8 items-center justify-center rounded border text-lg leading-none ${
-              props.value === i.id ? 'border-violet-300 bg-violet-50' : 'border-ink-200 hover:bg-ink-100'
-            }`}
-            onClick={() => props.onChange(i.id)}
-          >
-            {i.emoji}
-          </button>
-        ))}
+        <button
+          type="button"
+          className={`rounded px-1.5 py-0.5 ${tab === 'mine' ? 'bg-violet-50 font-medium text-violet-700' : 'text-ink-500 hover:bg-ink-100'}`}
+          onClick={() => setTab('mine')}
+        >
+          我的素材
+        </button>
       </div>
+      {tab === 'builtin' ? (
+        <>
+          <div className="flex flex-wrap gap-1">
+            {ICON_LIBRARY.map((c) => (
+              <button
+                key={c.key}
+                type="button"
+                className={`rounded px-1.5 py-0.5 text-xs ${
+                  c.key === cat ? 'bg-violet-50 text-violet-700' : 'text-ink-500 hover:bg-ink-100'
+                }`}
+                onClick={() => setCat(c.key)}
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+          <div className="mt-1.5 grid grid-cols-6 gap-1">
+            <button
+              type="button"
+              title="无图标"
+              className={`flex h-8 items-center justify-center rounded border text-xs ${
+                !props.value ? 'border-violet-300 bg-violet-50' : 'border-ink-200 hover:bg-ink-100'
+              }`}
+              onClick={() => props.onChange(undefined)}
+            >
+              无
+            </button>
+            {current.icons.map((i) => (
+              <button
+                key={i.id}
+                type="button"
+                title={i.label}
+                className={`flex h-8 items-center justify-center rounded border text-lg leading-none ${
+                  props.value === i.id ? 'border-violet-300 bg-violet-50' : 'border-ink-200 hover:bg-ink-100'
+                }`}
+                onClick={() => props.onChange(i.id)}
+              >
+                {i.emoji}
+              </button>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div className="grid grid-cols-5 gap-1">
+          <button
+            type="button"
+            title="清除素材图标"
+            className={`flex h-10 items-center justify-center rounded border text-xs ${
+              !props.value ? 'border-violet-300 bg-violet-50' : 'border-ink-200 hover:bg-ink-100'
+            }`}
+            onClick={() => props.onChange(undefined)}
+          >
+            无
+          </button>
+          {assets.map((a) => {
+            const ref = `asset:${a.id}`;
+            return (
+              <button
+                key={a.id}
+                type="button"
+                title={`${a.name}（可在左侧素材库上传）`}
+                className={`flex h-10 items-center justify-center overflow-hidden rounded border ${
+                  props.value === ref ? 'border-violet-300 bg-violet-50 ring-1 ring-violet-300' : 'border-ink-200 hover:bg-ink-100'
+                }`}
+                onClick={() => props.onChange(ref)}
+              >
+                {urls[a.id] ? (
+                  <img src={urls[a.id]} alt={a.name} className="max-h-8 max-w-8 object-contain" draggable={false} />
+                ) : (
+                  <span className="text-xs text-ink-300">…</span>
+                )}
+              </button>
+            );
+          })}
+          {assets.length === 0 && (
+            <span className="col-span-4 self-center text-xs leading-4 text-ink-400">
+              暂无素材，可在左侧「素材库」上传
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -153,8 +244,16 @@ export function MapInspector(props: MapInspectorProps): JSX.Element {
 
   // ---------- 连线属性 ----------
   if (conn) {
+    const wps = conn.waypoints ?? [];
+    const midAdd = (): void => {
+      // 在连线中点追加一个拐点（首尾节点的中点或已有折线中点）
+      const next = [...wps];
+      if (next.length === 0) next.push({ x: 0, y: -40 });
+      else next.splice(Math.floor(next.length / 2), 0, { x: 0, y: -40 });
+      props.onPatchConn(conn.id, { waypoints: next });
+    };
     return (
-      <aside className="flex w-60 shrink-0 flex-col gap-4 overflow-y-auto border-l border-ink-200 p-3">
+      <aside className="flex h-full w-60 shrink-0 flex-col gap-4 overflow-y-auto border-l border-ink-200 p-3">
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium">连线属性</span>
         </div>
@@ -182,8 +281,8 @@ export function MapInspector(props: MapInspectorProps): JSX.Element {
                 props.onPatchConn(conn.id, { lineType: e.target.value as MapConnection['lineType'] })
               }
             >
-              <option value="straight">直线</option>
-              <option value="curve">弧线</option>
+              <option value="straight">折线</option>
+              <option value="curve">平滑</option>
             </select>
           </div>
         </Section>
@@ -207,6 +306,54 @@ export function MapInspector(props: MapInspectorProps): JSX.Element {
           />
           显示方向箭头
         </label>
+
+        <Section title={`折线拐点（${wps.length}）`}>
+          <div className="space-y-1">
+            {wps.map((w, i) => (
+              <div key={i} className="flex items-center gap-1 text-xs">
+                <span className="w-4 text-ink-400">{i + 1}</span>
+                <input
+                  type="number"
+                  className="w-14 rounded border border-ink-200 px-1 py-0.5 text-xs"
+                  value={w.x}
+                  onChange={(e) => {
+                    const next = [...wps];
+                    next[i] = { ...w, x: Number(e.target.value) || 0 };
+                    props.onPatchConn(conn.id, { waypoints: next });
+                  }}
+                />
+                <input
+                  type="number"
+                  className="w-14 rounded border border-ink-200 px-1 py-0.5 text-xs"
+                  value={w.y}
+                  onChange={(e) => {
+                    const next = [...wps];
+                    next[i] = { ...w, y: Number(e.target.value) || 0 };
+                    props.onPatchConn(conn.id, { waypoints: next });
+                  }}
+                />
+                <button
+                  type="button"
+                  className="text-red-500 hover:underline"
+                  onClick={() => props.onPatchConn(conn.id, { waypoints: wps.filter((_, j) => j !== i) })}
+                >
+                  删
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              className="w-full rounded border border-ink-200 py-0.5 text-xs text-ink-500 hover:bg-ink-100"
+              onClick={midAdd}
+            >
+              + 中点加拐点
+            </button>
+          </div>
+          <p className="text-[11px] leading-4 text-ink-400">
+            连线工具下 Shift+点击画布也可追加拐点；画布上选中连线后可拖动拐点手柄。
+          </p>
+        </Section>
+
         <button
           type="button"
           className="rounded border border-red-200 px-2 py-1 text-sm text-red-600 hover:bg-red-50"
@@ -222,8 +369,9 @@ export function MapInspector(props: MapInspectorProps): JSX.Element {
   if (node) {
     const isRegion = node.type === 'region';
     const isMarker = node.type === 'marker';
+    const ts = node.textStyle;
     return (
-      <aside className="flex w-60 shrink-0 flex-col gap-4 overflow-y-auto border-l border-ink-200 p-3">
+      <aside className="flex h-full w-60 shrink-0 flex-col gap-4 overflow-y-auto border-l border-ink-200 p-3">
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium">节点属性</span>
           <span className="rounded bg-ink-100 px-1.5 py-0.5 text-xs text-ink-500">{TYPE_LABEL[node.type]}</span>
@@ -236,8 +384,16 @@ export function MapInspector(props: MapInspectorProps): JSX.Element {
           />
         </Section>
         {!isMarker && !isRegion && (
-          <Section title="图标元件">
-            <IconPicker value={node.icon} onChange={(iconId) => props.onPatchNode(node.id, { icon: iconId, shape: iconId ? 'icon' : node.shape === 'icon' ? 'circle' : node.shape })} />
+          <Section title="图标元件（内置 / 我的素材）">
+            <IconPicker
+              value={node.icon}
+              onChange={(iconId) =>
+                props.onPatchNode(node.id, {
+                  icon: iconId,
+                  shape: iconId ? 'icon' : node.shape === 'icon' ? 'circle' : node.shape
+                })
+              }
+            />
           </Section>
         )}
         {!isMarker && !isRegion && (
@@ -321,6 +477,86 @@ export function MapInspector(props: MapInspectorProps): JSX.Element {
             />
           </>
         )}
+        {!isRegion && (
+          <Section title="调色（素材贴图 HSV）">
+            <SliderRow
+              label="色相"
+              min={-180}
+              max={180}
+              step={1}
+              value={node.hueShift ?? 0}
+              format={(v) => `${v}°`}
+              onChange={(v) => props.onPatchNode(node.id, { hueShift: v })}
+            />
+            <SliderRow
+              label="饱和度"
+              min={0}
+              max={3}
+              step={0.05}
+              value={node.saturation ?? 1}
+              format={(v) => `${Math.round(v * 100)}%`}
+              onChange={(v) => props.onPatchNode(node.id, { saturation: v })}
+            />
+            <SliderRow
+              label="明度"
+              min={0}
+              max={3}
+              step={0.05}
+              value={node.brightness ?? 1}
+              format={(v) => `${Math.round(v * 100)}%`}
+              onChange={(v) => props.onPatchNode(node.id, { brightness: v })}
+            />
+            {(node.hueShift !== undefined || node.saturation !== undefined || node.brightness !== undefined) && (
+              <button
+                type="button"
+                className="w-full rounded border border-ink-200 py-0.5 text-xs text-ink-500 hover:bg-ink-100"
+                onClick={() => props.onPatchNode(node.id, { hueShift: undefined, saturation: undefined, brightness: undefined })}
+              >
+                重置调色
+              </button>
+            )}
+          </Section>
+        )}
+        {isMarker && (
+          <Section title="文字样式">
+            <SliderRow
+              label="字号"
+              min={10}
+              max={32}
+              step={1}
+              value={ts?.fontSize ?? 13}
+              onChange={(v) => props.onPatchNode(node.id, { textStyle: { ...ts, fontSize: v } })}
+            />
+            <div className="text-xs text-ink-500">字色</div>
+            <PaletteRow
+              value={ts?.fontColor ?? '#23211e'}
+              onChange={(c) => props.onPatchNode(node.id, { textStyle: { ...ts, fontColor: c } })}
+            />
+            <div className="text-xs text-ink-500">描边色</div>
+            <PaletteRow
+              value={ts?.strokeColor ?? '#ffffff'}
+              onChange={(c) => props.onPatchNode(node.id, { textStyle: { ...ts, strokeColor: c, strokeWidth: ts?.strokeWidth ?? 3 } })}
+            />
+            <SliderRow
+              label="描边宽"
+              min={0}
+              max={8}
+              step={0.5}
+              value={ts?.strokeWidth ?? 0}
+              format={(v) => (v === 0 ? '无' : String(v))}
+              onChange={(v) => props.onPatchNode(node.id, { textStyle: { ...ts, strokeWidth: v } })}
+            />
+            <label className="flex items-center gap-2 text-xs text-ink-500">
+              <input
+                type="checkbox"
+                className="accent-violet-600"
+                checked={ts?.vertical ?? false}
+                onChange={(e) => props.onPatchNode(node.id, { textStyle: { ...ts, vertical: e.target.checked } })}
+              />
+              竖排文字
+            </label>
+          </Section>
+        )}
         <Section title="颜色">
           <PaletteRow value={node.color} onChange={(c) => props.onPatchNode(node.id, { color: c })} />
         </Section>
@@ -392,7 +628,7 @@ export function MapInspector(props: MapInspectorProps): JSX.Element {
 
   // ---------- 地图属性 ----------
   return (
-    <aside className="flex w-60 shrink-0 flex-col gap-4 overflow-y-auto border-l border-ink-200 p-3">
+    <aside className="flex h-full w-60 shrink-0 flex-col gap-4 overflow-y-auto border-l border-ink-200 p-3">
       <span className="text-sm font-medium">地图属性</span>
       <Section title="名称">
         <input
@@ -462,6 +698,14 @@ export function MapInspector(props: MapInspectorProps): JSX.Element {
           >
             上传图片
           </button>
+          <button
+            type="button"
+            className="rounded border border-violet-200 px-2 py-1 text-xs text-violet-600 hover:bg-violet-50"
+            title="AI 生成风格化底图（走「图片生成」模型路由）"
+            onClick={props.onAiBg}
+          >
+            AI 生成底图
+          </button>
           {map.background && (
             <>
               <button
@@ -507,8 +751,31 @@ export function MapInspector(props: MapInspectorProps): JSX.Element {
           底图用于对照描绘（如截取的真实地图、手绘草稿）。上传后解锁即可拖动定位。
         </p>
       </Section>
+      <Section title="导出选项">
+        <label className="flex items-center gap-2 text-xs text-ink-500">
+          <input
+            type="checkbox"
+            className="accent-violet-600"
+            checked={props.exportTransparent}
+            onChange={(e) => props.onExportTransparent(e.target.checked)}
+          />
+          透明背景（不含底图与画布底色）
+        </label>
+        <label className="mt-1 block text-xs text-ink-500">
+          导出倍率
+          <select
+            className="mt-0.5 w-full rounded border border-ink-200 px-1 py-1 text-sm"
+            value={String(props.exportScale)}
+            onChange={(e) => props.onExportScale(Number(e.target.value))}
+          >
+            <option value="1">1x</option>
+            <option value="2">2x</option>
+            <option value="3">3x</option>
+          </select>
+        </label>
+      </Section>
       <div className="mt-auto rounded bg-ink-50 p-2 text-xs leading-5 text-ink-400">
-        快捷键：Ctrl+Z 撤销 / Ctrl+Y 重做 / Ctrl+D 复制 / Del 删除 / Esc 停止放置
+        快捷键：Ctrl+Z 撤销 / Ctrl+Y 重做 / Ctrl+D 复制 / Ctrl+C·V 复制粘贴 / Del 删除 / B 笔刷 / E 橡皮 / Esc 停止
       </div>
     </aside>
   );

@@ -19,8 +19,7 @@ const FILTER_TABS: Array<{ key: Filter; label: string }> = [
   { key: 'all', label: '全部' },
   { key: 'cover', label: '封面' },
   { key: 'character', label: '角色' },
-  { key: 'illustration', label: '插图' },
-  { key: 'library', label: '图库' }
+  { key: 'illustration', label: '插图' }
 ];
 
 function refLabel(ref: { type: string; title: string }): string {
