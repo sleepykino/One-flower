@@ -151,7 +151,12 @@ export class ScreenplayService {
     });
   }
 
-  async addScene(screenplayId: string, episodeId: string, afterSceneId?: string): Promise<Scene | null> {
+  /** 加场（afterSceneId 之后插入，缺省追加到末尾）；返回新场与更新后的剧本 */
+  async addScene(
+    screenplayId: string,
+    episodeId: string,
+    afterSceneId?: string
+  ): Promise<{ scene: Scene; sp: Screenplay } | null> {
     const scene: Scene = {
       id: crypto.randomUUID(),
       interior: 'INT',
@@ -161,25 +166,25 @@ export class ScreenplayService {
       shots: [],
       status: 'outline'
     };
-    await this.mutate(screenplayId, (sp) => {
-      const ep = sp.data.episodes.find((e) => e.id === episodeId);
+    const sp = await this.mutate(screenplayId, (m) => {
+      const ep = m.data.episodes.find((e) => e.id === episodeId);
       if (!ep) return;
       const i = afterSceneId ? ep.scenes.findIndex((s) => s.id === afterSceneId) : -1;
       if (i >= 0) ep.scenes.splice(i + 1, 0, scene);
       else ep.scenes.push(scene);
     });
-    return scene;
+    return sp ? { scene, sp } : null;
   }
 
-  async removeScene(screenplayId: string, episodeId: string, sceneId: string): Promise<void> {
-    await this.mutate(screenplayId, (sp) => {
+  async removeScene(screenplayId: string, episodeId: string, sceneId: string): Promise<Screenplay | null> {
+    return this.mutate(screenplayId, (sp) => {
       const ep = sp.data.episodes.find((e) => e.id === episodeId);
       if (ep) ep.scenes = ep.scenes.filter((s) => s.id !== sceneId);
     });
   }
 
-  async moveScene(screenplayId: string, episodeId: string, sceneId: string, targetIndex: number): Promise<void> {
-    await this.mutate(screenplayId, (sp) => {
+  async moveScene(screenplayId: string, episodeId: string, sceneId: string, targetIndex: number): Promise<Screenplay | null> {
+    return this.mutate(screenplayId, (sp) => {
       const ep = sp.data.episodes.find((e) => e.id === episodeId);
       if (!ep) return;
       const i = ep.scenes.findIndex((s) => s.id === sceneId);
@@ -189,9 +194,9 @@ export class ScreenplayService {
     });
   }
 
-  /** 分镜图回填（按 shotId 全文查找，跨集生效） */
-  async setShotImage(screenplayId: string, shotId: string, imageAssetId?: string, imagePrompt?: string): Promise<void> {
-    await this.mutate(screenplayId, (sp) => {
+  /** 分镜图回填（按 shotId 全文查找，跨集生效）；返回更新后的剧本供调用方局部刷新 */
+  async setShotImage(screenplayId: string, shotId: string, imageAssetId?: string, imagePrompt?: string): Promise<Screenplay | null> {
+    return this.mutate(screenplayId, (sp) => {
       for (const ep of sp.data.episodes) {
         for (const sc of ep.scenes) {
           const shot = sc.shots.find((s) => s.id === shotId);

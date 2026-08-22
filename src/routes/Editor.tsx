@@ -50,6 +50,7 @@ import { WhatIfPanel } from '../components/inspiration/WhatIfPanel';
 import { ImageLibraryPanel } from '../components/image/ImageLibraryPanel';
 import { ScreenplayPanel } from '../components/screenplay/ScreenplayPanel';
 import { ScreenplayWorkbench } from '../components/screenplay/ScreenplayWorkbench';
+import { ErrorBoundary } from '../components/common/ErrorBoundary';
 import { getAppContext } from '../context/app-context';
 import { alertDialog } from '../native/dialog';
 import type { LongFormSession } from '../services/longform/types';
@@ -539,19 +540,23 @@ export function Editor(): JSX.Element {
 
       {searchOpen && <GlobalSearchModal bookId={bookId} onClose={() => setSearchOpen(false)} />}
       {exportOpen && <ExportDialog bookId={bookId} onClose={() => setExportOpen(false)} />}
-      {/* P2 工具 overlay */}
+      {/* P2 工具 overlay（错误边界包裹：崩溃只关浮窗不炸全 app） */}
       {mapOpen && (
-        <MapEditor bookId={bookId} onClose={() => setMapOpen(false)} aiGenerateMap={aiGenerateMap} />
+        <ErrorBoundary title="地图编辑器出错了" onClose={() => setMapOpen(false)}>
+          <MapEditor bookId={bookId} onClose={() => setMapOpen(false)} aiGenerateMap={aiGenerateMap} />
+        </ErrorBoundary>
       )}
       {timelineOpen && <TimelineView bookId={bookId} onClose={() => setTimelineOpen(false)} />}
       {namegenOpen && <NameGenerator bookId={bookId} onClose={() => setNamegenOpen(false)} />}
       {screenplayOpen && (
-        <ScreenplayWorkbench
-          bookId={bookId}
-          initialScreenplayId={screenplayInitial.id}
-          initialWizard={screenplayInitial.wizard}
-          onClose={() => setScreenplayOpen(false)}
-        />
+        <ErrorBoundary title="剧本工作台出错了" onClose={() => setScreenplayOpen(false)}>
+          <ScreenplayWorkbench
+            bookId={bookId}
+            initialScreenplayId={screenplayInitial.id}
+            initialWizard={screenplayInitial.wizard}
+            onClose={() => setScreenplayOpen(false)}
+          />
+        </ErrorBoundary>
       )}
     </div>
   );

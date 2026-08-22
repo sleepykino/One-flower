@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import { initApp } from './context/app-context';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 import './index.css';
 
 async function bootstrap(): Promise<void> {
@@ -15,7 +16,9 @@ async function bootstrap(): Promise<void> {
   }
   ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     <React.StrictMode>
-      <App />
+      <ErrorBoundary title="应用出错了">
+        <App />
+      </ErrorBoundary>
     </React.StrictMode>
   );
 }

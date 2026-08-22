@@ -16,15 +16,17 @@ import {
 interface Props {
   bookId: string;
   screenplay: Screenplay;
-  /** 外部数据变更后由父级重建 screenplay 对象触发刷新 */
+  /** 外部数据变更后由父级重建 screenplay 对象触发刷新（任务事件等低频路径） */
   onChanged: () => void;
+  /** 局部刷新：编辑保存用服务返回值原地更新，免去全量重拉（高频路径） */
+  onUpdated: (sp: Screenplay) => void;
   /** 溯源跳转：关闭 overlay 回编辑器对应章节 */
   onJumpChapter: (chapterId: string) => void;
   /** 逐场生成控制 */
   onGeneratePending: () => void;
 }
 
-export function ScreenplayEditor({ screenplay, onChanged, onJumpChapter, onGeneratePending }: Props): JSX.Element {
+export function ScreenplayEditor({ screenplay, onChanged, onUpdated, onJumpChapter, onGeneratePending }: Props): JSX.Element {
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Scene | null>(null);
   const dirtyRef = useRef(false);
@@ -47,7 +49,7 @@ export function ScreenplayEditor({ screenplay, onChanged, onJumpChapter, onGener
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSceneId, selected?.sc]);
 
-  /** debounced 提交（500ms） */
+  /** debounced 提交（500ms）：保存后用返回值局部更新，不触发全量重拉 */
   const commit = (next: Scene): void => {
     dirtyRef.current = true;
     setDraft(next);
@@ -56,7 +58,9 @@ export function ScreenplayEditor({ screenplay, onChanged, onJumpChapter, onGener
       dirtyRef.current = false;
       void getAppContext()
         .screenplayService.saveScene(screenplay.id, selected!.ep.id, next)
-        .then(() => onChanged())
+        .then((sp) => {
+          if (sp) onUpdated(sp);
+        })
         .catch((e) => console.warn('[Screenplay] 场保存失败:', e));
     }, 500);
   };
@@ -117,17 +121,19 @@ export function ScreenplayEditor({ screenplay, onChanged, onJumpChapter, onGener
   const addScene = (episodeId: string, afterSceneId?: string): void => {
     void getAppContext()
       .screenplayService.addScene(screenplay.id, episodeId, afterSceneId)
-      .then((sc) => {
-        if (sc) setSelectedSceneId(sc.id);
-        onChanged();
+      .then((r) => {
+        if (r) {
+          onUpdated(r.sp);
+          setSelectedSceneId(r.scene.id);
+        }
       });
   };
   const removeScene = (episodeId: string, sceneId: string): void => {
     void getAppContext()
       .screenplayService.removeScene(screenplay.id, episodeId, sceneId)
-      .then(() => {
+      .then((sp) => {
         if (selectedSceneId === sceneId) setSelectedSceneId(null);
-        onChanged();
+        if (sp) onUpdated(sp);
       });
   };
   const moveScene = (episodeId: string, sceneId: string, delta: number): void => {
@@ -136,7 +142,9 @@ export function ScreenplayEditor({ screenplay, onChanged, onJumpChapter, onGener
     if (idx < 0) return;
     void getAppContext()
       .screenplayService.moveScene(screenplay.id, episodeId, sceneId, idx + delta)
-      .then(onChanged);
+      .then((sp) => {
+        if (sp) onUpdated(sp);
+      });
   };
 
   const pendingScenes = stats.scenes - stats.doneScenes;

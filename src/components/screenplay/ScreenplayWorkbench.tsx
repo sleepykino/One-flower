@@ -4,7 +4,7 @@
  * 内部：ScreenplayEditor / StoryboardView / AdaptWizard（居中对话框）
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { getAppContext } from '../../context/app-context';
 import { alertDialog } from '../../native/dialog';
@@ -54,6 +54,12 @@ export function ScreenplayWorkbench({ bookId, initialScreenplayId, initialWizard
       .catch(() => setScreenplay(null));
   }, [currentId]);
 
+  /** 局部刷新：编辑/回填操作用服务返回值原地更新，免去全量重拉（高频路径） */
+  const applyUpdate = useCallback((sp: import('../../services/screenplay/types').Screenplay): void => {
+    setScreenplay(sp);
+    setList((prev) => prev.map((x) => (x.id === sp.id ? sp : x)));
+  }, []);
+
   useEffect(() => {
     reloadList();
   }, [reloadList]);
@@ -69,15 +75,51 @@ export function ScreenplayWorkbench({ bookId, initialScreenplayId, initialWizard
       .catch(() => setChapters([]));
   }, [bookId]);
 
-  /** 生成任务运行中统一轮询刷新当前剧本（逐场 'screenplay' / 分镜 'storyboard'），
-      状态源自任务 store，子视图不再各自轮询 */
-  const storyboardRunning = useTaskStore((s) => s.tasks.some((t) => t.kind === 'storyboard' && t.status === 'running'));
-  const refreshing = screenplay?.status === 'generating' || storyboardRunning;
+  /** 生成任务事件驱动刷新：订阅任务 store 的进度签名，节流重拉当前剧本；
+      任务结束时做一次终态刷新（剧本 status / 列表同步），替代定时轮询 */
+  const taskSig = useTaskStore((s) =>
+    s.tasks
+      .filter((t) => t.kind === 'screenplay' || t.kind === 'storyboard')
+      .map((t) => `${t.id}:${t.status}:${t.progress}`)
+      .join('|')
+  );
+  const lastFetchRef = useRef(0);
+  const trailingRef = useRef<number | null>(null);
+  const wasRunningRef = useRef(false);
   useEffect(() => {
-    if (!refreshing) return;
-    const t = window.setInterval(reloadCurrent, 2500);
-    return () => window.clearInterval(t);
-  }, [refreshing, reloadCurrent]);
+    const running = useTaskStore
+      .getState()
+      .tasks.some((t) => (t.kind === 'screenplay' || t.kind === 'storyboard') && t.status === 'running');
+    if (running) {
+      wasRunningRef.current = true;
+      // 节流：1s 内的连续进度事件合并为一次尾部重拉
+      const elapsed = Date.now() - lastFetchRef.current;
+      if (elapsed >= 1000) {
+        lastFetchRef.current = Date.now();
+        reloadCurrent();
+      } else {
+        if (trailingRef.current) window.clearTimeout(trailingRef.current);
+        trailingRef.current = window.setTimeout(
+          () => {
+            lastFetchRef.current = Date.now();
+            reloadCurrent();
+          },
+          1000 - elapsed
+        );
+      }
+    } else if (wasRunningRef.current) {
+      wasRunningRef.current = false;
+      if (trailingRef.current) {
+        window.clearTimeout(trailingRef.current);
+        trailingRef.current = null;
+      }
+      reloadCurrent();
+      reloadList();
+    }
+    return () => {
+      if (trailingRef.current) window.clearTimeout(trailingRef.current);
+    };
+  }, [taskSig, reloadCurrent, reloadList]);
 
   const stats = screenplay ? screenplayStats(screenplay) : null;
 
@@ -230,11 +272,12 @@ export function ScreenplayWorkbench({ bookId, initialScreenplayId, initialWizard
               bookId={bookId}
               screenplay={screenplay}
               onChanged={reloadCurrent}
+              onUpdated={applyUpdate}
               onJumpChapter={jumpChapter}
               onGeneratePending={generatePending}
             />
           ) : (
-            <StoryboardView bookId={bookId} screenplay={screenplay} onChanged={reloadCurrent} />
+            <StoryboardView bookId={bookId} screenplay={screenplay} onChanged={reloadCurrent} onUpdated={applyUpdate} />
           )
         ) : (
           <div className="flex flex-col items-center justify-center gap-3 py-20 text-sm text-ink-400">

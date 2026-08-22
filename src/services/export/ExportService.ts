@@ -338,16 +338,46 @@ export class ExportService {
     const storageDir = String(bookRow.storage_dir ?? '').replace(/\\/g, '/');
 
     const chapters = await this.chapterService.listTreeOrder(bookId);
-    const [characters, schemas, worldbook, foreshadowings, images] = await Promise.all([
+    const [
+      characters,
+      schemas,
+      worldbook,
+      foreshadowings,
+      images,
+      maps,
+      screenplays,
+      relationships,
+      timelineEvents,
+      settingFacts,
+      settingInferences,
+      inspirations,
+      writingStats,
+      writingGoals,
+      longformSessions
+    ] = await Promise.all([
       this.db.query('SELECT * FROM characters WHERE book_id = ?', [bookId]),
       this.db.query('SELECT * FROM character_schemas WHERE book_id = ?', [bookId]),
       this.db.query('SELECT * FROM worldbook_entries WHERE book_id = ?', [bookId]),
       this.db.query('SELECT * FROM foreshadowings WHERE book_id = ?', [bookId]),
-      this.db.query('SELECT * FROM images WHERE book_id = ?', [bookId])
+      this.db.query('SELECT * FROM images WHERE book_id = ?', [bookId]),
+      // v3：P2-P5 各模块补齐（此前备份恢复会丢失）
+      this.db.query('SELECT * FROM maps WHERE book_id = ?', [bookId]),
+      this.db.query('SELECT * FROM screenplays WHERE book_id = ?', [bookId]),
+      this.db.query('SELECT * FROM relationships WHERE book_id = ?', [bookId]),
+      this.db.query('SELECT * FROM timeline_events WHERE book_id = ?', [bookId]),
+      this.db.query('SELECT * FROM setting_facts WHERE book_id = ?', [bookId]),
+      this.db.query(
+        'SELECT si.* FROM setting_inferences si JOIN setting_facts sf ON sf.id = si.fact_id WHERE si.book_id = ?',
+        [bookId]
+      ),
+      this.db.query('SELECT * FROM inspirations WHERE book_id = ?', [bookId]),
+      this.db.query('SELECT * FROM writing_stats WHERE book_id = ?', [bookId]),
+      this.db.query('SELECT * FROM writing_goals WHERE book_id = ?', [bookId]),
+      this.db.query('SELECT * FROM longform_sessions WHERE book_id = ?', [bookId])
     ]);
 
     const meta = {
-      version: 2,
+      version: 3,
       book: bookRow,
       chapters: chapters.map((c) => ({
         id: c.id,
@@ -366,7 +396,20 @@ export class ExportService {
       worldbook,
       foreshadowings,
       // P3 v2：图片资产元数据（文件本体在 zip 的 assets/ 目录）
-      images
+      images,
+      // v3：地图（data JSON 在表内；底图二进制在 zip 的 mapbg/ 目录）
+      maps,
+      // v3：剧本（data JSON 内 sourceChapterId / imageAssetId 由导入侧重映射）
+      screenplays,
+      relationships,
+      timelineEvents,
+      settingFacts,
+      settingInferences,
+      // v3：按书绑定的灵感（推演报告 / 采访摘要）；全局种子与收藏卡片不在单书备份范围
+      inspirations,
+      writingStats,
+      writingGoals,
+      longformSessions
     };
 
     // fflate Zip 流式：逐章 add，避免全量内存驻留
@@ -393,6 +436,31 @@ export class ExportService {
       }
       j++;
       onProgress?.(chapters.length + j, chapters.length + images.length);
+    }
+
+    // v3：项目级指令文件（storageDir 根，缺失跳过）
+    for (const name of ['agents.md', 'hook.md']) {
+      try {
+        const text = await this.bridge.fs.readFile(`${storageDir}/${name}`);
+        if (text.trim() !== '') zip.addText(`directives/${name}`, text);
+      } catch {
+        /* 未创建则跳过 */
+      }
+    }
+
+    // v3：地图底图二进制（background_path 相对 appData，如 maps/<id>_bg.png；入包为 mapbg/<文件名>）
+    if (maps.length > 0) {
+      const appDir = await this.bridge.storage.appDataDir();
+      for (const m of maps) {
+        const rel = String(m.background_path ?? '').replace(/\\/g, '/');
+        if (!rel) continue;
+        try {
+          const bytes = await this.bridge.fs.readBinaryFile(`${appDir}/${rel}`);
+          zip.addBinary(`mapbg/${rel.split('/').pop()}`, bytes);
+        } catch {
+          /* 底图缺失：跳过，导入侧降级为无底图 */
+        }
+      }
     }
 
     const out = await zip.finish();

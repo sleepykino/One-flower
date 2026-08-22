@@ -89,21 +89,20 @@ export class StoryboardService {
     return { images, prompt };
   }
 
-  /** 入库并回填 shot.imageAssetId（usage='storyboard', refId=shot.id） */
+  /** 入库并回填 shot.imageAssetId（usage='storyboard', refId=shot.id）；返回更新后的剧本供调用方局部刷新 */
   async saveShotImage(
     bookId: string,
     screenplayId: string,
     shot: Shot,
     image: GeneratedImage,
     prompt: string
-  ): Promise<string> {
+  ): Promise<import('./types').Screenplay | null> {
     const asset = await this.imageAssets.saveGenerated(bookId, image, {
       usage: 'storyboard',
       refId: shot.id,
       prompt
     });
-    await this.screenplays.setShotImage(screenplayId, shot.id, asset.id, prompt);
-    return asset.id;
+    return this.screenplays.setShotImage(screenplayId, shot.id, asset.id, prompt);
   }
 
   /** 批量生成缺失分镜图（任务中心 kind 'storyboard'，逐镜顺序，单镜失败跳过，可取消） */

@@ -3,9 +3,10 @@
  * 剧本列表 + 状态/进度 + 打开工作台；不放任何结构化编辑表单（重界面在 overlay）
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getAppContext } from '../../context/app-context';
 import { alertDialog, confirmDialog } from '../../native/dialog';
+import { useTaskStore } from '../../store/taskStore';
 import { screenplayStats, type Screenplay, type ScreenplayStatus } from '../../services/screenplay/types';
 
 const STATUS_LABEL: Record<ScreenplayStatus, { label: string; cls: string }> = {
@@ -39,14 +40,46 @@ export function ScreenplayPanel({ bookId, onOpen }: Props): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookId]);
 
-  // 生成中的剧本轮询刷新进度（任务在 overlay/后台推进时控制台同步可见）
-  const generating = list.some((sp) => sp.status === 'generating');
+  // 生成任务事件驱动刷新（订阅任务 store 进度签名，节流重拉列表；任务结束终态刷新），替代定时轮询
+  const taskSig = useTaskStore((s) =>
+    s.tasks
+      .filter((t) => t.kind === 'screenplay' || t.kind === 'storyboard')
+      .map((t) => `${t.id}:${t.status}:${t.progress}`)
+      .join('|')
+  );
+  const lastFetchRef = useRef(0);
+  const trailingRef = useRef<number | null>(null);
+  const wasRunningRef = useRef(false);
   useEffect(() => {
-    if (!generating) return;
-    const t = window.setInterval(reload, 2500);
-    return () => window.clearInterval(t);
+    const running = useTaskStore
+      .getState()
+      .tasks.some((t) => (t.kind === 'screenplay' || t.kind === 'storyboard') && t.status === 'running');
+    const fetchList = (): void => {
+      lastFetchRef.current = Date.now();
+      reload();
+    };
+    if (running) {
+      wasRunningRef.current = true;
+      const elapsed = Date.now() - lastFetchRef.current;
+      if (elapsed >= 1000) {
+        fetchList();
+      } else {
+        if (trailingRef.current) window.clearTimeout(trailingRef.current);
+        trailingRef.current = window.setTimeout(fetchList, 1000 - elapsed);
+      }
+    } else if (wasRunningRef.current) {
+      wasRunningRef.current = false;
+      if (trailingRef.current) {
+        window.clearTimeout(trailingRef.current);
+        trailingRef.current = null;
+      }
+      fetchList();
+    }
+    return () => {
+      if (trailingRef.current) window.clearTimeout(trailingRef.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [generating]);
+  }, [taskSig]);
 
   const create = (): void => {
     void (async () => {

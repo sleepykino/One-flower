@@ -31,6 +31,17 @@ interface BackupMeta {
   foreshadowings: Array<Record<string, unknown>>;
   /** P3 v2：图片资产元数据（文件本体在 zip 的 assets/ 目录；v1 无此字段） */
   images?: Array<Record<string, unknown>>;
+  /** v3：P2-P5 模块（旧包无此字段，按空处理） */
+  maps?: Array<Record<string, unknown>>;
+  screenplays?: Array<Record<string, unknown>>;
+  relationships?: Array<Record<string, unknown>>;
+  timelineEvents?: Array<Record<string, unknown>>;
+  settingFacts?: Array<Record<string, unknown>>;
+  settingInferences?: Array<Record<string, unknown>>;
+  inspirations?: Array<Record<string, unknown>>;
+  writingStats?: Array<Record<string, unknown>>;
+  writingGoals?: Array<Record<string, unknown>>;
+  longformSessions?: Array<Record<string, unknown>>;
 }
 
 export class ImportService {
@@ -145,6 +156,16 @@ export class ImportService {
     for (const c of meta.characters ?? []) {
       oldToNewCharacterId.set(String(c.id ?? ''), crypto.randomUUID());
     }
+    // v3：世界书条目换新（地图 data 内 worldbookEntryId 引用需重映射）
+    const oldToNewWorldbookId = new Map<string, string>();
+    for (const w of meta.worldbook ?? []) {
+      oldToNewWorldbookId.set(String(w.id ?? ''), crypto.randomUUID());
+    }
+    // v3：设定事实换新（推导链 fact_id 引用重映射）
+    const oldToNewFactId = new Map<string, string>();
+    for (const f of meta.settingFacts ?? []) {
+      oldToNewFactId.set(String(f.id ?? ''), crypto.randomUUID());
+    }
     const now = Date.now();
 
     // 逐章写入：章节行 + 正文文件 + FTS 索引
@@ -248,7 +269,7 @@ export class ImportService {
         sql: `INSERT INTO worldbook_entries (id, book_id, title, category, content, tags, created_at, updated_at)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         params: [
-          crypto.randomUUID(),
+          oldToNewWorldbookId.get(String(w.id ?? '')) ?? crypto.randomUUID(),
           newBookId,
           String(w.title ?? ''),
           (w.category as string) ?? null,
@@ -320,6 +341,221 @@ export class ImportService {
       }
     }
 
+    // ---------- v3：P2-P5 模块恢复（旧包字段缺失时全部跳过） ----------
+
+    // 地图：新地图 ID；data JSON 内 worldbookEntryId 重映射；底图从 zip mapbg/ 恢复
+    if ((meta.maps?.length ?? 0) > 0) {
+      const appDir = await this.bridge.storage.appDataDir();
+      await this.bridge.fs.ensureDir(`${appDir}/maps`);
+      for (const m of meta.maps ?? []) {
+        const oldMapId = String(m.id ?? '');
+        const newMapId = crypto.randomUUID();
+        let backgroundPath: string | null = null;
+        const oldRel = String(m.background_path ?? '').replace(/\\/g, '/');
+        if (oldRel) {
+          const baseName = oldRel.split('/').pop() ?? '';
+          const bytes = files.get(`mapbg/${baseName}`);
+          if (bytes) {
+            const newRel = `maps/${newMapId}_${baseName.replace(/^[^_]*_/, '')}`;
+            await this.bridge.fs.writeBinaryFile(`${appDir}/${newRel}`, bytes);
+            backgroundPath = newRel;
+          }
+        }
+        stmts.push({
+          sql: `INSERT INTO maps (id, book_id, name, width, height, background_path, data, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          params: [
+            newMapId,
+            newBookId,
+            String(m.name ?? '地图'),
+            Number(m.width ?? 1600),
+            Number(m.height ?? 1000),
+            backgroundPath,
+            remapMapData(String(m.data ?? '{}'), oldToNewWorldbookId),
+            Number(m.created_at ?? now),
+            now
+          ]
+        });
+      }
+    }
+
+    // 剧本：data JSON 内 sourceChapterId / imageAssetId 重映射
+    for (const sp of meta.screenplays ?? []) {
+      stmts.push({
+        sql: `INSERT INTO screenplays (id, book_id, title, status, source_range, data, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          crypto.randomUUID(),
+          newBookId,
+          String(sp.title ?? '剧本'),
+          String(sp.status ?? 'draft'),
+          remapSourceRange(String(sp.source_range ?? ''), oldToNewChapterId),
+          remapScreenplayData(String(sp.data ?? '{}'), oldToNewChapterId, oldToNewImageId),
+          Number(sp.created_at ?? now),
+          now
+        ]
+      });
+    }
+
+    // 角色关系（from/to 角色重映射）
+    for (const r of meta.relationships ?? []) {
+      const from = oldToNewCharacterId.get(String(r.from_character_id ?? ''));
+      const to = oldToNewCharacterId.get(String(r.to_character_id ?? ''));
+      if (!from || !to) continue;
+      stmts.push({
+        sql: `INSERT INTO relationships (id, book_id, from_character_id, to_character_id, type, description, bidirectional, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          crypto.randomUUID(),
+          newBookId,
+          from,
+          to,
+          String(r.type ?? '关系'),
+          (r.description as string) ?? null,
+          Number(r.bidirectional ?? 1),
+          Number(r.created_at ?? now)
+        ]
+      });
+    }
+
+    // 时间线事件（chapter_id 与 character_ids 重映射）
+    for (const t of meta.timelineEvents ?? []) {
+      let charIds = String(t.character_ids ?? '[]');
+      try {
+        const ids = JSON.parse(charIds) as string[];
+        charIds = JSON.stringify(ids.map((id) => oldToNewCharacterId.get(id) ?? id));
+      } catch {
+        /* 保留原值 */
+      }
+      stmts.push({
+        sql: `INSERT INTO timeline_events (id, book_id, title, description, timeline, sort_order, chapter_id, character_ids, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          crypto.randomUUID(),
+          newBookId,
+          String(t.title ?? ''),
+          (t.description as string) ?? null,
+          String(t.timeline ?? 'main'),
+          Number(t.sort_order ?? 0),
+          (t.chapter_id as string) ? oldToNewChapterId.get(String(t.chapter_id)) ?? null : null,
+          charIds,
+          Number(t.created_at ?? now)
+        ]
+      });
+    }
+
+    // 设定事实 + 推导链（source_ref 按来源重映射；inference.fact_id 重映射）
+    for (const f of meta.settingFacts ?? []) {
+      const source = String(f.source ?? '');
+      const refMap =
+        source === 'worldbook' ? oldToNewWorldbookId : source === 'character' ? oldToNewCharacterId : oldToNewChapterId;
+      stmts.push({
+        sql: `INSERT INTO setting_facts (id, book_id, kind, domain, fact, basis, confidence, exempt, source, source_ref, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          oldToNewFactId.get(String(f.id ?? '')) ?? crypto.randomUUID(),
+          newBookId,
+          String(f.kind ?? 'other'),
+          String(f.domain ?? '其他'),
+          String(f.fact ?? ''),
+          String(f.basis ?? ''),
+          Number(f.confidence ?? 0.8),
+          Number(f.exempt ?? 0),
+          source,
+          refMap.get(String(f.source_ref ?? '')) ?? String(f.source_ref ?? ''),
+          Number(f.created_at ?? now)
+        ]
+      });
+    }
+    for (const inf of meta.settingInferences ?? []) {
+      const factId = oldToNewFactId.get(String(inf.fact_id ?? ''));
+      if (!factId) continue;
+      stmts.push({
+        sql: `INSERT INTO setting_inferences (id, fact_id, book_id, premise, conclusion, confidence, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          crypto.randomUUID(),
+          factId,
+          newBookId,
+          String(inf.premise ?? ''),
+          String(inf.conclusion ?? ''),
+          Number(inf.confidence ?? 0.7),
+          Number(inf.created_at ?? now)
+        ]
+      });
+    }
+
+    // 按书绑定的灵感（推演报告 / 采访摘要）
+    for (const ins of meta.inspirations ?? []) {
+      stmts.push({
+        sql: `INSERT INTO inspirations (id, book_id, type, title, content, tags, source, favorited, metadata, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          crypto.randomUUID(),
+          newBookId,
+          String(ins.type ?? 'whatif_report'),
+          (ins.title as string) ?? null,
+          String(ins.content ?? '{}'),
+          (ins.tags as string) ?? '[]',
+          String(ins.source ?? 'ai'),
+          Number(ins.favorited ?? 0),
+          (ins.metadata as string) ?? null,
+          Number(ins.created_at ?? now)
+        ]
+      });
+    }
+
+    // 写作统计与目标
+    for (const ws of meta.writingStats ?? []) {
+      stmts.push({
+        sql: `INSERT INTO writing_stats (id, book_id, date, words_written, chapters_worked, session_duration, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          crypto.randomUUID(),
+          newBookId,
+          String(ws.date ?? ''),
+          Number(ws.words_written ?? 0),
+          (ws.chapters_worked as string) ?? null,
+          Number(ws.session_duration ?? 0),
+          Number(ws.created_at ?? now)
+        ]
+      });
+    }
+    for (const wg of meta.writingGoals ?? []) {
+      stmts.push({
+        sql: `INSERT INTO writing_goals (book_id, daily_target, total_target, updated_at) VALUES (?, ?, ?, ?)`,
+        params: [newBookId, Number(wg.daily_target ?? 3000), Number(wg.total_target ?? 0), now]
+      });
+    }
+
+    // 长文会话（chapter_id 重映射；beats JSON 原样保留）
+    for (const ls of meta.longformSessions ?? []) {
+      const chapterId = oldToNewChapterId.get(String(ls.chapter_id ?? ''));
+      if (!chapterId) continue;
+      stmts.push({
+        sql: `INSERT INTO longform_sessions (id, book_id, chapter_id, status, beats, current_beat_index, used_tokens, estimated_tokens, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          crypto.randomUUID(),
+          newBookId,
+          chapterId,
+          String(ls.status ?? 'paused'),
+          String(ls.beats ?? '[]'),
+          Number(ls.current_beat_index ?? 0),
+          Number(ls.used_tokens ?? 0),
+          Number(ls.estimated_tokens ?? 0),
+          Number(ls.created_at ?? now),
+          now
+        ]
+      });
+    }
+
+    // v3：项目级指令文件恢复（zip directives/ -> 新书 storageDir 根）
+    const agentsRaw = files.get('directives/agents.md');
+    const hookRaw = files.get('directives/hook.md');
+    if (agentsRaw) await this.bridge.fs.writeFile(`${storageDir}/agents.md`, this.decode(agentsRaw));
+    if (hookRaw) await this.bridge.fs.writeFile(`${storageDir}/hook.md`, this.decode(hookRaw));
+
     await this.wq.enqueue(() =>
       this.db.transaction(async (tx) => {
         for (const s of stmts) {
@@ -347,4 +583,65 @@ function remapImageAssetIds(doc: ProseMirrorDoc, mapping: Map<string, string>): 
     if (Array.isArray(n.content)) n.content.forEach(walk);
   };
   for (const block of (doc.content ?? []) as unknown[]) walk(block);
+}
+
+/** 地图 data JSON 重映射：节点 worldbookEntryId -> 新世界书条目 ID（解析失败原样返回） */
+function remapMapData(dataJson: string, wbMap: Map<string, string>): string {
+  if (wbMap.size === 0) return dataJson;
+  try {
+    const data = JSON.parse(dataJson) as { nodes?: Array<{ worldbookEntryId?: string }> };
+    for (const n of data.nodes ?? []) {
+      if (n.worldbookEntryId) {
+        n.worldbookEntryId = wbMap.get(n.worldbookEntryId) ?? n.worldbookEntryId;
+      }
+    }
+    return JSON.stringify(data);
+  } catch {
+    return dataJson;
+  }
+}
+
+/** 剧本 data JSON 重映射：场 sourceChapterId -> 新章节 ID；镜 imageAssetId -> 新图片 ID */
+function remapScreenplayData(
+  dataJson: string,
+  chapterMap: Map<string, string>,
+  imageMap: Map<string, string>
+): string {
+  try {
+    const data = JSON.parse(dataJson) as {
+      episodes?: Array<{
+        scenes?: Array<{ sourceChapterId?: string; shots?: Array<{ imageAssetId?: string }> }>;
+      }>;
+    };
+    for (const ep of data.episodes ?? []) {
+      for (const sc of ep.scenes ?? []) {
+        if (sc.sourceChapterId) {
+          sc.sourceChapterId = chapterMap.get(sc.sourceChapterId) ?? sc.sourceChapterId;
+        }
+        for (const st of sc.shots ?? []) {
+          if (st.imageAssetId) {
+            st.imageAssetId = imageMap.get(st.imageAssetId) ?? st.imageAssetId;
+          }
+        }
+      }
+    }
+    return JSON.stringify(data);
+  } catch {
+    return dataJson;
+  }
+}
+
+/** 剧本 source_range JSON 重映射（{fromChapterId,toChapterId}；非法原样返回 null 语义由调用方处理） */
+function remapSourceRange(rangeJson: string, chapterMap: Map<string, string>): string | null {
+  if (!rangeJson || rangeJson === 'null') return null;
+  try {
+    const sr = JSON.parse(rangeJson) as { fromChapterId?: string; toChapterId?: string };
+    if (!sr.fromChapterId || !sr.toChapterId) return null;
+    const from = chapterMap.get(sr.fromChapterId);
+    const to = chapterMap.get(sr.toChapterId);
+    if (!from || !to) return null;
+    return JSON.stringify({ fromChapterId: from, toChapterId: to });
+  } catch {
+    return null;
+  }
 }

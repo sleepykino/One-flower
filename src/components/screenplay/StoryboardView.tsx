@@ -16,7 +16,10 @@ import type { ImageAsset } from '../../services/image/types';
 interface Props {
   bookId: string;
   screenplay: Screenplay;
+  /** 批量任务期间由 Workbench 事件驱动重拉（低频） */
   onChanged: () => void;
+  /** 单镜操作用服务返回值局部更新（高频） */
+  onUpdated: (sp: Screenplay) => void;
 }
 
 interface FlatShot {
@@ -119,7 +122,7 @@ function LibraryPicker({
   );
 }
 
-export function StoryboardView({ bookId, screenplay, onChanged }: Props): JSX.Element {
+export function StoryboardView({ bookId, screenplay, onChanged, onUpdated }: Props): JSX.Element {
   const [epIdx, setEpIdx] = useState(0);
   const [urls, setUrls] = useState<Record<string, string>>({});
   const [generatingShotId, setGeneratingShotId] = useState<string | null>(null);
@@ -193,9 +196,9 @@ export function StoryboardView({ bookId, screenplay, onChanged }: Props): JSX.El
       try {
         const { storyboardService } = getAppContext();
         const prompt = await storyboardService.buildShotPrompt(bookId, item.scene, shot);
-        await storyboardService.saveShotImage(bookId, screenplay.id, shot, image, prompt);
+        const sp = await storyboardService.saveShotImage(bookId, screenplay.id, shot, image, prompt);
         setCandidates(null);
-        onChanged();
+        if (sp) onUpdated(sp);
       } catch (e) {
         void alertDialog(`保存失败：${e instanceof Error ? e.message : String(e)}`);
       }
@@ -213,8 +216,8 @@ export function StoryboardView({ bookId, screenplay, onChanged }: Props): JSX.El
         if (!file || typeof file !== 'string') return;
         const { imageAssetService, screenplayService } = getAppContext();
         const asset = await imageAssetService.importFromFile(bookId, file, 'storyboard', shot.id);
-        await screenplayService.setShotImage(screenplay.id, shot.id, asset.id);
-        onChanged();
+        const sp = await screenplayService.setShotImage(screenplay.id, shot.id, asset.id);
+        if (sp) onUpdated(sp);
       } catch (e) {
         void alertDialog(`上传失败：${e instanceof Error ? e.message : String(e)}`);
       }
@@ -225,9 +228,9 @@ export function StoryboardView({ bookId, screenplay, onChanged }: Props): JSX.El
   const pickFromLibrary = (shot: Shot, assetId: string): void => {
     void getAppContext()
       .screenplayService.setShotImage(screenplay.id, shot.id, assetId)
-      .then(() => {
+      .then((sp) => {
         setLibraryFor(null);
-        onChanged();
+        if (sp) onUpdated(sp);
       })
       .catch((e) => void alertDialog(`回填失败：${e instanceof Error ? e.message : String(e)}`));
   };
@@ -235,7 +238,9 @@ export function StoryboardView({ bookId, screenplay, onChanged }: Props): JSX.El
   const clearImage = (shot: Shot): void => {
     void getAppContext()
       .screenplayService.setShotImage(screenplay.id, shot.id, undefined, undefined)
-      .then(onChanged);
+      .then((sp) => {
+        if (sp) onUpdated(sp);
+      });
   };
 
   const generateMissing = (): void => {
