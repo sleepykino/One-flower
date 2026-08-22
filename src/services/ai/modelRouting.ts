@@ -1,7 +1,10 @@
 /**
- * AI 模型分工（P2 二期）：按功能点路由到不同 Provider 配置，控制成本与质量
+ * AI 模型分工（P2 二期，PR-A 属性化重构）：按功能点路由到不同 Provider 配置，控制成本与质量
  * 存储 app_settings key 'ai.featureModels'：{ [featureKey]: configId }
  * 向量嵌入沿用旧 key（embedding.providerConfigId / embedding.model），仅 UI 并入统一表格
+ *
+ * 分类学（PR-A 定稿）：domain 是唯一的 UI 分组维度（用户按"我在配置什么"找功能）；
+ * cost（模型强度建议）以徽章呈现、trigger（自动/手动）以文案呈现，二者永远不做分组。
  */
 
 import type { AppSettingsService } from '../settings/AppSettingsService';
@@ -28,55 +31,60 @@ export type FeatureKey =
   | 'image'
   | 'image-prompt';
 
-export type FeatureGroup = 'generate' | 'review' | 'assist' | 'vector' | 'inspiration' | 'image';
+/** 功能域：唯一的 UI 分组维度 */
+export type FeatureDomain =
+  | 'writing' // 写作生成
+  | 'review' // 规划与校验
+  | 'brainstorm' // 灵感与素材
+  | 'visual' // 视觉生成
+  | 'speech' // 语音（P6 stt 接入）
+  | 'background'; // 向量与后台
+
+/** 模型强度建议：徽章呈现，不做分组 */
+export type FeatureCost = 'premium' | 'standard' | 'economy';
+
+/** 触发方式：auto = 后台自动运行（描述文案提示频率） */
+export type FeatureTrigger = 'manual' | 'auto';
 
 export interface FeatureMeta {
   key: FeatureKey;
   label: string;
   desc: string;
-  group: FeatureGroup;
+  domain: FeatureDomain;
+  cost: FeatureCost;
+  trigger: FeatureTrigger;
 }
 
-export const FEATURE_GROUPS: Array<{ key: FeatureGroup; label: string; desc: string }> = [
-  { key: 'generate', label: '生成（影响正文质量）', desc: '建议使用强模型' },
-  { key: 'review', label: '规划与校验', desc: '中频任务，中档模型即可' },
-  { key: 'assist', label: '后台辅助（量大）', desc: '每章自动运行，建议弱模型省钱' },
-  { key: 'vector', label: '向量', desc: '世界书与章节片段向量化检索' },
-  { key: 'inspiration', label: '灵感', desc: '种子/卡片/采访/推演等灵感辅助任务' },
-  { key: 'image', label: '图片（需接入图片模型）', desc: '封面 / 角色卡 / 正文插图的生成与提示词转写' }
+export const FEATURE_DOMAINS: Array<{ key: FeatureDomain; label: string; desc: string }> = [
+  { key: 'writing', label: '写作生成', desc: '直接影响正文质量，建议强模型' },
+  { key: 'review', label: '规划与校验', desc: '结构化分析任务，中档模型即可' },
+  { key: 'brainstorm', label: '灵感与素材', desc: '种子 / 卡片 / 采访 / 推演 / 命名' },
+  { key: 'visual', label: '视觉生成', desc: '图片生成、提示词转写与地图' },
+  { key: 'speech', label: '语音', desc: '语音转写（P6 接入）' },
+  { key: 'background', label: '向量与后台', desc: '自动运行的高频任务，省钱优先' }
 ];
 
 export const AI_FEATURES: FeatureMeta[] = [
-  { key: 'continue', label: '续写', desc: '长文模式正文生成同此配置', group: 'generate' },
-  { key: 'rewrite', label: '改写', desc: '选中段落按指令改写', group: 'generate' },
-  { key: 'dialogue', label: '对白', desc: '场景对白生成', group: 'generate' },
-  { key: 'check', label: '一致性检查', desc: '角色卡/世界书/时代感基线比对', group: 'review' },
-  { key: 'typo-check', label: '错字检查', desc: '当前章节错别字校对', group: 'review' },
-  { key: 'longform-draft', label: '长文节拍规划', desc: '长文模式第一步的节拍表初稿', group: 'review' },
-  { key: 'longform-seam', label: '接缝审阅', desc: '长文完成后的接缝自检', group: 'review' },
-  { key: 'fact-extract', label: '设定事实抽取', desc: '从世界书/角色/章节抽取事实', group: 'review' },
-  { key: 'inference', label: '推导链', desc: '按领域推导技术/社会前提', group: 'review' },
-  { key: 'baseline-check', label: '越级校验', desc: '独立入口的越级矛盾检查', group: 'review' },
-  { key: 'summary', label: '章节摘要', desc: '保存章节后自动生成（高频）', group: 'assist' },
-  { key: 'namegen', label: '命名生成', desc: '角色/地点/招式/势力命名', group: 'assist' },
-  { key: 'map', label: '地图生成', desc: '世界地图 AI 生成', group: 'assist' },
-  { key: 'embedding', label: '向量嵌入', desc: '世界书条目与章节片段向量化', group: 'vector' },
-  { key: 'seed-gen', label: '故事种子', desc: '题材+元素组合生成故事钩子', group: 'inspiration' },
-  { key: 'card-gen', label: '灵感卡片', desc: '每日灵感卡片生成', group: 'inspiration' },
-  { key: 'interview', label: '角色采访', desc: 'AI 扮演角色回答提问', group: 'inspiration' },
-  { key: 'whatif', label: '假设推演', desc: '"如果…会怎样"剧情影响推演', group: 'inspiration' },
-  {
-    key: 'image',
-    label: '图片生成',
-    desc: '生图模型（需绑定模型为图片模型的配置）',
-    group: 'image'
-  },
-  {
-    key: 'image-prompt',
-    label: '图片提示词转写',
-    desc: '中文场景描述转写为专业图片 prompt（可选便宜对话模型）',
-    group: 'image'
-  }
+  { key: 'continue', label: '续写', desc: '长文模式正文生成同此配置', domain: 'writing', cost: 'premium', trigger: 'manual' },
+  { key: 'rewrite', label: '改写', desc: '选中段落按指令改写', domain: 'writing', cost: 'premium', trigger: 'manual' },
+  { key: 'dialogue', label: '对白', desc: '场景对白生成', domain: 'writing', cost: 'premium', trigger: 'manual' },
+  { key: 'longform-draft', label: '长文节拍规划', desc: '长文模式第一步的节拍表初稿', domain: 'writing', cost: 'premium', trigger: 'manual' },
+  { key: 'check', label: '一致性检查', desc: '角色卡/世界书/时代感基线比对', domain: 'review', cost: 'standard', trigger: 'manual' },
+  { key: 'typo-check', label: '错字检查', desc: '当前章节错别字校对', domain: 'review', cost: 'standard', trigger: 'manual' },
+  { key: 'longform-seam', label: '接缝审阅', desc: '长文完成后的接缝自检', domain: 'review', cost: 'standard', trigger: 'manual' },
+  { key: 'fact-extract', label: '设定事实抽取', desc: '从世界书/角色/章节抽取事实', domain: 'review', cost: 'standard', trigger: 'manual' },
+  { key: 'inference', label: '推导链', desc: '按领域推导技术/社会前提', domain: 'review', cost: 'standard', trigger: 'manual' },
+  { key: 'baseline-check', label: '越级校验', desc: '独立入口的越级矛盾检查', domain: 'review', cost: 'standard', trigger: 'manual' },
+  { key: 'seed-gen', label: '故事种子', desc: '题材+元素组合生成故事钩子', domain: 'brainstorm', cost: 'standard', trigger: 'manual' },
+  { key: 'card-gen', label: '灵感卡片', desc: '每日灵感卡片生成', domain: 'brainstorm', cost: 'standard', trigger: 'manual' },
+  { key: 'interview', label: '角色采访', desc: 'AI 扮演角色回答提问', domain: 'brainstorm', cost: 'standard', trigger: 'manual' },
+  { key: 'whatif', label: '假设推演', desc: '"如果…会怎样"剧情影响推演', domain: 'brainstorm', cost: 'standard', trigger: 'manual' },
+  { key: 'namegen', label: '命名生成', desc: '角色/地点/招式/势力命名', domain: 'brainstorm', cost: 'standard', trigger: 'manual' },
+  { key: 'image', label: '图片生成', desc: '生图模型（需绑定模型为图片模型的配置）', domain: 'visual', cost: 'standard', trigger: 'manual' },
+  { key: 'image-prompt', label: '图片提示词转写', desc: '中文场景描述转写为专业图片 prompt（可选便宜对话模型）', domain: 'visual', cost: 'standard', trigger: 'manual' },
+  { key: 'map', label: '地图生成', desc: '世界地图 AI 生成', domain: 'visual', cost: 'standard', trigger: 'manual' },
+  { key: 'summary', label: '章节摘要', desc: '保存章节后自动生成（高频）', domain: 'background', cost: 'economy', trigger: 'auto' },
+  { key: 'embedding', label: '向量嵌入', desc: '世界书条目与章节片段向量化', domain: 'background', cost: 'economy', trigger: 'auto' }
 ];
 
 const KEY_BINDINGS = 'ai.featureModels';

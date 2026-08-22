@@ -66,6 +66,9 @@ export function createProvider(config: ProviderConfig, apiKey: string): LLMProvi
       return new AnthropicProvider(config, apiKey);
     case 'google':
       return new GoogleProvider(config, apiKey);
+    case 'comfyui':
+      // ComfyUI 是生图专用配置（走 createImageProvider），对话工厂显式拦截
+      throw new Error('ComfyUI 是生图专用配置，不能绑定续写/改写等对话功能，请在「模型分工」中绑定到图片生成');
     default:
       throw new Error(`未知 provider 类型: ${config.provider}`);
   }

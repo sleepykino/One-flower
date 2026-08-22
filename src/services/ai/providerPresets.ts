@@ -115,5 +115,35 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     defaultModel: 'deepseek-ai/DeepSeek-V4-Flash',
     keyUrl: 'https://cloud.siliconflow.cn/account/ak',
     note: '国内聚合平台，一个 Key 调用多家开源模型，免费额度可用'
+  },
+  {
+    key: 'ollama',
+    label: 'Ollama（本地）',
+    provider: 'openai_compat',
+    baseUrl: 'http://localhost:11434/v1',
+    models: [],
+    defaultModel: '',
+    keyUrl: 'https://ollama.com/library',
+    note: '本地运行，无需 API Key；需先安装 Ollama 并 ollama pull 拉取模型，接入后点「拉取模型列表」选择'
+  },
+  {
+    key: 'lmstudio',
+    label: 'LM Studio（本地）',
+    provider: 'openai_compat',
+    baseUrl: 'http://localhost:1234/v1',
+    models: [],
+    defaultModel: '',
+    keyUrl: 'https://lmstudio.ai/',
+    note: '本地运行，无需 API Key；需在 LM Studio 中下载模型并启动本地服务器（Developer → Start Server）'
+  },
+  {
+    key: 'comfyui',
+    label: 'ComfyUI（本地生图）',
+    provider: 'comfyui',
+    baseUrl: 'http://127.0.0.1:8188',
+    models: [],
+    defaultModel: '',
+    keyUrl: 'https://github.com/comfyanonymous/ComfyUI',
+    note: '本地 ComfyUI，无需 API Key；需运行中并加载模型。配置的「模型」填 Checkpoint 名（可选），绑定到「模型分工 → 视觉生成 → 图片生成」'
   }
 ];

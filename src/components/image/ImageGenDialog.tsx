@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { getAppContext } from '../../context/app-context';
-import { resolveImageProvider } from '../../services/ai/providers/ImageProvider';
+import { resolveImageProvider, KEY_COMFY_WORKFLOW, KEY_COMFY_WORKFLOW_ACTIVE } from '../../services/ai/providers/ImageProvider';
 import type { ImageSize } from '../../services/ai/providers/ImageProvider';
 import { IMAGE_SIZES, MAX_IMAGE_CANDIDATES } from '../../services/ai/providers/ImageProvider';
 import { sceneDescription } from '../../services/image/ImagePromptService';
@@ -48,6 +48,30 @@ export function ImageGenDialog({ bookId, scene, usage, refId, title, onConfirm, 
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const objUrlsRef = useRef<string[]>([]);
+  // P4-M2：生图配置为 ComfyUI 且已导入自定义工作流时，高级模式可选工作流
+  const [isComfy, setIsComfy] = useState(false);
+  const [hasCustomWf, setHasCustomWf] = useState(false);
+  const [wfActive, setWfActive] = useState<'builtin' | 'custom'>('builtin');
+
+  useEffect(() => {
+    void (async () => {
+      const { appSettings } = getAppContext();
+      const custom = await appSettings.get(KEY_COMFY_WORKFLOW);
+      if (custom) {
+        setHasCustomWf(true);
+        setWfActive((await appSettings.get(KEY_COMFY_WORKFLOW_ACTIVE)) === 'custom' ? 'custom' : 'builtin');
+      }
+      // 当前 image 功能绑定是否为 comfyui（未配置时静默）
+      await resolveImageProvider(bridge, bookId)
+        .then((r) => setIsComfy(r.provider.name === 'comfyui'))
+        .catch(() => undefined);
+    })();
+  }, [bookId]);
+
+  const switchWorkflow = (v: 'builtin' | 'custom'): void => {
+    setWfActive(v);
+    void getAppContext().appSettings.set(KEY_COMFY_WORKFLOW_ACTIVE, v);
+  };
 
   useEffect(() => {
     return () => {
@@ -231,6 +255,27 @@ export function ImageGenDialog({ bookId, scene, usage, refId, title, onConfirm, 
                     onChange={(e) => setManualNegative(e.target.value)}
                     placeholder="negative prompt（可选）：lowres, blurry, bad anatomy…"
                   />
+                  {isComfy && hasCustomWf && (
+                    <div className="mt-2 flex items-center gap-2 text-xs text-ink-600">
+                      <span className="text-ink-400">ComfyUI 工作流</span>
+                      <label className="flex cursor-pointer items-center gap-1">
+                        <input
+                          type="radio"
+                          checked={wfActive === 'builtin'}
+                          onChange={() => switchWorkflow('builtin')}
+                        />
+                        默认
+                      </label>
+                      <label className="flex cursor-pointer items-center gap-1">
+                        <input
+                          type="radio"
+                          checked={wfActive === 'custom'}
+                          onChange={() => switchWorkflow('custom')}
+                        />
+                        自定义
+                      </label>
+                    </div>
+                  )}
                 </div>
               )}
               <div className="mt-2 text-[11px] text-ink-400">

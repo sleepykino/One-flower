@@ -1,13 +1,18 @@
 /**
  * 模型接入子页：供应商快捷接入卡片 + 自定义 Provider 配置 CRUD + 连接测试
+ * P4：本地模型（Ollama/LM Studio）拉取模型列表；ComfyUI 生图配置 + 自定义工作流导入
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSettingsStore } from '../../store/settingsStore';
 import { getAppContext } from '../../context/app-context';
 import { alertDialog, confirmDialog } from '../../native/dialog';
 import { PROVIDER_PRESETS, type ProviderPreset } from '../../services/ai/providerPresets';
 import { QuickAddProviderDialog } from './QuickAddProviderDialog';
+import { isLocalBaseUrl } from '../../services/ai/providers/LLMProvider';
+import { listRemoteModels } from '../../services/ai/providers/modelList';
+import { KEY_COMFY_WORKFLOW } from '../../services/ai/providers/ImageProvider';
+import type { ComfyWorkflow } from '../../services/ai/providers/ComfyUIImageProvider';
 import type { ProviderConfig } from '../../types';
 
 type ProviderType = ProviderConfig['provider'];
@@ -15,7 +20,8 @@ type ProviderType = ProviderConfig['provider'];
 const PROVIDER_LABEL: Record<ProviderType, string> = {
   openai_compat: 'OpenAI 兼容（OpenAI / DeepSeek / Kimi / 智谱 / 通义…）',
   anthropic: 'Anthropic（Claude）',
-  google: 'Google（Gemini）'
+  google: 'Google（Gemini）',
+  comfyui: 'ComfyUI（本地生图）'
 };
 
 export function ModelsSection(): JSX.Element {
@@ -37,10 +43,81 @@ export function ModelsSection(): JSX.Element {
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, string>>({});
   const [quickAdd, setQuickAdd] = useState<ProviderPreset | null>(null);
+  // P4：编辑表单的模型拉取 + 自定义工作流状态
+  const [fetchedModels, setFetchedModels] = useState<string[] | null>(null);
+  const [fetching, setFetching] = useState(false);
+  const [fetchErr, setFetchErr] = useState<string | null>(null);
+  const [customWfNodes, setCustomWfNodes] = useState<number | null>(null);
+  const wfFileRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     void loadConfigs();
   }, [loadConfigs]);
+
+  // 已导入的自定义 ComfyUI 工作流（全局，app_settings）
+  useEffect(() => {
+    void (async () => {
+      const raw = await getAppContext().appSettings.get(KEY_COMFY_WORKFLOW);
+      if (!raw) return;
+      try {
+        const wf = JSON.parse(raw) as ComfyWorkflow;
+        if (wf && typeof wf === 'object') setCustomWfNodes(Object.keys(wf).length);
+      } catch {
+        /* 损坏则视为未导入 */
+      }
+    })();
+  }, []);
+
+  const fetchModels = async (): Promise<void> => {
+    if (!editing?.baseUrl.trim()) {
+      void alertDialog('请先填写 baseURL 再拉取');
+      return;
+    }
+    setFetching(true);
+    setFetchErr(null);
+    try {
+      const models = await listRemoteModels(editing.baseUrl, editing.apiKey.trim() || undefined);
+      setFetchedModels(models);
+      if (models.length === 0) setFetchErr('端点已连通但未返回模型列表');
+    } catch (e) {
+      setFetchedModels(null);
+      setFetchErr(`${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  /** 导入自定义 ComfyUI 工作流 JSON（校验为 API 格式 graph 后存 app_settings） */
+  const importWorkflow = (file: File): void => {
+    void (async () => {
+      try {
+        const text = await file.text();
+        const wf = JSON.parse(text) as ComfyWorkflow;
+        if (!wf || typeof wf !== 'object' || Array.isArray(wf)) {
+          throw new Error('不是有效的 ComfyUI 工作流（需要 API 格式的节点对象 JSON）');
+        }
+        for (const node of Object.values(wf)) {
+          if (!node || typeof node !== 'object' || typeof node.class_type !== 'string') {
+            throw new Error('节点缺少 class_type，请用 ComfyUI 的「导出（API 格式）」保存的 JSON');
+          }
+        }
+        await getAppContext().appSettings.set(KEY_COMFY_WORKFLOW, JSON.stringify(wf));
+        setCustomWfNodes(Object.keys(wf).length);
+      } catch (e) {
+        void alertDialog(`导入失败：${e instanceof Error ? e.message : String(e)}`);
+      }
+    })();
+  };
+
+  const clearWorkflow = (): void => {
+    void confirmDialog('清除已导入的自定义工作流？（生图将回到内置默认工作流）').then((ok) => {
+      if (!ok) return;
+      void getAppContext()
+        .appSettings.set(KEY_COMFY_WORKFLOW, null)
+        .then(() => setCustomWfNodes(null))
+        .catch((e) => void alertDialog(`清除失败：${e instanceof Error ? e.message : String(e)}`));
+    });
+  };
 
   /** 该预设是否已添加过（按名称+协议判断） */
   const presetAdded = (p: ProviderPreset): boolean =>
@@ -48,16 +125,25 @@ export function ModelsSection(): JSX.Element {
 
   const submit = async (): Promise<void> => {
     if (!editing) return;
-    if (!editing.name.trim() || !editing.model.trim()) {
-      void alertDialog('名称与模型必填');
+    if (!editing.name.trim()) {
+      void alertDialog('名称必填');
       return;
     }
-    if (editing.provider === 'openai_compat' && !editing.baseUrl.trim()) {
-      void alertDialog('OpenAI 兼容协议需填写 baseURL');
+    if (!editing.model.trim() && editing.provider !== 'comfyui') {
+      void alertDialog('模型必填');
+      return;
+    }
+    if (
+      (editing.provider === 'openai_compat' || editing.provider === 'comfyui') &&
+      !editing.baseUrl.trim()
+    ) {
+      void alertDialog('该协议需填写 baseURL');
       return;
     }
     await saveConfig(editing);
     setEditing(null);
+    setFetchedModels(null);
+    setFetchErr(null);
   };
 
   const test = async (id: string): Promise<void> => {
@@ -137,22 +223,98 @@ export function ModelsSection(): JSX.Element {
             <input
               value={editing.baseUrl}
               onChange={(e) => setEditing({ ...editing, baseUrl: e.target.value })}
-              placeholder={editing.provider === 'openai_compat' ? 'baseURL *，如 https://api.deepseek.com' : 'baseURL（可选）'}
-              className={editing.provider === 'openai_compat' ? 'col-span-1 rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400' : 'col-span-2 rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400'}
+              placeholder={
+                editing.provider === 'comfyui'
+                  ? 'baseURL *，如 http://127.0.0.1:8188'
+                  : editing.provider === 'openai_compat'
+                    ? 'baseURL *，如 https://api.deepseek.com'
+                    : 'baseURL（可选）'
+              }
+              className={editing.provider === 'anthropic' || editing.provider === 'google' ? 'col-span-2 rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400' : 'col-span-1 rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400'}
             />
-            <input
-              value={editing.model}
-              onChange={(e) => setEditing({ ...editing, model: e.target.value })}
-              placeholder="模型名，如 deepseek-v4-pro / gpt-5.5 / claude-sonnet-4-5"
-              className="rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400"
-            />
-            <input
-              type="password"
-              value={editing.apiKey}
-              onChange={(e) => setEditing({ ...editing, apiKey: e.target.value })}
-              placeholder={editing.id ? 'API Key（留空保持不变）' : 'API Key *'}
-              className="col-span-2 rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400"
-            />
+            <div className="col-span-1 flex gap-1">
+              <input
+                value={editing.model}
+                onChange={(e) => setEditing({ ...editing, model: e.target.value })}
+                placeholder={
+                  editing.provider === 'comfyui'
+                    ? 'Checkpoint 名（可选）'
+                    : '模型名，如 deepseek-v4-pro / gpt-5.5'
+                }
+                className="min-w-0 flex-1 rounded border border-ink-200 px-2 py-1 font-mono text-sm outline-none focus:border-violet-400"
+              />
+              {editing.provider === 'openai_compat' && (
+                <button
+                  type="button"
+                  disabled={fetching}
+                  className="shrink-0 rounded border border-ink-200 px-2 text-xs text-violet-600 hover:bg-ink-50 disabled:opacity-40"
+                  onClick={() => void fetchModels()}
+                >
+                  {fetching ? '…' : '拉取'}
+                </button>
+              )}
+            </div>
+            {fetchedModels && fetchedModels.length > 0 && (
+              <select
+                value={fetchedModels.includes(editing.model) ? editing.model : ''}
+                onChange={(e) => setEditing({ ...editing, model: e.target.value })}
+                className="col-span-2 rounded border border-ink-200 px-2 py-1 font-mono text-sm"
+              >
+                <option value="">选择已拉取的模型（{fetchedModels.length}）…</option>
+                {fetchedModels.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            )}
+            {fetchErr && (
+              <div className="col-span-2 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-700">
+                {fetchErr}
+              </div>
+            )}
+            {editing.provider !== 'comfyui' && (
+              <input
+                type="password"
+                value={editing.apiKey}
+                onChange={(e) => setEditing({ ...editing, apiKey: e.target.value })}
+                placeholder={editing.id ? 'API Key（留空保持不变）' : 'API Key *'}
+                className="col-span-2 rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400"
+              />
+            )}
+            {editing.provider === 'comfyui' && (
+              <div className="col-span-2 flex items-center gap-2 rounded border border-ink-100 bg-ink-50/60 px-2 py-1.5 text-xs text-ink-600">
+                <span className="text-ink-400">工作流</span>
+                {customWfNodes !== null ? (
+                  <span className="text-emerald-600">已导入自定义（{customWfNodes} 节点）</span>
+                ) : (
+                  <span>使用内置默认 txt2img 工作流</span>
+                )}
+                <button
+                  type="button"
+                  className="text-violet-600 hover:underline"
+                  onClick={() => wfFileRef.current?.click()}
+                >
+                  导入工作流 JSON
+                </button>
+                {customWfNodes !== null && (
+                  <button type="button" className="text-ink-400 hover:text-red-600" onClick={clearWorkflow}>
+                    清除
+                  </button>
+                )}
+                <input
+                  ref={wfFileRef}
+                  type="file"
+                  accept=".json,application/json"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) importWorkflow(f);
+                    e.target.value = '';
+                  }}
+                />
+              </div>
+            )}
           </div>
           <div className="mt-2 flex gap-2">
             <button
@@ -192,8 +354,15 @@ export function ModelsSection(): JSX.Element {
                 <span className="rounded bg-violet-100 px-1.5 text-[10px] text-violet-700">默认</span>
               )}
               <span className="rounded bg-ink-100 px-1.5 text-[10px] text-ink-500">
-                {c.provider === 'openai_compat' ? 'OpenAI 兼容' : c.provider}
+                {c.provider === 'openai_compat'
+                  ? 'OpenAI 兼容'
+                  : c.provider === 'comfyui'
+                    ? 'ComfyUI 生图'
+                    : c.provider}
               </span>
+              {isLocalBaseUrl(c.baseUrl) && (
+                <span className="rounded bg-sky-100 px-1.5 text-[10px] text-sky-700">本地</span>
+              )}
             </div>
             <div className="truncate text-xs text-ink-400">
               {c.model} · {c.baseUrl ?? '默认地址'}

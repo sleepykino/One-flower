@@ -261,7 +261,7 @@ export interface MapNode {
   color: string;
   /** 关联的世界书条目 id */
   worldbookEntryId?: string;
-  /** 图标元件 id（ICON_LIBRARY） */
+  /** 图标元件 id（ICON_LIBRARY）| 自定义素材引用 'asset:{素材id}'（素材库为全局跨书模块，地图重设计时落地，不复用书级 images 表） */
   icon?: string;
   /** 整体缩放 0.2~4，默认 1 */
   scale?: number;
@@ -290,6 +290,19 @@ export interface MapConnection {
   color?: string;
   /** 终点方向箭头，默认 false */
   arrow?: boolean;
+  /** 折线中间点（P4-M3 类型预留，渲染与编辑由地图重设计实现） */
+  waypoints?: Array<{ x: number; y: number }>;
+}
+
+/** 地图 data JSON 结构（maps.data 列）。version 由 migrate.ts 管理，P4-M3 起 = 1；
+ * 后续结构演化（多图层 tileLayers / 素材引用等）走 version + 迁移函数分支 */
+export interface MapData {
+  version: number;
+  nodes: MapNode[];
+  connections: MapConnection[];
+  desc?: string;
+  bg?: MapBackgroundTransform;
+  tiles?: MapTiles;
 }
 
 /** 底图变换（存 data JSON；图片文件存 appData，background 存相对路径） */

@@ -92,6 +92,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       [id]
     );
     if (!row) return { ok: false, message: '配置不存在' };
+    // ComfyUI：走 /system_stats 健康检查（生图专用，无对话接口）
+    if (String(row.provider) === 'comfyui') {
+      const { ComfyUIImageProvider } = await import('../services/ai/providers/ComfyUIImageProvider');
+      const ok = await ComfyUIImageProvider.healthCheck((row.base_url as string) || 'http://127.0.0.1:8188');
+      return ok
+        ? { ok: true, message: 'ComfyUI 连接成功' }
+        : { ok: false, message: '无法连接 ComfyUI（/system_stats 无响应），请确认服务已启动' };
+    }
     const apiKey = (await bridge.keyStore.getSecret(`provider_${id}`)) ?? '';
     // 本地端点（Ollama 等 localhost 服务）允许无 API Key
     if (!apiKey) {

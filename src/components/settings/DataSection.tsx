@@ -1,5 +1,5 @@
 /**
- * 数据与 Skill 子区块（从原设置页迁移）
+ * 数据管理子区块（PR-B 更名；Skill 目录作为数据位置信息保留，编辑入口在编辑器 rail「AI」分组）
  */
 
 import { useEffect, useState } from 'react';
@@ -26,7 +26,7 @@ export function DataSection(): JSX.Element {
 
   return (
     <div>
-      <h2 className="mb-2 font-medium">数据与 Skill</h2>
+      <h2 className="mb-2 font-medium">数据管理</h2>
       <div className="space-y-2">
         <div className="rounded border border-ink-100 bg-white px-3 py-2">
           <div className="flex items-center justify-between">

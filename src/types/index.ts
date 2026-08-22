@@ -79,7 +79,8 @@ export interface Foreshadowing {
 export interface ProviderConfig {
   id: string;
   name: string;
-  provider: 'openai_compat' | 'anthropic' | 'google';
+  /** 'comfyui' 为 P4 新增的本地生图专用协议（不能绑定对话功能） */
+  provider: 'openai_compat' | 'anthropic' | 'google' | 'comfyui';
   baseUrl: string | null;
   model: string;
   isDefault: boolean;

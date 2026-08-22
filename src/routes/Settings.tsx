@@ -1,7 +1,7 @@
 /**
- * Settings 页：侧边栏分区导航（Trae 式）+ 内容区
- * 分区：模型与服务（模型接入 / 模型分工）· AI 偏好（全局提示词）· 外观（编辑器）
- *      数据（备份与恢复 / 数据与 Skill）· 通用（更新与关于）
+ * Settings 页：侧边栏分区导航（Trae 式）+ 内容区（PR-B 重组）
+ * 分区：模型与服务（模型接入 / 模型分工）· 指令与风格（全局提示词 / 指令说明）· 外观（编辑器）
+ *      数据（备份与恢复 / 数据管理）· 通用（更新与关于）
  */
 
 import { useState } from 'react';
@@ -10,6 +10,7 @@ import {
   Plug,
   Route,
   PenLine,
+  BookMarked,
   Palette,
   FolderOpen,
   DatabaseBackup,
@@ -23,11 +24,13 @@ import { AppearanceSection } from '../components/settings/AppearanceSection';
 import { BackupSection } from '../components/settings/BackupSection';
 import { DataSection } from '../components/settings/DataSection';
 import { GeneralSection } from '../components/settings/GeneralSection';
+import { DirectivesGuideSection } from '../components/settings/DirectivesGuideSection';
 
 type SectionKey =
   | 'models'
   | 'routing'
   | 'prompts'
+  | 'directives'
   | 'appearance'
   | 'backup'
   | 'data'
@@ -48,8 +51,11 @@ const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
     ]
   },
   {
-    label: 'AI 偏好',
-    items: [{ key: 'prompts', label: '全局提示词', icon: PenLine }]
+    label: '指令与风格',
+    items: [
+      { key: 'prompts', label: '全局提示词', icon: PenLine },
+      { key: 'directives', label: '指令说明', icon: BookMarked }
+    ]
   },
   {
     label: '外观',
@@ -59,7 +65,7 @@ const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
     label: '数据',
     items: [
       { key: 'backup', label: '备份与恢复', icon: DatabaseBackup },
-      { key: 'data', label: '数据与 Skill', icon: FolderOpen }
+      { key: 'data', label: '数据管理', icon: FolderOpen }
     ]
   },
   {
@@ -72,9 +78,10 @@ const SECTION_TITLES: Record<SectionKey, string> = {
   models: '模型接入',
   routing: 'AI 模型分工',
   prompts: '全局提示词',
+  directives: '指令说明',
   appearance: '编辑器外观',
   backup: '备份与恢复',
-  data: '数据与 Skill',
+  data: '数据管理',
   general: '更新与关于'
 };
 
@@ -129,6 +136,7 @@ export function Settings(): JSX.Element {
           {section === 'models' && <ModelsSection />}
           {section === 'routing' && <FeatureModelsSection />}
           {section === 'prompts' && <GlobalPromptsSection />}
+          {section === 'directives' && <DirectivesGuideSection onGoSection={(s) => setSection(s)} />}
           {section === 'appearance' && <AppearanceSection />}
           {section === 'backup' && <BackupSection />}
           {section === 'data' && <DataSection />}

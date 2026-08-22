@@ -1,6 +1,6 @@
 /**
- * Editor 页：左侧章节树 / 中间编辑器 / 右侧多面板（AI / 角色 / 世界书 / 伏笔 / 历史 / Skill）
- * 顶栏：专注模式（沉浸写作）/ 地图 / 时间线 / 命名生成器 / 全局查找
+ * Editor 页：左侧章节树 / 中间编辑器 / 右侧多面板（PR-C：AI 含 Skill / 设定 / 灵感 / 资产 / 工具）
+ * 顶栏：专注模式 / 世界构建下拉（地图 / 时间线 / 命名生成，PR-D）/ 全局查找
  * Ctrl+Shift+F 全局查找
  */
 
@@ -20,6 +20,10 @@ import {
   FlaskConical,
   Pencil,
   ImageIcon,
+  Globe,
+  Map,
+  Clock,
+  Dices,
   type LucideIcon
 } from 'lucide-react';
 import { useEditorStore } from '../store/editorStore';
@@ -66,7 +70,7 @@ type RightTab =
 /** P2.1-M7 长文 tab 启用开关（Phase 7 已启用） */
 const LONGFORM_ENABLED = true;
 
-/** P2.1-M3：右侧面板分组（AI / 资料 / 工具），icon rail 呈现 */
+/** PR-C 重组后的右侧面板分组：AI（含 Skill）/ 设定 / 灵感 / 资产（P5 分镜落位）/ 工具（P5 剧本落位） */
 const RIGHT_TAB_GROUPS: Array<{
   label: string;
   tabs: Array<{ key: RightTab; title: string; icon: LucideIcon; hidden?: boolean }>;
@@ -75,25 +79,17 @@ const RIGHT_TAB_GROUPS: Array<{
     label: 'AI',
     tabs: [
       { key: 'ai', title: 'AI 助手', icon: Sparkles },
-      { key: 'longform', title: '长文', icon: Layers, hidden: !LONGFORM_ENABLED }
+      { key: 'longform', title: '长文', icon: Layers, hidden: !LONGFORM_ENABLED },
+      { key: 'skills', title: 'Skill', icon: Puzzle }
     ]
   },
   {
-    label: '资料',
+    label: '设定',
     tabs: [
       { key: 'context', title: '上下文', icon: Database },
       { key: 'characters', title: '角色', icon: Users },
       { key: 'worldbook', title: '世界书', icon: BookOpen },
-      { key: 'foreshadow', title: '伏笔', icon: GitBranch },
-      { key: 'library', title: '图库', icon: ImageIcon }
-    ]
-  },
-  {
-    label: '工具',
-    tabs: [
-      { key: 'history', title: '版本', icon: History },
-      { key: 'skills', title: 'Skill', icon: Puzzle },
-      { key: 'stats', title: '统计', icon: BarChart3 }
+      { key: 'foreshadow', title: '伏笔', icon: GitBranch }
     ]
   },
   {
@@ -101,6 +97,17 @@ const RIGHT_TAB_GROUPS: Array<{
     tabs: [
       { key: 'interview', title: '角色采访', icon: Mic },
       { key: 'whatif', title: '如果…会怎样', icon: FlaskConical }
+    ]
+  },
+  {
+    label: '资产',
+    tabs: [{ key: 'library', title: '图库', icon: ImageIcon }]
+  },
+  {
+    label: '工具',
+    tabs: [
+      { key: 'history', title: '版本', icon: History },
+      { key: 'stats', title: '统计', icon: BarChart3 }
     ]
   }
 ];
@@ -143,6 +150,8 @@ export function Editor(): JSX.Element {
   const [mapOpen, setMapOpen] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [namegenOpen, setNamegenOpen] = useState(false);
+  // PR-D：世界构建下拉开关
+  const [worldBuildOpen, setWorldBuildOpen] = useState(false);
   const [focusOn, setFocusOn] = useState(false);
   // P2.1-M7：未完成长文会话恢复横幅
   const [lfActive, setLfActive] = useState<LongFormSession | null>(null);
@@ -292,30 +301,70 @@ export function Editor(): JSX.Element {
           >
             专注
           </button>
-          <button
-            type="button"
-            className="rounded border border-ink-200 px-2 py-1 text-ink-500 hover:bg-ink-100"
-            title="世界地图编辑"
-            onClick={() => setMapOpen(true)}
-          >
-            地图
-          </button>
-          <button
-            type="button"
-            className="rounded border border-ink-200 px-2 py-1 text-ink-500 hover:bg-ink-100"
-            title="多时间线管理"
-            onClick={() => setTimelineOpen(true)}
-          >
-            时间线
-          </button>
-          <button
-            type="button"
-            className="rounded border border-ink-200 px-2 py-1 text-ink-500 hover:bg-ink-100"
-            title="角色 / 地点 / 招式 / 势力命名"
-            onClick={() => setNamegenOpen(true)}
-          >
-            命名
-          </button>
+          {/* PR-D：世界构建下拉（地图 / 时间线 / 命名生成；为地图重设计预留扩展位） */}
+          <div className="relative">
+            <button
+              type="button"
+              className={`flex items-center gap-1 rounded border px-2 py-1 hover:bg-ink-100 ${
+                worldBuildOpen || mapOpen || timelineOpen || namegenOpen
+                  ? 'border-violet-300 text-violet-700'
+                  : 'border-ink-200 text-ink-500'
+              }`}
+              onClick={() => setWorldBuildOpen((v) => !v)}
+            >
+              <Globe size={13} />
+              世界构建
+            </button>
+            {worldBuildOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setWorldBuildOpen(false)} />
+                <div className="absolute right-0 z-20 mt-1 w-52 rounded-lg border border-ink-200 bg-white py-1 shadow-lg">
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-ink-600 hover:bg-ink-50"
+                    onClick={() => {
+                      setWorldBuildOpen(false);
+                      setMapOpen(true);
+                    }}
+                  >
+                    <Map size={14} className="text-violet-500" />
+                    <span>
+                      地图
+                      <span className="ml-1 text-[10px] text-ink-400">世界地图编辑</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-ink-600 hover:bg-ink-50"
+                    onClick={() => {
+                      setWorldBuildOpen(false);
+                      setTimelineOpen(true);
+                    }}
+                  >
+                    <Clock size={14} className="text-violet-500" />
+                    <span>
+                      时间线
+                      <span className="ml-1 text-[10px] text-ink-400">多时间线管理</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-ink-600 hover:bg-ink-50"
+                    onClick={() => {
+                      setWorldBuildOpen(false);
+                      setNamegenOpen(true);
+                    }}
+                  >
+                    <Dices size={14} className="text-violet-500" />
+                    <span>
+                      命名生成
+                      <span className="ml-1 text-[10px] text-ink-400">角色 / 地点 / 招式 / 势力</span>
+                    </span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           <button
             type="button"
             className={`rounded border px-2 py-1 hover:bg-ink-100 ${leftOpen ? 'border-violet-300 text-violet-700' : 'border-ink-200 text-ink-500'}`}

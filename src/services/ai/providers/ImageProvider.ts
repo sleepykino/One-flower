@@ -7,6 +7,11 @@ import type { NativeBridge } from '../../../native/NativeBridge';
 import { resolveProviderConfigIdForFeature } from '../providerResolver';
 import { isLocalBaseUrl, type ProviderConfig } from './LLMProvider';
 import { OpenAICompatImageProvider } from './OpenAICompatImageProvider';
+import { ComfyUIImageProvider, type ComfyWorkflow } from './ComfyUIImageProvider';
+
+/** 自定义工作流存 app_settings 的 key（P4-M2） */
+export const KEY_COMFY_WORKFLOW = 'comfyui.workflow';
+export const KEY_COMFY_WORKFLOW_ACTIVE = 'comfyui.workflow.active';
 
 export type ImageSize = '512x512' | '768x768' | '1024x1024' | '1024x1536' | '1536x1024';
 
@@ -40,12 +45,22 @@ export interface ImageProvider {
 }
 
 /** 工厂：按 ProviderConfig.provider 创建（生图配置存 provider_configs，走 'image' 功能路由） */
-export function createImageProvider(config: ProviderConfig, apiKey: string): ImageProvider {
+export function createImageProvider(
+  config: ProviderConfig,
+  apiKey: string,
+  extra?: { workflow?: ComfyWorkflow }
+): ImageProvider {
   switch (config.provider) {
     case 'openai_compat':
       return new OpenAICompatImageProvider({
         baseUrl: config.baseUrl ?? 'https://api.openai.com/v1',
         apiKey,
+        model: config.model
+      });
+    case 'comfyui':
+      return new ComfyUIImageProvider({
+        baseUrl: config.baseUrl ?? 'http://127.0.0.1:8188',
+        workflow: extra?.workflow,
         model: config.model
       });
     default:
@@ -55,7 +70,7 @@ export function createImageProvider(config: ProviderConfig, apiKey: string): Ima
   }
 }
 
-/** 按功能路由解析生图 Provider（含 API Key 校验与本地端点豁免） */
+/** 按功能路由解析生图 Provider（含 API Key 校验与本地端点豁免；comfyui 时读 app_settings 自定义工作流） */
 export async function resolveImageProvider(
   bridge: NativeBridge,
   bookId: string
@@ -74,6 +89,29 @@ export async function resolveImageProvider(
   if (!apiKey && !isLocalBaseUrl(baseUrl)) {
     throw new Error(`配置「${String(row.name)}」未设置 API Key`);
   }
+  // comfyui：从 app_settings 读取自定义工作流与启用选择
+  let workflow: ComfyWorkflow | undefined;
+  if (String(row.provider) === 'comfyui') {
+    try {
+      const settingsRow = await bridge.db.queryOne<{ value: string }>(
+        'SELECT value FROM app_settings WHERE key = ?',
+        [KEY_COMFY_WORKFLOW]
+      );
+      if (settingsRow?.value) {
+        const parsed = JSON.parse(settingsRow.value) as ComfyWorkflow;
+        if (parsed && typeof parsed === 'object') {
+          const active = await bridge.db.queryOne<{ value: string }>(
+            'SELECT value FROM app_settings WHERE key = ?',
+            [KEY_COMFY_WORKFLOW_ACTIVE]
+          );
+          if (active?.value !== 'custom') workflow = undefined;
+          else workflow = parsed;
+        }
+      }
+    } catch {
+      // 自定义工作流损坏则回退默认工作流
+    }
+  }
   const provider = createImageProvider(
     {
       id: String(row.id),
@@ -82,7 +120,8 @@ export async function resolveImageProvider(
       baseUrl: baseUrl || undefined,
       model: String(row.model)
     },
-    apiKey
+    apiKey,
+    { workflow }
   );
   return { provider, model: String(row.model), configId, configName: String(row.name) };
 }

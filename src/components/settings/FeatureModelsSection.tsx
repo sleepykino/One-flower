@@ -1,16 +1,27 @@
 /**
- * AI 模型分工子页（P2 二期简化版）：按功能点指定 Provider 配置，控制成本与质量
- * 两级路由：功能绑定 -> 第一组配置（书籍级设定已移除，全部在此统一配置）
- * 向量嵌入并入本表格（沿用 embedding.* 存储键）
+ * AI 模型分工子页（PR-A 重构）：按功能域（domain）分组指定 Provider 配置
+ * 强度建议（cost）以徽章呈现、自动任务（trigger）以文案标记，均不做分组
+ * 两级路由：功能绑定 -> 第一组配置；向量嵌入并入本表格（沿用 embedding.* 存储键）
  */
 
 import { useEffect, useMemo, useState } from 'react';
 import { useSettingsStore } from '../../store/settingsStore';
 import { getAppContext } from '../../context/app-context';
 import { alertDialog, confirmDialog } from '../../native/dialog';
-import { AI_FEATURES, FEATURE_GROUPS, type FeatureKey } from '../../services/ai/modelRouting';
+import {
+  AI_FEATURES,
+  FEATURE_DOMAINS,
+  type FeatureCost,
+  type FeatureKey
+} from '../../services/ai/modelRouting';
 
 const FOLLOW_DEFAULT = '__follow__';
+
+const COST_BADGE: Record<FeatureCost, { label: string; cls: string; hint: string }> = {
+  premium: { label: '强', cls: 'bg-violet-100 text-violet-700', hint: '建议强模型' },
+  standard: { label: '中', cls: 'bg-sky-100 text-sky-700', hint: '中档模型即可' },
+  economy: { label: '省', cls: 'bg-emerald-100 text-emerald-700', hint: '省钱优先' }
+};
 
 export function FeatureModelsSection(): JSX.Element {
   const configs = useSettingsStore((s) => s.configs);
@@ -107,8 +118,8 @@ export function FeatureModelsSection(): JSX.Element {
         </div>
       )}
 
-      {FEATURE_GROUPS.map((g) => {
-        const features = AI_FEATURES.filter((f) => f.group === g.key);
+      {FEATURE_DOMAINS.map((g) => {
+        const features = AI_FEATURES.filter((f) => f.domain === g.key);
         if (features.length === 0) return null;
         return (
           <div key={g.key} className="mb-4">
@@ -120,13 +131,27 @@ export function FeatureModelsSection(): JSX.Element {
               {features.map((f) => {
                 const bound = bindings[f.key];
                 const isEmbedding = f.key === 'embedding';
+                const badge = COST_BADGE[f.cost];
                 return (
                   <div
                     key={f.key}
                     className="flex items-center gap-2 border-b border-ink-50 px-2.5 py-2 last:border-b-0"
                   >
                     <div className="w-36 shrink-0">
-                      <div className="text-xs font-medium">{f.label}</div>
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={`rounded px-1 py-px text-[10px] font-medium ${badge.cls}`}
+                          title={badge.hint}
+                        >
+                          {badge.label}
+                        </span>
+                        <span className="text-xs font-medium">{f.label}</span>
+                        {f.trigger === 'auto' && (
+                          <span className="rounded bg-ink-100 px-1 py-px text-[10px] text-ink-500">
+                            后台自动
+                          </span>
+                        )}
+                      </div>
                       <div className="text-[10px] leading-4 text-ink-400">{f.desc}</div>
                     </div>
                     <select

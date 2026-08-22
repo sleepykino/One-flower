@@ -1,12 +1,13 @@
 /**
  * MapEditorService：地图 CRUD（maps 表，003 迁移）
- * data 列存 JSON.stringify({ nodes, connections, desc, bg })，行转对象时容错解析
+ * data 列存 JSON.stringify(MapData)（P4-M3 起恒带 version，读取统一经 migrateMapData 升级）
  * background_path 列存底图相对路径（相对 appData 目录）
  */
 
 import type { Database } from '../../db/Database';
 import type { WriteQueue } from '../../db/WriteQueue';
-import type { MapBackgroundTransform, MapConnection, MapNode, MapTiles, NovelMap } from './types';
+import type { NovelMap } from './types';
+import { MAP_DATA_VERSION, migrateMapData } from './migrate';
 
 interface MapRow {
   id: string;
@@ -20,36 +21,9 @@ interface MapRow {
   updated_at: number;
 }
 
-interface MapData {
-  nodes?: MapNode[];
-  connections?: MapConnection[];
-  desc?: string;
-  bg?: MapBackgroundTransform;
-  tiles?: MapTiles;
-}
-
-/** 瓦片层数据校验：cols/rows 为正且 data 长度匹配 */
-function validTiles(t: unknown): t is MapTiles {
-  if (!t || typeof t !== 'object') return false;
-  const tiles = t as MapTiles;
-  return (
-    Number.isInteger(tiles.cols) &&
-    tiles.cols > 0 &&
-    Number.isInteger(tiles.rows) &&
-    tiles.rows > 0 &&
-    Array.isArray(tiles.data) &&
-    tiles.data.length === tiles.cols * tiles.rows
-  );
-}
-
-/** 行 -> 对象：data JSON.parse，损坏/为空时容错为空内容 */
+/** 行 -> 对象：data 经 migrateMapData 容错升级（损坏/为空按空地图处理），保存后恒为当前版本 */
 function rowToMap(r: MapRow): NovelMap {
-  let data: MapData = {};
-  try {
-    data = JSON.parse(r.data) as MapData;
-  } catch {
-    // data 非法 JSON：按空地图处理
-  }
+  const data = migrateMapData(r.data);
   return {
     id: r.id,
     bookId: r.book_id,
@@ -59,9 +33,9 @@ function rowToMap(r: MapRow): NovelMap {
     background: r.background_path ?? undefined,
     bg: data.bg,
     desc: data.desc,
-    tiles: validTiles(data.tiles) ? data.tiles : undefined,
-    nodes: Array.isArray(data.nodes) ? data.nodes : [],
-    connections: Array.isArray(data.connections) ? data.connections : [],
+    tiles: data.tiles,
+    nodes: data.nodes,
+    connections: data.connections,
     createdAt: r.created_at,
     updatedAt: r.updated_at
   };
@@ -100,7 +74,7 @@ export class MapEditorService {
           map.name,
           map.width,
           map.height,
-          JSON.stringify({ nodes: [], connections: [] }),
+          JSON.stringify({ version: MAP_DATA_VERSION, nodes: [], connections: [] }),
           map.createdAt,
           map.updatedAt
         ]
@@ -120,6 +94,7 @@ export class MapEditorService {
           map.height,
           map.background ?? null,
           JSON.stringify({
+            version: MAP_DATA_VERSION,
             nodes: map.nodes,
             connections: map.connections,
             desc: map.desc,
@@ -174,6 +149,7 @@ export class MapEditorService {
           copy.height,
           copy.background ?? null,
           JSON.stringify({
+            version: MAP_DATA_VERSION,
             nodes: copy.nodes,
             connections: copy.connections,
             desc: copy.desc,
