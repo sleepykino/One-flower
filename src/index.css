@@ -8,6 +8,13 @@ body,
   height: 100%;
 }
 
+/* 桌面全屏应用：页面级滚动条永远不该出现（各页内部自管滚动）；
+   隐藏 body 滚动条可避免内容瞬时超高时整页左右抽搐 */
+html,
+body {
+  overflow: hidden;
+}
+
 body {
   @apply bg-ink-50 text-ink-900 antialiased;
   font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;

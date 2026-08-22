@@ -24,6 +24,7 @@ import {
   Map,
   Clock,
   Dices,
+  Clapperboard,
   type LucideIcon
 } from 'lucide-react';
 import { useEditorStore } from '../store/editorStore';
@@ -47,6 +48,8 @@ import { TaskIndicator } from '../components/task/TaskIndicator';
 import { CharacterInterview } from '../components/inspiration/CharacterInterview';
 import { WhatIfPanel } from '../components/inspiration/WhatIfPanel';
 import { ImageLibraryPanel } from '../components/image/ImageLibraryPanel';
+import { ScreenplayPanel } from '../components/screenplay/ScreenplayPanel';
+import { ScreenplayWorkbench } from '../components/screenplay/ScreenplayWorkbench';
 import { getAppContext } from '../context/app-context';
 import { alertDialog } from '../native/dialog';
 import type { LongFormSession } from '../services/longform/types';
@@ -65,7 +68,8 @@ type RightTab =
   | 'stats'
   | 'interview' // P2.1-B M3：角色采访
   | 'whatif' // P2.1-B M4：推演器
-  | 'library'; // P3：图库
+  | 'library' // P3：图库
+  | 'screenplay'; // P5：剧本控制台（重界面在 overlay）
 
 /** P2.1-M7 长文 tab 启用开关（Phase 7 已启用） */
 const LONGFORM_ENABLED = true;
@@ -107,7 +111,8 @@ const RIGHT_TAB_GROUPS: Array<{
     label: '工具',
     tabs: [
       { key: 'history', title: '版本', icon: History },
-      { key: 'stats', title: '统计', icon: BarChart3 }
+      { key: 'stats', title: '统计', icon: BarChart3 },
+      { key: 'screenplay', title: '剧本', icon: Clapperboard }
     ]
   }
 ];
@@ -150,6 +155,9 @@ export function Editor(): JSX.Element {
   const [mapOpen, setMapOpen] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [namegenOpen, setNamegenOpen] = useState(false);
+  // P5：剧本工作台 overlay（对齐 mapOpen 先例）
+  const [screenplayOpen, setScreenplayOpen] = useState(false);
+  const [screenplayInitial, setScreenplayInitial] = useState<{ id?: string; wizard?: boolean }>({});
   // PR-D：世界构建下拉开关
   const [worldBuildOpen, setWorldBuildOpen] = useState(false);
   const [focusOn, setFocusOn] = useState(false);
@@ -498,6 +506,15 @@ export function Editor(): JSX.Element {
                 {tab === 'interview' && <CharacterInterview bookId={bookId} />}
                 {tab === 'whatif' && <WhatIfPanel bookId={bookId} />}
                 {tab === 'library' && <ImageLibraryPanel bookId={bookId} />}
+                {tab === 'screenplay' && (
+                  <ScreenplayPanel
+                    bookId={bookId}
+                    onOpen={(spId, wizard) => {
+                      setScreenplayInitial({ id: spId, wizard });
+                      setScreenplayOpen(true);
+                    }}
+                  />
+                )}
               </div>
             </div>
           </div>
@@ -528,6 +545,14 @@ export function Editor(): JSX.Element {
       )}
       {timelineOpen && <TimelineView bookId={bookId} onClose={() => setTimelineOpen(false)} />}
       {namegenOpen && <NameGenerator bookId={bookId} onClose={() => setNamegenOpen(false)} />}
+      {screenplayOpen && (
+        <ScreenplayWorkbench
+          bookId={bookId}
+          initialScreenplayId={screenplayInitial.id}
+          initialWizard={screenplayInitial.wizard}
+          onClose={() => setScreenplayOpen(false)}
+        />
+      )}
     </div>
   );
 }

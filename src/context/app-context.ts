@@ -45,6 +45,9 @@ import { WhatIfSimulator } from '../services/inspiration/WhatIfSimulator';
 import { MultiPerspectiveRewriter } from '../services/inspiration/MultiPerspectiveRewriter';
 import { ImageAssetService } from '../services/image/ImageAssetService';
 import { ImagePromptService } from '../services/image/ImagePromptService';
+import { ScreenplayService } from '../services/screenplay/ScreenplayService';
+import { ScreenplayAdaptService } from '../services/screenplay/ScreenplayAdaptService';
+import { StoryboardService } from '../services/screenplay/StoryboardService';
 import { useTaskStore } from '../store/taskStore';
 import { createProvider, isLocalBaseUrl } from '../services/ai/providers/LLMProvider';
 import type { LLMProvider } from '../services/ai/providers/LLMProvider';
@@ -106,6 +109,12 @@ export interface AppContext {
   imageAssetService: ImageAssetService;
   /** P3：两段式提示词转写（中文场景 -> 英文图片 prompt） */
   imagePromptService: ImagePromptService;
+  /** P5：剧本 CRUD 与导出 */
+  screenplayService: ScreenplayService;
+  /** P5：小说→剧本转化编排（大纲 + 逐场生成，任务中心托管） */
+  screenplayAdapt: ScreenplayAdaptService;
+  /** P5：分镜图 prompt 组装与生成（含批量任务） */
+  storyboardService: StoryboardService;
 }
 
 let ctx: AppContext | null = null;
@@ -254,6 +263,17 @@ export async function initApp(): Promise<AppContext> {
   const imageAssetService = new ImageAssetService(tauriBridge, db, wq);
   const imagePromptService = new ImagePromptService(tauriBridge, providerFactory);
 
+  // P5 剧本工作台：CRUD/导出 + 转化编排 + 分镜图链路
+  const screenplayService = new ScreenplayService(tauriBridge, db, wq);
+  const screenplayAdapt = new ScreenplayAdaptService(
+    tauriBridge,
+    providerFactory,
+    screenplayService,
+    tasks,
+    projectDirectives
+  );
+  const storyboardService = new StoryboardService(tauriBridge, imageAssetService, screenplayService, tasks);
+
   ctx = {
     bridge: tauriBridge,
     db,
@@ -291,7 +311,10 @@ export async function initApp(): Promise<AppContext> {
     whatIfSimulator,
     multiPerspectiveRewriter,
     imageAssetService,
-    imagePromptService
+    imagePromptService,
+    screenplayService,
+    screenplayAdapt,
+    storyboardService
   };
   return ctx;
 }

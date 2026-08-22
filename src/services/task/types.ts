@@ -9,6 +9,8 @@ export type TaskKind =
   | 'inference'
   | 'consistency'
   | 'batch-embed'
+  | 'screenplay'
+  | 'storyboard'
   | 'generic';
 
 export type TaskStatus = 'running' | 'done' | 'failed' | 'cancelled';

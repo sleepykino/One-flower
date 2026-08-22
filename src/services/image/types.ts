@@ -3,7 +3,7 @@
  * 图片文件本体存 {storageDir}/assets/，SQLite 只存元数据（images 表）
  */
 
-export type ImageUsage = 'cover' | 'character' | 'illustration' | 'library';
+export type ImageUsage = 'cover' | 'character' | 'illustration' | 'library' | 'storyboard';
 export type ImageSource = 'upload' | 'ai';
 
 export interface ImageAsset {
@@ -55,5 +55,6 @@ export const USAGE_LABELS: Record<ImageUsage, string> = {
   cover: '封面',
   character: '角色',
   illustration: '插图',
-  library: '图库'
+  library: '图库',
+  storyboard: '分镜'
 };

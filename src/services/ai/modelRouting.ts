@@ -29,7 +29,9 @@ export type FeatureKey =
   | 'interview'
   | 'whatif'
   | 'image'
-  | 'image-prompt';
+  | 'image-prompt'
+  | 'script-outline'
+  | 'script-gen';
 
 /** 功能域：唯一的 UI 分组维度 */
 export type FeatureDomain =
@@ -82,6 +84,8 @@ export const AI_FEATURES: FeatureMeta[] = [
   { key: 'namegen', label: '命名生成', desc: '角色/地点/招式/势力命名', domain: 'brainstorm', cost: 'standard', trigger: 'manual' },
   { key: 'image', label: '图片生成', desc: '生图模型（需绑定模型为图片模型的配置）', domain: 'visual', cost: 'standard', trigger: 'manual' },
   { key: 'image-prompt', label: '图片提示词转写', desc: '中文场景描述转写为专业图片 prompt（可选便宜对话模型）', domain: 'visual', cost: 'standard', trigger: 'manual' },
+  { key: 'script-gen', label: '剧本逐场生成', desc: '小说→剧本转化：逐场生成镜头与对白（P5）', domain: 'writing', cost: 'premium', trigger: 'manual' },
+  { key: 'script-outline', label: '剧本大纲', desc: '转化第一阶段：集与场次大纲规划（P5）', domain: 'review', cost: 'standard', trigger: 'manual' },
   { key: 'map', label: '地图生成', desc: '世界地图 AI 生成', domain: 'visual', cost: 'standard', trigger: 'manual' },
   { key: 'summary', label: '章节摘要', desc: '保存章节后自动生成（高频）', domain: 'background', cost: 'economy', trigger: 'auto' },
   { key: 'embedding', label: '向量嵌入', desc: '世界书条目与章节片段向量化', domain: 'background', cost: 'economy', trigger: 'auto' }
