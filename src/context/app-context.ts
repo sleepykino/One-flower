@@ -23,6 +23,7 @@ import { ImportService } from '../services/import/ImportService';
 import { PromptAssembler } from '../services/ai/PromptAssembler';
 import { AIOrchestrator } from '../services/ai/AIOrchestrator';
 import { GlobalPromptService } from '../services/ai/GlobalPromptService';
+import { ProjectDirectiveService } from '../services/ai/ProjectDirectiveService';
 import { ModelRoutingService } from '../services/ai/modelRouting';
 import { SummaryService } from '../services/summary/SummaryService';
 import { AppSettingsService } from '../services/settings/AppSettingsService';
@@ -64,6 +65,8 @@ export interface AppContext {
   orchestrator: AIOrchestrator;
   /** P2.1-M1：自定义全局提示词 */
   globalPrompts: GlobalPromptService;
+  /** 项目级指令文件（agents.md 注入 / hook.md 后处理） */
+  projectDirectives: ProjectDirectiveService;
   /** P2 二期：AI 模型分工（按功能点路由 Provider 配置） */
   modelRouting: ModelRoutingService;
   summaryService: SummaryService;
@@ -213,6 +216,9 @@ export async function initApp(): Promise<AppContext> {
   // P2.1-M1：全局提示词（四模式统一注入 system 段，优先级高于 Skill）
   const globalPrompts = new GlobalPromptService(appSettings);
   orchestrator.setGlobalPromptService(globalPrompts);
+  // 项目级 agents.md / hook.md（storage_dir 文件）
+  const projectDirectives = new ProjectDirectiveService(tauriBridge);
+  orchestrator.setProjectDirectiveService(projectDirectives);
 
   // P2 二期：AI 模型分工（功能点 -> 配置绑定，控制成本）
   const modelRouting = new ModelRoutingService(appSettings);
@@ -263,6 +269,7 @@ export async function initApp(): Promise<AppContext> {
     promptAssembler,
     orchestrator,
     globalPrompts,
+    projectDirectives,
     modelRouting,
     summaryService,
     appSettings,

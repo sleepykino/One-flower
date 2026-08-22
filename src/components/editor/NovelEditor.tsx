@@ -87,6 +87,16 @@ function buildTempParagraphs(schema: Editor['state']['schema'], raw: string) {
   return texts.map((t) => schema.nodes.paragraph.create(null, schema.text(t)));
 }
 
+/** 以 fullText 为准整体重建未完成 AI 临时节点的内容（段落切分不受流式 chunk 边界影响） */
+function rebuildTempContent(editor: Editor, fullText: string) {
+  const found = findTemp(editor, true);
+  if (!found) return;
+  const paras = buildTempParagraphs(editor.state.schema, fullText);
+  editor.view.dispatch(
+    editor.state.tr.replaceWith(found.pos + 1, found.pos + found.node.nodeSize - 1, paras)
+  );
+}
+
 export function NovelEditor({ bookId }: { bookId: string }) {
   const currentChapterId = useEditorStore((s) => s.currentChapterId);
   const chapters = useEditorStore((s) => s.chapters);
@@ -424,9 +434,8 @@ export function NovelEditor({ bookId }: { bookId: string }) {
       },
       appendAITemp: (text) => {
         if (!text) return;
-        let found = findTemp(editor, true);
-        if (!found) {
-          // 继续补完：重新打开已完成的临时节点（aiTextRef 仍保留上次累计文本）
+        // 继续补完：重新打开已完成的临时节点（aiTextRef 仍保留上次累计文本）
+        if (!findTemp(editor, true)) {
           const anyTemp = findTemp(editor);
           if (!anyTemp) return;
           editor.view.dispatch(
@@ -435,19 +444,25 @@ export function NovelEditor({ bookId }: { bookId: string }) {
               done: false
             })
           );
-          found = { node: anyTemp.node, pos: anyTemp.pos };
         }
-        // 累计全文后整体重建临时节点内容：
-        // 段落切分完全确定（换行=分段、连续空行合并），不受流式 chunk 边界影响
         aiTextRef.current += text;
-        const schema = editor.state.schema;
-        const paras = buildTempParagraphs(schema, aiTextRef.current);
-        const tr = editor.state.tr.replaceWith(
-          found.pos + 1,
-          found.pos + found.node.nodeSize - 1,
-          paras
-        );
-        editor.view.dispatch(tr);
+        rebuildTempContent(editor, aiTextRef.current);
+      },
+      /** hook.md 后处理：整体替换临时节点全文 */
+      setAITempText: (text) => {
+        const anyTemp = findTemp(editor);
+        if (!anyTemp) return false;
+        if (anyTemp.node.attrs.done) {
+          editor.view.dispatch(
+            editor.state.tr.setNodeMarkup(anyTemp.pos, undefined, {
+              ...anyTemp.node.attrs,
+              done: false
+            })
+          );
+        }
+        aiTextRef.current = text;
+        rebuildTempContent(editor, text);
+        return true;
       },
       finishAITemp: () => {
         const found = findTemp(editor, true);

@@ -23,6 +23,8 @@ interface AIStore {
   startStream: () => AbortController;
   finishStream: (reason: 'done' | 'aborted' | 'error', error?: string) => void;
   appendText: (delta: string) => void;
+  /** 整体替换本次累计文本（hook.md 后处理替换用） */
+  setText: (text: string) => void;
   reset: () => void;
   setReport: (report: ConsistencyReport | null) => void;
   setTypoReport: (report: TypoReport | null) => void;
@@ -56,6 +58,8 @@ export const useAIStore = create<AIStore>((set) => ({
 
   appendText: (delta) =>
     set((s) => ({ generatedText: s.generatedText + delta })),
+
+  setText: (text) => set({ generatedText: text }),
 
   reset: () => set({ phase: 'idle', abortController: null, generatedText: '', error: null }),
 

@@ -25,6 +25,8 @@ export interface EditorApi {
   startAITemp(replaceRange?: { from: number; to: number }): void;
   /** 向 AI 临时节点追加流式文本 */
   appendAITemp(text: string): void;
+  /** 整体重设 AI 临时节点全文（hook.md 后处理替换用），返回是否生效 */
+  setAITempText(text: string): boolean;
   /** 标记临时节点完成（done 状态），返回其文本 */
   finishAITemp(): string | null;
   /** 保留：临时节点内容转为正式内容（续写在末尾；改写则替换选区） */

@@ -4,6 +4,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { BookOpen } from 'lucide-react';
 import { getAppContext } from '../../context/app-context';
 import { alertDialog } from '../../native/dialog';
 import { useEditorStore } from '../../store/editorStore';
@@ -14,6 +15,9 @@ import type { Character } from '../../types';
 import { ConsistencyReportView } from './ConsistencyReport';
 import { TypoReportView } from './TypoReportView';
 import { LongFormPanel } from './LongFormPanel';
+import { DirectiveModal } from './DirectiveModal';
+import { applyHookRules } from '../../services/ai/ProjectDirectiveService';
+import type { HookHit, HookRule } from '../../services/ai/ProjectDirectiveService';
 import type { AvailablePerspective } from '../../services/inspiration/types';
 
 const MODES: Array<{ key: AIMode; label: string }> = [
@@ -54,6 +58,10 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
     const t = parseFloat(temperature);
     return Number.isFinite(t) && t >= 0 && t <= 2 ? t : undefined;
   };
+  // hook.md 后处理命中（replace/warn/block 结构化展示）
+  const [hookHits, setHookHits] = useState<HookHit[] | null>(null);
+  // 本书指令（agents.md / hook.md）编辑弹窗
+  const [directivesOpen, setDirectivesOpen] = useState(false);
   const tokenValue = (): number | undefined =>
     Number.isFinite(maxTokens) && maxTokens > 0 ? Math.floor(maxTokens) : undefined;
 
@@ -100,7 +108,38 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
     return getAppContext().chapterService.recentChapters(bookId, currentChapterId, 3);
   };
 
-  /** 统一流式执行器：临时节点承载输出 */
+  /** 读取本书 hook.md 规则（读取失败按无规则处理，不打断生成） */
+  const loadHookRules = async (): Promise<HookRule[]> => {
+    try {
+      return await getAppContext().projectDirectives.hookRules(bookId);
+    } catch {
+      return [];
+    }
+  };
+
+  /**
+   * hook.md 后处理：对累计全文应用规则
+   * - replace：直接替换临时节点与 store 中的文本
+   * - warn：仅记录提示
+   * - block：返回违规原因（由调用方决定是否带反馈重试）
+   */
+  const applyHooks = (): Promise<string | null> => {
+    return (async () => {
+      const rules = await loadHookRules();
+      if (rules.length === 0) return null;
+      const api = useEditorStore.getState().editorApi;
+      const res = applyHookRules(rules, useAIStore.getState().generatedText);
+      if (res.replaced) {
+        api?.setAITempText(res.text);
+        useAIStore.getState().setText(res.text);
+      }
+      setHookHits(res.hits.length > 0 ? res.hits : null);
+      const blocked = res.blocked.map((h) => h.rule.value).filter(Boolean).join('；');
+      return blocked !== '' ? blocked : null;
+    })().catch(() => null);
+  };
+
+  /** 统一流式执行器：临时节点承载输出；hook block 命中时带反馈自动重试一次 */
   const runStream = async (
     kind: 'continue' | 'rewrite' | 'dialogue',
     range: { from: number; to: number } | null
@@ -112,49 +151,51 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
       return;
     }
     const controller = useAIStore.getState().startStream();
-    api.startAITemp(range ?? undefined);
+    setHookHits(null);
 
     // P2.1-M2：透传当前文档引用标记（orchestrator 注入 forcedRefs 全文）
     const aiReferences = api.getAiReferences();
 
     try {
       const recent = await gatherRecent();
-      let iterable: AsyncIterable<{ delta: string; done: boolean }>;
-      if (kind === 'continue') {
-        iterable = orchestrator.continueWriting({
-          bookId,
-          chapterId: currentChapterId,
-          currentContent: api.getPlainText(),
-          recentChapters: recent,
-          selectedCharacterIds: selectedCharIds,
-          requirement: continueReq.trim() || undefined,
-          aiReferences,
-          beat: beatDirect ? pendingBeat : undefined,
-          maxTokens: tokenValue(),
-          temperature: tempValue(),
-          signal: controller.signal
-        });
-      } else if (kind === 'rewrite') {
-        // P2.1-B M5：选了视角 -> 多视角重写（复用 rewrite 功能键，流式写临时节点）
-        const perspective = perspectives.find((p) => p.label === perspectiveId);
-        if (perspective) {
-          iterable = multiPerspectiveRewriter.rewrite({
+      const makeIterable = (feedback?: string): AsyncIterable<{ delta: string; done: boolean }> => {
+        if (kind === 'continue') {
+          const req = [continueReq.trim(), feedback].filter(Boolean).join('\n') || undefined;
+          return orchestrator.continueWriting({
             bookId,
             chapterId: currentChapterId,
-            selectedText,
-            perspective: perspective.label,
-            characterId: perspective.characterId,
-            tone: instruction.trim() || undefined,
+            currentContent: api.getPlainText(),
+            recentChapters: recent,
+            selectedCharacterIds: selectedCharIds,
+            requirement: req,
+            aiReferences,
+            beat: beatDirect ? pendingBeat : undefined,
             maxTokens: tokenValue(),
             temperature: tempValue(),
             signal: controller.signal
           });
-        } else {
-          iterable = orchestrator.rewrite({
+        }
+        if (kind === 'rewrite') {
+          // P2.1-B M5：选了视角 -> 多视角重写（复用 rewrite 功能键，流式写临时节点）
+          const perspective = perspectives.find((p) => p.label === perspectiveId);
+          if (perspective) {
+            return multiPerspectiveRewriter.rewrite({
+              bookId,
+              chapterId: currentChapterId,
+              selectedText,
+              perspective: perspective.label,
+              characterId: perspective.characterId,
+              tone: [instruction.trim(), feedback].filter(Boolean).join('\n') || undefined,
+              maxTokens: tokenValue(),
+              temperature: tempValue(),
+              signal: controller.signal
+            });
+          }
+          return orchestrator.rewrite({
             bookId,
             chapterId: currentChapterId,
             selectedText: selectedText,
-            instruction,
+            instruction: [instruction.trim(), feedback].filter(Boolean).join('\n'),
             recentChapters: recent,
             aiReferences,
             maxTokens: tokenValue(),
@@ -162,8 +203,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
             signal: controller.signal
           });
         }
-      } else {
-        iterable = orchestrator.generateDialogue({
+        return orchestrator.generateDialogue({
           bookId,
           chapterId: currentChapterId,
           scene,
@@ -174,12 +214,27 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
           temperature: tempValue(),
           signal: controller.signal
         });
-      }
-      for await (const chunk of iterable) {
-        if (chunk.delta) {
-          useAIStore.getState().appendText(chunk.delta);
-          api.appendAITemp(chunk.delta);
+      };
+
+      let feedback: string | undefined;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        api.startAITemp(range ?? undefined);
+        if (attempt > 0) useAIStore.getState().setText('');
+        const iterable = makeIterable(feedback);
+        for await (const chunk of iterable) {
+          if (chunk.delta) {
+            useAIStore.getState().appendText(chunk.delta);
+            api.appendAITemp(chunk.delta);
+          }
         }
+        // hook.md 后处理（block 命中且可重试时带反馈再来一次）
+        const blocked = await applyHooks();
+        if (blocked && attempt === 0 && kind !== 'dialogue') {
+          api.discardAITemp();
+          feedback = `上一次生成违反了本书规则：${blocked}。请重新生成，严格避免上述问题。`;
+          continue;
+        }
+        break;
       }
       api.finishAITemp();
       useAIStore.getState().finishStream('done');
@@ -230,6 +285,8 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
           api.appendAITemp(chunk.delta);
         }
       }
+      // hook.md 后处理（补完场景只做替换与提醒，不再重试）
+      await applyHooks();
       api.finishAITemp();
       useAIStore.getState().finishStream('done');
     } catch (e) {
@@ -338,6 +395,21 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
           长文
         </button>
       </div>
+
+      {/* 本书指令入口（agents.md 全局指令 + hook.md 输出规则） */}
+      {!longform && (
+        <div className="flex border-b border-ink-100 px-3 py-1.5">
+          <button
+            type="button"
+            className="flex items-center gap-1.5 rounded px-1.5 py-0.5 text-xs text-ink-500 hover:bg-ink-100 hover:text-violet-600"
+            onClick={() => setDirectivesOpen(true)}
+          >
+            <BookOpen size={13} />
+            本书指令
+            <span className="font-mono text-[10px] text-ink-400">agents.md · hook.md</span>
+          </button>
+        </div>
+      )}
 
       {/* P2.1-M7：长文模式四步向导 */}
       {longform ? (
@@ -510,6 +582,37 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
           </div>
         )}
 
+        {/* hook.md 后处理命中卡片 */}
+        {hookHits && hookHits.length > 0 && (
+          <div className="mx-3 mb-3 rounded-lg border border-amber-200 bg-amber-50/70 p-2.5">
+            <div className="mb-1.5 text-xs font-medium text-amber-700">hook 规则已应用</div>
+            <div className="space-y-1">
+              {hookHits.map((h, i) => (
+                <div key={i} className="flex items-center gap-2 text-xs">
+                  <span
+                    className={`shrink-0 rounded px-1.5 py-0.5 font-medium ${
+                      h.rule.action === 'replace'
+                        ? 'bg-violet-100 text-violet-700'
+                        : h.rule.action === 'warn'
+                          ? 'bg-amber-100 text-amber-700'
+                          : 'bg-red-100 text-red-700'
+                    }`}
+                  >
+                    {h.rule.action === 'replace' ? '已替换' : h.rule.action === 'warn' ? '提醒' : '已阻断'}
+                  </span>
+                  <span className="min-w-0 truncate font-mono text-ink-600">{h.rule.source}</span>
+                  <span className="shrink-0 text-ink-400">× {h.count}</span>
+                  {h.rule.value && (
+                    <span className="min-w-0 flex-1 truncate text-ink-500" title={h.rule.value}>
+                      {h.rule.value}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* 续写 tab 底部引导：切换长文模式（P2.1-M7） */}
         {mode === 'continue' && !streaming && !deciding && (
           <button
@@ -573,6 +676,8 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
           )}
         </div>
       )}
+      {/* 本书指令编辑弹窗 */}
+      {directivesOpen && <DirectiveModal bookId={bookId} onClose={() => setDirectivesOpen(false)} />}
     </div>
   );
 }

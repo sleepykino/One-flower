@@ -32,6 +32,8 @@ export interface PromptContext {
   selectedText?: string; // 改写/扩写选中的文本
   /** M1: 启用的全局提示词条目 */
   globalPrompts?: string[];
+  /** 项目级 agents.md 全文（本书全局指令书，优先级高于 globalPrompts 与 Skill） */
+  projectDirective?: string;
   /** M2: 强制引用（不受检索相似度影响） */
   forcedRefs?: ForcedReference[];
   /** M5: 当前应执行的节拍（定向续写） */
@@ -54,6 +56,7 @@ export interface TokenBudget {
   currentChapter: number; // ~3000
   userInstruction: number; // ~1000
   globalPrompts: number; // ~600（P2.1-M1，作者全局要求）
+  projectDirective: number; // ~1500（项目级 agents.md 指令书）
   forcedRefs: number; // ~1500（P2.1-M2，作者指定引用）
   reserved: number; // 生成预留 ~8000
 }
@@ -69,6 +72,7 @@ export const DEFAULT_TOKEN_BUDGET: TokenBudget = {
   currentChapter: 3000,
   userInstruction: 1000,
   globalPrompts: 600,
+  projectDirective: 1500,
   forcedRefs: 1500,
   reserved: 8000
 };
@@ -115,6 +119,13 @@ export class PromptAssembler {
     // ---- system：任务指令（system 预算内）----
     const task = MODE_TASK_INSTRUCTION[ctx.mode];
     systemParts.push(task);
+
+    // ---- system：项目级 agents.md（最高优先级，高于全局提示词与任何 Skill 指令）----
+    if (ctx.projectDirective && ctx.projectDirective.trim() !== '') {
+      systemParts.push(
+        `## 本书创作总纲（agents.md，优先级最高，高于全局要求、Skill 与任何其他指令；冲突时一律以本节为准）\n${truncateToTokenBudget(ctx.projectDirective, this.budget.projectDirective).text}`
+      );
+    }
 
     // ---- system：M1 作者全局要求（任务指令之后、Skill 之前；优先级显式高于 Skill）----
     if (ctx.globalPrompts && ctx.globalPrompts.length > 0) {
@@ -271,6 +282,8 @@ export class PromptAssembler {
   /** 调试用：返回组装后的各部分 token 占用 */
   inspect(ctx: PromptContext): TokenBreakdown[] {
     const out: TokenBreakdown[] = [];
+    const pdFit = truncateToTokenBudget(ctx.projectDirective ?? '', this.budget.projectDirective);
+    out.push({ part: 'projectDirective', tokens: countTokens(pdFit.text), truncated: pdFit.truncated });
     const gpAll = (ctx.globalPrompts ?? []).join('\n');
     const gpFit = truncateToTokenBudget(gpAll, this.budget.globalPrompts);
     out.push({ part: 'globalPrompts', tokens: countTokens(gpFit.text), truncated: gpFit.truncated });

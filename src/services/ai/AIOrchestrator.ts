@@ -10,6 +10,7 @@ import { DEFAULT_TOKEN_BUDGET } from './PromptAssembler';
 import type { LLMProvider, ChatChunk, ChatMessage } from './providers/LLMProvider';
 import { createProvider } from './providers/LLMProvider';
 import type { GlobalPromptService } from './GlobalPromptService';
+import type { ProjectDirectiveService } from './ProjectDirectiveService';
 import type { FeatureKey } from './modelRouting';
 import { resolveProviderConfigIdForFeature } from './providerResolver';
 import type { SummaryService } from '../summary/SummaryService';
@@ -58,6 +59,8 @@ export class AIOrchestrator {
   private lastContext = new Map<string, ContextSnapshot>();
   /** P2.1-M1：全局提示词（app-context 装配 setter 注入） */
   private globalPromptService?: GlobalPromptService;
+  /** 项目级 agents.md 指令书（app-context 装配 setter 注入） */
+  private projectDirectiveService?: ProjectDirectiveService;
 
   constructor(
     providerFactory: (configId: string) => Promise<LLMProvider>,
@@ -76,6 +79,11 @@ export class AIOrchestrator {
   /** P2.1-M1：全局提示词服务装配（同 search.setChapterService 先例） */
   setGlobalPromptService(gp: GlobalPromptService): void {
     this.globalPromptService = gp;
+  }
+
+  /** 项目级指令服务装配（agents.md 注入 system 段最高优先级） */
+  setProjectDirectiveService(pd: ProjectDirectiveService): void {
+    this.projectDirectiveService = pd;
   }
 
   /** ContextPanel 用：取最近一次调用的上下文快照 */
@@ -216,6 +224,13 @@ export class AIOrchestrator {
     bookId: string,
     aiReferences?: AiReference[]
   ): Promise<void> {
+    if (this.projectDirectiveService) {
+      try {
+        ctx.projectDirective = await this.projectDirectiveService.agentsText(bookId);
+      } catch (e) {
+        console.warn('[AI] 读取本书 agents.md 失败，已跳过:', e);
+      }
+    }
     if (this.globalPromptService) {
       try {
         ctx.globalPrompts = await this.globalPromptService.enabledTexts();
