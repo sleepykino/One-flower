@@ -39,7 +39,7 @@ export type FeatureDomain =
   | 'review' // 规划与校验
   | 'brainstorm' // 灵感与素材
   | 'visual' // 视觉生成
-  | 'speech' // 语音（P6 stt 接入）
+  | 'speech' // 语音（Pn1 stt 接入，已推迟）
   | 'background'; // 向量与后台
 
 /** 模型强度建议：徽章呈现，不做分组 */
@@ -62,7 +62,7 @@ export const FEATURE_DOMAINS: Array<{ key: FeatureDomain; label: string; desc: s
   { key: 'review', label: '规划与校验', desc: '结构化分析任务，中档模型即可' },
   { key: 'brainstorm', label: '灵感与素材', desc: '种子 / 卡片 / 采访 / 推演 / 命名' },
   { key: 'visual', label: '视觉生成', desc: '图片生成、提示词转写与地图' },
-  { key: 'speech', label: '语音', desc: '语音转写（P6 接入）' },
+  { key: 'speech', label: '语音', desc: '语音转写（Pn1 接入，已推迟）' },
   { key: 'background', label: '向量与后台', desc: '自动运行的高频任务，省钱优先' }
 ];
 

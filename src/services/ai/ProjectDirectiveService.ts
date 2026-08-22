@@ -50,8 +50,8 @@ export const HOOK_TEMPLATE = `# AI 输出规则（hook.md）
 <!-- 匹配部分也可直接写关键词（按字面匹配） -->
 
 replace /老头子/g => 老者
-warn /突然|忽然 => 过渡词密集，注意节奏
-block /手枪|步枪|炸弹 => 世界观为古代武侠，不允许热兵器
+warn /突然|忽然/g => 过渡词密集，注意节奏
+block /手枪|步枪|炸弹/g => 世界观为古代武侠，不允许热兵器
 `;
 
 export class ProjectDirectiveService {
