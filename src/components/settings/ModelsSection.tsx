@@ -6,7 +6,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSettingsStore } from '../../store/settingsStore';
 import { getAppContext } from '../../context/app-context';
-import { alertDialog, confirmDialog } from '../../native/dialog';
+import { confirmDialog } from '../../native/dialog';
+import { toast } from '../common/toast';
 import { PROVIDER_PRESETS, type ProviderPreset } from '../../services/ai/providerPresets';
 import { QuickAddProviderDialog } from './QuickAddProviderDialog';
 import { isLocalBaseUrl } from '../../services/ai/providers/LLMProvider';
@@ -70,7 +71,7 @@ export function ModelsSection(): JSX.Element {
 
   const fetchModels = async (): Promise<void> => {
     if (!editing?.baseUrl.trim()) {
-      void alertDialog('请先填写 baseURL 再拉取');
+      void toast.info('请先填写 baseURL 再拉取');
       return;
     }
     setFetching(true);
@@ -104,7 +105,7 @@ export function ModelsSection(): JSX.Element {
         await getAppContext().appSettings.set(KEY_COMFY_WORKFLOW, JSON.stringify(wf));
         setCustomWfNodes(Object.keys(wf).length);
       } catch (e) {
-        void alertDialog(`导入失败：${e instanceof Error ? e.message : String(e)}`);
+        void toast.error(`导入失败：${e instanceof Error ? e.message : String(e)}`);
       }
     })();
   };
@@ -115,7 +116,7 @@ export function ModelsSection(): JSX.Element {
       void getAppContext()
         .appSettings.set(KEY_COMFY_WORKFLOW, null)
         .then(() => setCustomWfNodes(null))
-        .catch((e) => void alertDialog(`清除失败：${e instanceof Error ? e.message : String(e)}`));
+        .catch((e) => void toast.error(`清除失败：${e instanceof Error ? e.message : String(e)}`));
     });
   };
 
@@ -126,18 +127,18 @@ export function ModelsSection(): JSX.Element {
   const submit = async (): Promise<void> => {
     if (!editing) return;
     if (!editing.name.trim()) {
-      void alertDialog('名称必填');
+      void toast.info('名称必填');
       return;
     }
     if (!editing.model.trim() && editing.provider !== 'comfyui') {
-      void alertDialog('模型必填');
+      void toast.info('模型必填');
       return;
     }
     if (
       (editing.provider === 'openai_compat' || editing.provider === 'comfyui') &&
       !editing.baseUrl.trim()
     ) {
-      void alertDialog('该协议需填写 baseURL');
+      void toast.info('该协议需填写 baseURL');
       return;
     }
     await saveConfig(editing);

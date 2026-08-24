@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Sparkles, Star, BookPlus, Dices } from 'lucide-react';
 import { getAppContext } from '../../context/app-context';
-import { alertDialog } from '../../native/dialog';
+import { toast } from '../common/toast';
 import { SEED_TONES } from '../../services/inspiration/types';
 import type { StorySeed } from '../../services/inspiration/types';
 
@@ -54,7 +54,7 @@ export function StorySeedGenerator(): JSX.Element {
 
   const generate = async (): Promise<void> => {
     if (!genre.trim()) {
-      void alertDialog('请先填写题材');
+      void toast.info('请先填写题材');
       return;
     }
     const elements = elementsText
@@ -62,7 +62,7 @@ export function StorySeedGenerator(): JSX.Element {
       .map((s) => s.trim())
       .filter(Boolean);
     if (elements.length === 0) {
-      void alertDialog('请至少填写一个元素，如：时间循环、复仇');
+      void toast.info('请至少填写一个元素，如：雨夜当铺、失忆的账房先生');
       return;
     }
     setGenerating(true);
@@ -92,7 +92,7 @@ export function StorySeedGenerator(): JSX.Element {
       setSavedIds((s) => new Set(s).add(seed.id));
       notifyInspirationsChanged();
     } catch (e) {
-      void alertDialog(`收藏失败：${e instanceof Error ? e.message : String(e)}`);
+      void toast.error(`收藏失败：${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -108,7 +108,7 @@ export function StorySeedGenerator(): JSX.Element {
       setCreating(null);
       navigate(`/editor/${bookId}`);
     } catch (e) {
-      void alertDialog(`建书失败：${e instanceof Error ? e.message : String(e)}`);
+      void toast.error(`建书失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBookCreating(false);
     }
@@ -152,7 +152,7 @@ export function StorySeedGenerator(): JSX.Element {
             setElementsText(e.target.value);
             setRandomHint('');
           }}
-          placeholder="元素组合 *，如：时间循环、复仇、背叛"
+          placeholder="元素组合 *，如：雨夜当铺、失忆的账房先生、一桩陈年旧案"
           className="rounded border border-ink-200 px-2 py-1.5 text-sm outline-none focus:border-violet-400"
         />
         <select

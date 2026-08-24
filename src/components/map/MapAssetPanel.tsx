@@ -7,7 +7,8 @@
 import { useEffect, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { getAppContext } from '../../context/app-context';
-import { alertDialog, confirmDialog } from '../../native/dialog';
+import { confirmDialog } from '../../native/dialog';
+import { toast } from '../common/toast';
 import { MapAssetService, MapAssetReferenceError, type MapAsset, type MapAssetUsage } from '../../services/map/MapAssetService';
 
 interface Props {
@@ -82,7 +83,7 @@ export function MapAssetPanel(props: Props): JSX.Element {
       await svc.import(files, '自定义', usage);
       reload(true);
     } catch (e) {
-      void alertDialog(`导入失败：${e instanceof Error ? e.message : String(e)}`);
+      void toast.error(`导入失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -109,7 +110,7 @@ export function MapAssetPanel(props: Props): JSX.Element {
         }
         reload(true);
       } catch (e) {
-        void alertDialog(`删除失败：${e instanceof Error ? e.message : String(e)}`);
+        void toast.error(`删除失败：${e instanceof Error ? e.message : String(e)}`);
       }
     })();
   };

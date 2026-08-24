@@ -18,7 +18,8 @@ import {
 } from '../worldbook/WorldbookRAGService';
 import { estimateTokens } from '../ai/providers/LLMProvider';
 import { f32ToBase64, base64ToF32, cosineSimilarity, hashText } from '../../utils/vector';
-import type { WorldbookEntry } from '../../types';
+import { docToPlainText } from '../../utils/pmdoc';
+import type { WorldbookEntry, ProseMirrorDoc } from '../../types';
 
 export interface ChapterEmbedProgress {
   chapterId: string;
@@ -53,21 +54,6 @@ export interface RAGResult {
   worldbookEntries: WorldbookEntry[];
   segments: SegmentRecall[];
   totalTokens: number;
-}
-
-/** HTML -> 纯文本（章节正文以 HTML 存储） */
-function htmlToPlain(html: string): string {
-  return html
-    .replace(/<(br|BR)\s*\/?>/g, '\n')
-    .replace(/<\/(p|div|h[1-6]|li|blockquote)>/gi, '\n\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
 }
 
 /** 段落切分：按空行分段，累积 200+ 产出，超长段按句拆，目标 200-500 字 */
@@ -166,15 +152,36 @@ export class FullRAGService {
     this.pendingTimers.set(chapterId, t);
   }
 
+  /** 从文件系统读取章节正文纯文本（ProseMirror JSON；失败返回空串） */
+  private async loadChapterPlain(chapterId: string, bookId: string, contentPath: string | null): Promise<string> {
+    let path = contentPath;
+    if (!path) {
+      const book = await this.db.queryOne<{ storage_dir: string }>(
+        'SELECT storage_dir FROM books WHERE id = ?',
+        [bookId]
+      );
+      if (!book) return '';
+      path = `${String(book.storage_dir).replace(/\\/g, '/')}/chapters/${chapterId}.json`;
+    }
+    try {
+      const raw = await this.bridge.fs.readFile(path);
+      const doc = JSON.parse(raw) as ProseMirrorDoc;
+      return doc?.type === 'doc' ? docToPlainText(doc) : '';
+    } catch {
+      return '';
+    }
+  }
+
   /** 向量化单章：段落切分 + 增量嵌入（内容不变的段落复用旧向量）+ 摘要向量 */
   async embedChapterSegments(chapterId: string): Promise<void> {
-    const ch = await this.db.queryOne<Record<string, unknown>>(
-      'SELECT id, book_id, content, summary FROM chapters WHERE id = ?',
+    const ch = await this.db.queryOne<{ id: string; book_id: string; content_path: string | null; summary: string | null }>(
+      'SELECT id, book_id, content_path, summary FROM chapters WHERE id = ?',
       [chapterId]
     );
     if (!ch) throw new Error('章节不存在');
     const bookId = String(ch.book_id);
-    const plain = htmlToPlain(String(ch.content ?? ''));
+    // 正文存文件系统（ProseMirror JSON），DB 无 content 列
+    const plain = await this.loadChapterPlain(chapterId, bookId, ch.content_path ?? null);
 
     if (!plain) {
       await this.removeChapterSegments(chapterId);

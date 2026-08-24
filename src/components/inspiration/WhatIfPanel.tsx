@@ -7,7 +7,7 @@
 import { useEffect, useState } from 'react';
 import { FlaskConical, Save, History, ArrowRight } from 'lucide-react';
 import { getAppContext } from '../../context/app-context';
-import { alertDialog } from '../../native/dialog';
+import { toast } from '../common/toast';
 import { useEditorStore } from '../../store/editorStore';
 import type { WhatIfReport } from '../../services/inspiration/types';
 import { notifyInspirationsChanged } from './StorySeedGenerator';
@@ -55,7 +55,7 @@ export function WhatIfPanel({ bookId }: { bookId: string }): JSX.Element {
 
   const simulate = async (): Promise<void> => {
     if (!hypothesis.trim()) {
-      void alertDialog('请先填写假设，如：如果主角在第三章就死了');
+      void toast.info('请先填写假设，如：如果主角在第三章就死了');
       return;
     }
     setError('');

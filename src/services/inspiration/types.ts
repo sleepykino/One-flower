@@ -98,6 +98,8 @@ export interface InspirationCard {
   tags: string[];
   createdAt: number;
   favorited: boolean;
+  /** 本次生成题材的来源说明（如"取自《书名》"/"随机题材"），仅 AI 卡有 */
+  themeSource?: string;
 }
 
 // ============ M3 角色采访 ============

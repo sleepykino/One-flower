@@ -8,7 +8,7 @@
 import { useMemo, useState } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { getAppContext } from '../../context/app-context';
-import { alertDialog } from '../../native/dialog';
+import { toast } from '../common/toast';
 import type { CharacterSchema } from '../../types';
 import {
   FIELD_KINDS,
@@ -92,7 +92,7 @@ export function SchemaBuilder({
       await getAppContext().characterService.saveSchema(schema.id, json);
       onSaved(json);
     } catch (e) {
-      void alertDialog(`保存失败：${e instanceof Error ? e.message : String(e)}`);
+      void toast.error(`保存失败：${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -106,7 +106,7 @@ export function SchemaBuilder({
       if (!path) return;
       await getAppContext().bridge.fs.writeFile(path, tab === 'json' ? jsonText : schemaJson);
     } catch (e) {
-      void alertDialog(`导出失败：${e instanceof Error ? e.message : String(e)}`);
+      void toast.error(`导出失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setIoBusy(false);
     }
@@ -124,7 +124,7 @@ export function SchemaBuilder({
       const text = await getAppContext().bridge.fs.readFile(path);
       if (applyJson(text)) setTab('build');
     } catch (e) {
-      void alertDialog(`导入失败：${e instanceof Error ? e.message : String(e)}`);
+      void toast.error(`导入失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setIoBusy(false);
     }

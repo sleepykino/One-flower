@@ -13,7 +13,8 @@ import Konva from 'konva';
 import { Stage, Layer, Group, Circle, Rect, Line, Arrow, Text, Image } from 'react-konva';
 import { open, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { getAppContext } from '../../context/app-context';
-import { alertDialog, confirmDialog } from '../../native/dialog';
+import { confirmDialog } from '../../native/dialog';
+import { toast } from '../common/toast';
 import { useEditorStore } from '../../store/editorStore';
 import { MapEditorService } from '../../services/map/MapEditorService';
 import { MapAssetService, type MapAsset } from '../../services/map/MapAssetService';
@@ -652,7 +653,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
       setFuture([]);
       clearSel();
     } catch (e) {
-      void alertDialog(`切换地图失败：${e instanceof Error ? e.message : String(e)}`);
+      void toast.error(`切换地图失败：${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -1146,7 +1147,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
       await bridge.fs.writeBinaryFile(`${appDir}/${rel}`, data);
       patchMap({ background: rel, bg: undefined });
     } catch (err) {
-      void alertDialog(`底图上传失败：${err instanceof Error ? err.message : String(err)}`);
+      void toast.error(`底图上传失败：${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -1172,7 +1173,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
       setAiBgPrompt('');
       setSaveStatus('AI 底图已生成');
     } catch (err) {
-      void alertDialog(`AI 底图生成失败：${err instanceof Error ? err.message : String(err)}`);
+      void toast.error(`AI 底图生成失败：${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setAiBgBusy(false);
     }
@@ -1237,7 +1238,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
           await bridge.fs.writeBinaryFile(target, base64ToU8(url.split(',')[1] ?? ''));
           setSaveStatus(`已导出 PNG（${exportScale}x）`);
         } catch (err) {
-          void alertDialog(`导出失败：${err instanceof Error ? err.message : String(err)}`);
+          void toast.error(`导出失败：${err instanceof Error ? err.message : String(err)}`);
         }
       })();
     });
@@ -1278,7 +1279,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
           setSaveStatus('已插入正文');
           onClose();
         } catch (err) {
-          void alertDialog(`插入正文失败：${err instanceof Error ? err.message : String(err)}`);
+          void toast.error(`插入正文失败：${err instanceof Error ? err.message : String(err)}`);
         }
       })();
     });
@@ -1294,7 +1295,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
       const raw = await aiGenerateMap(aiPrompt.trim());
       const parsed = parseAiContent(raw);
       if (!parsed) {
-        void alertDialog(`AI 返回内容无法解析为地图 JSON。返回内容预览：\n${raw.slice(0, 300)}`);
+        void toast.error(`AI 返回内容无法解析为地图 JSON。返回内容预览：\n${raw.slice(0, 300)}`);
         return;
       }
       // 新建一张「AI 生成地图」并应用生成内容
@@ -1309,7 +1310,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
       setAiOpen(false);
       setAiPrompt('');
     } catch (err) {
-      void alertDialog(`AI 生成失败：${err instanceof Error ? err.message : String(err)}`);
+      void toast.error(`AI 生成失败：${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setAiGenerating(false);
     }

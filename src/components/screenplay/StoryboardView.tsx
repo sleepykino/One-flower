@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { getAppContext } from '../../context/app-context';
-import { alertDialog } from '../../native/dialog';
+import { toast } from '../common/toast';
 import { useTaskStore } from '../../store/taskStore';
 import { SHOT_SIZE_LABEL, type Screenplay, type Scene, type Shot } from '../../services/screenplay/types';
 import type { GeneratedImage } from '../../services/ai/providers/ImageProvider';
@@ -182,7 +182,7 @@ export function StoryboardView({ bookId, screenplay, onChanged, onUpdated }: Pro
           }))
         );
       } catch (e) {
-        void alertDialog(`分镜图生成失败：${e instanceof Error ? e.message : String(e)}`);
+        void toast.error(`分镜图生成失败：${e instanceof Error ? e.message : String(e)}`);
       } finally {
         setGeneratingShotId(null);
       }
@@ -200,7 +200,7 @@ export function StoryboardView({ bookId, screenplay, onChanged, onUpdated }: Pro
         setCandidates(null);
         if (sp) onUpdated(sp);
       } catch (e) {
-        void alertDialog(`保存失败：${e instanceof Error ? e.message : String(e)}`);
+        void toast.error(`保存失败：${e instanceof Error ? e.message : String(e)}`);
       }
     })();
   };
@@ -219,7 +219,7 @@ export function StoryboardView({ bookId, screenplay, onChanged, onUpdated }: Pro
         const sp = await screenplayService.setShotImage(screenplay.id, shot.id, asset.id);
         if (sp) onUpdated(sp);
       } catch (e) {
-        void alertDialog(`上传失败：${e instanceof Error ? e.message : String(e)}`);
+        void toast.error(`上传失败：${e instanceof Error ? e.message : String(e)}`);
       }
     })();
   };
@@ -232,7 +232,7 @@ export function StoryboardView({ bookId, screenplay, onChanged, onUpdated }: Pro
         setLibraryFor(null);
         if (sp) onUpdated(sp);
       })
-      .catch((e) => void alertDialog(`回填失败：${e instanceof Error ? e.message : String(e)}`));
+      .catch((e) => void toast.error(`回填失败：${e instanceof Error ? e.message : String(e)}`));
   };
 
   const clearImage = (shot: Shot): void => {
@@ -248,7 +248,7 @@ export function StoryboardView({ bookId, screenplay, onChanged, onUpdated }: Pro
     try {
       getAppContext().storyboardService.generateMissing(bookId, screenplay.id);
     } catch (e) {
-      void alertDialog(`启动批量生成失败：${e instanceof Error ? e.message : String(e)}`);
+      void toast.error(`启动批量生成失败：${e instanceof Error ? e.message : String(e)}`);
     }
   };
 

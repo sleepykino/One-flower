@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { getAppContext } from '../../context/app-context';
-import { alertDialog } from '../../native/dialog';
+import { toast } from '../common/toast';
 import { NameGeneratorService } from '../../services/namegen/NameGeneratorService';
 import type { Gender, GeneratedName, NameFavorite, NameType } from '../../services/namegen/types';
 import { GENRES, TYPE_LABEL } from '../../services/namegen/types';
@@ -78,9 +78,9 @@ export function NameGenerator({ bookId, onClose }: Props): JSX.Element {
         ...(hints.trim() ? { hints: hints.trim() } : {})
       });
       setResults(list);
-      if (list.length === 0) void alertDialog('未生成任何名字，请调整参数重试');
+      if (list.length === 0) void toast.info('未生成任何名字，请调整参数重试');
     } catch (e) {
-      void alertDialog(`生成失败：${e instanceof Error ? e.message : String(e)}`);
+      void toast.error(`生成失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setLoading(false);
     }
@@ -93,7 +93,7 @@ export function NameGenerator({ bookId, onClose }: Props): JSX.Element {
       await service.saveFavorite(bookId, n, genre);
       await loadFavorites();
     } catch (e) {
-      void alertDialog(`收藏失败：${e instanceof Error ? e.message : String(e)}`);
+      void toast.error(`收藏失败：${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -104,9 +104,9 @@ export function NameGenerator({ bookId, onClose }: Props): JSX.Element {
         name: n.name,
         data: { background: n.meaning }
       });
-      void alertDialog(`已创建角色卡「${n.name}」`);
+      void toast.success(`已创建角色卡「${n.name}」`);
     } catch (e) {
-      void alertDialog(`创建角色卡失败：${e instanceof Error ? e.message : String(e)}`);
+      void toast.error(`创建角色卡失败：${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -126,9 +126,9 @@ export function NameGenerator({ bookId, onClose }: Props): JSX.Element {
         )
       );
       window.dispatchEvent(new Event('novel-mentions-refresh'));
-      void alertDialog(`已存入世界书「${n.name}」`);
+      void toast.success(`已存入世界书「${n.name}」`);
     } catch (e) {
-      void alertDialog(`存入世界书失败：${e instanceof Error ? e.message : String(e)}`);
+      void toast.error(`存入世界书失败：${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -137,7 +137,7 @@ export function NameGenerator({ bookId, onClose }: Props): JSX.Element {
       await service.removeFavorite(id);
       await loadFavorites();
     } catch (e) {
-      void alertDialog(`删除失败：${e instanceof Error ? e.message : String(e)}`);
+      void toast.error(`删除失败：${e instanceof Error ? e.message : String(e)}`);
     }
   };
 

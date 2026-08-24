@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react';
 import { BookOpen } from 'lucide-react';
 import { getAppContext } from '../../context/app-context';
-import { alertDialog } from '../../native/dialog';
+import { toast } from '../common/toast';
 import { useEditorStore } from '../../store/editorStore';
 import { useAIStore } from '../../store/aiStore';
 import type { AIMode } from '../../services/skill/types';
@@ -169,7 +169,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
     const { orchestrator, multiPerspectiveRewriter } = getAppContext();
     const api = useEditorStore.getState().editorApi;
     if (!api || !currentChapterId) {
-      void alertDialog('请先选择要编辑的章节');
+      void toast.info('请先选择要编辑的章节');
       return;
     }
     const controller = useAIStore.getState().startStream();
@@ -331,7 +331,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
     const { orchestrator } = getAppContext();
     const api = useEditorStore.getState().editorApi;
     if (!api || !currentChapterId) {
-      void alertDialog('请先选择要检查的章节');
+      void toast.info('请先选择要检查的章节');
       return;
     }
     const store = useAIStore.getState();
@@ -346,7 +346,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
       });
       useAIStore.getState().setReport(r);
     } catch (e) {
-      void alertDialog(`检查失败：${e instanceof Error ? e.message : String(e)}`);
+      void toast.error(`检查失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       useAIStore.getState().setChecking(false);
     }
@@ -357,12 +357,12 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
     const { orchestrator } = getAppContext();
     const api = useEditorStore.getState().editorApi;
     if (!api || !currentChapterId) {
-      void alertDialog('请先选择要检查的章节');
+      void toast.info('请先选择要检查的章节');
       return;
     }
     const text = api.getPlainText();
     if (!text.trim()) {
-      void alertDialog('当前章节为空');
+      void toast.info('当前章节为空');
       return;
     }
     const store = useAIStore.getState();
@@ -376,7 +376,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
       });
       useAIStore.getState().setTypoReport(r);
     } catch (e) {
-      void alertDialog(`错字检查失败：${e instanceof Error ? e.message : String(e)}`);
+      void toast.error(`错字检查失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       useAIStore.getState().setChecking(false);
     }

@@ -30,7 +30,8 @@ import {
 } from '../../services/ai/ProjectDirectiveService';
 import type { DirectiveStatus, HookApplyResult, HookRule } from '../../services/ai/ProjectDirectiveService';
 import { renderMarkdown } from '../../utils/markdown';
-import { alertDialog, confirmDialog } from '../../native/dialog';
+import { confirmDialog } from '../../native/dialog';
+import { toast } from '../common/toast';
 
 type FileKey = 'agents' | 'hook';
 type AgentsView = 'edit' | 'preview' | 'split';
@@ -151,7 +152,7 @@ export function DirectiveModal({ bookId, onClose }: { bookId: string; onClose: (
       setStatus(await pd.getStatus(bookId));
       onClose();
     } catch (e) {
-      void alertDialog(`保存失败：${e instanceof Error ? e.message : String(e)}`);
+      void toast.error(`保存失败：${e instanceof Error ? e.message : String(e)}`);
     }
   };
 

@@ -5,7 +5,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { getAppContext } from '../../context/app-context';
-import { alertDialog, confirmDialog } from '../../native/dialog';
+import { confirmDialog } from '../../native/dialog';
+import { toast } from '../common/toast';
 import { useTaskStore } from '../../store/taskStore';
 import { screenplayStats, type Screenplay, type ScreenplayStatus } from '../../services/screenplay/types';
 
@@ -95,7 +96,7 @@ export function ScreenplayPanel({ bookId, onOpen }: Props): JSX.Element {
       void getAppContext()
         .screenplayService.remove(sp.id)
         .then(reload)
-        .catch((e) => void alertDialog(`删除失败：${e instanceof Error ? e.message : String(e)}`));
+        .catch((e) => void toast.error(`删除失败：${e instanceof Error ? e.message : String(e)}`));
     });
   };
 

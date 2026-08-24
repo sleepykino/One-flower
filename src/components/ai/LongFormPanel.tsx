@@ -6,7 +6,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getAppContext } from '../../context/app-context';
-import { alertDialog, confirmDialog } from '../../native/dialog';
+import { confirmDialog } from '../../native/dialog';
+import { toast } from '../common/toast';
 import { useEditorStore } from '../../store/editorStore';
 import { useTaskStore } from '../../store/taskStore';
 import type { LongFormBeat, LongFormSession, SeamIssue } from '../../services/longform/types';
@@ -101,7 +102,7 @@ export function LongFormPanel({ bookId }: { bookId: string }): JSX.Element {
 
   const draft = async (): Promise<void> => {
     if (!currentChapterId) {
-      void alertDialog('请先选择要生成的章节');
+      void toast.info('请先选择要生成的章节');
       return;
     }
     setDrafting(true);
@@ -126,7 +127,7 @@ export function LongFormPanel({ bookId }: { bookId: string }): JSX.Element {
     if (!currentChapterId) return;
     const list = await getAppContext().chapterService.getBeats(currentChapterId);
     if (list.length === 0) {
-      void alertDialog('当前章节暂无节拍（可在编辑器左侧节拍栏添加）');
+      void toast.info('当前章节暂无节拍（可在编辑器左侧节拍栏添加）');
       return;
     }
     setBeats(

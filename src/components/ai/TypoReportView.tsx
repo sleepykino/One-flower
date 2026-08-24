@@ -5,7 +5,7 @@
 
 import { useState } from 'react';
 import { useEditorStore } from '../../store/editorStore';
-import { alertDialog } from '../../native/dialog';
+import { toast } from '../common/toast';
 import type { TypoReport } from '../../services/ai/types';
 
 export function TypoReportView({ report }: { report: TypoReport }): JSX.Element {
@@ -20,7 +20,7 @@ export function TypoReportView({ report }: { report: TypoReport }): JSX.Element 
   const applyFix = (i: number, original: string, suggestion: string): void => {
     const api = useEditorStore.getState().editorApi;
     if (!api?.replaceFirstOccurrence) {
-      void alertDialog('当前编辑器不支持一键修正，请手动定位修改。');
+      void toast.info('当前编辑器不支持一键修正，请手动定位修改。');
       return;
     }
     const ok = api.replaceFirstOccurrence(original, suggestion);
@@ -28,7 +28,7 @@ export function TypoReportView({ report }: { report: TypoReport }): JSX.Element 
       setFixed((s) => new Set(s).add(i));
     } else {
       setMissing((s) => new Set(s).add(i));
-      void alertDialog('未在正文中找到该片段，可能已被修改，建议重新检查。');
+      void toast.error('未在正文中找到该片段，可能已被修改，建议重新检查。');
     }
   };
 

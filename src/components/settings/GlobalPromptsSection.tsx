@@ -4,7 +4,8 @@
 
 import { useEffect, useState } from 'react';
 import { getAppContext } from '../../context/app-context';
-import { alertDialog, confirmDialog } from '../../native/dialog';
+import { confirmDialog } from '../../native/dialog';
+import { toast } from '../common/toast';
 import type { GlobalPromptItem } from '../../services/ai/GlobalPromptService';
 import { countTokens } from '../../utils/tokens';
 
@@ -31,7 +32,7 @@ export function GlobalPromptsSection(): JSX.Element {
   const gpAdd = async (): Promise<void> => {
     const text = gpDraft.trim();
     if (!text) {
-      void alertDialog('请输入提示词内容');
+      void toast.info('请输入提示词内容');
       return;
     }
     await gpPersist([...gpItems, { id: crypto.randomUUID(), text, enabled: true }]);

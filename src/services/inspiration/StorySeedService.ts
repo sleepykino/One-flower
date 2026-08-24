@@ -29,19 +29,36 @@ const SEED_SYSTEM_PROMPT = `你是资深故事策划与创意顾问，精通各�
 要求：
 - 每个种子都要把给定元素有机融合进故事逻辑，而不是简单堆砌
 - 冲突点 2-4 条，具体可写；结局方向 2-3 条，方向差异明显
-- 标题凝练有记忆点，logline 有悬念钩子`;
+- 标题凝练有记忆点，logline 有悬念钩子
+- 避开高频套路：核心创意不要依赖时空穿越、时间循环、重生、系统金手指等常见梗
+- 若用户消息给出「已探索方向」，生成的种子必须避开这些条目的核心设定`;
 
 const RANDOM_SYSTEM_PROMPT = `你是小说创意策划。请随机给出一组故事种子的生成参数：一个题材 + 三个元素组合。
 严格输出 JSON 对象（不要 markdown 代码围栏、不要任何解释）：
 {
-  "genre": "题材（2-6字，如：武侠 / 赛博朋克 / 乡土悬疑）",
+  "genre": "题材（2-6字）",
   "elements": ["元素1", "元素2", "元素3"],
   "reason": "一句话说明这组搭配的火花（30字内）"
 }
 要求：
-- 题材从主流与冷门中随机挑选（武侠、科幻、奇幻、悬疑、都市、历史、乡土、废土、蒸汽朋克等均可）
-- 三个元素至少一个制造反差或冲突（如"时间循环+市井生活+非遗传承"）
-- 元素之间要有化学反应，避免同义重复（不要给"复仇+报仇+仇恨"）；元素每个 2-8 字`;
+- 元素取材于具体的人/物/场景/事件（职业、地点、旧物、悬案、行当等），每个 2-8 字
+- 三个元素至少一个制造反差或冲突；避免同义重复（不要给"复仇+报仇+仇恨"）
+- 不要输出时空穿越、时间循环、重生、系统流等高频套路设定`;
+
+/** 骰子本地发散提示：每次注入随机参考项，强制偏离模型默认输出分布 */
+const RANDOM_HINTS = [
+  '市井烟火', '手艺传承', '边疆戍堡', '深海渔村', '旧书店', '铁路小站', '戏班后台',
+  '荒漠绿洲', '雪山驿站', '江南梅雨', '工厂家属院', '深夜食堂', '古籍修复',
+  '气象观测站', '渡口码头', '山村小学', '老式理发店', '长途客运'
+];
+const RANDOM_TWISTS = [
+  '身份错位', '一桩旧案', '意外的遗产', '失而复得的手艺', '两代人的隔阂',
+  '一场误会的代价', '一份迟到的信', '被掩盖的善意的谎言'
+];
+
+function pick<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
 
 const TONE_LABEL: Record<string, string> = {
   serious: '严肃正剧',
@@ -116,6 +133,27 @@ export class StorySeedService {
     if (params.hints?.trim()) {
       lines.push(`其他要求：${params.hints.trim()}`);
     }
+    // 注入最近已生成的种子方向：让模型主动避开重复套路
+    try {
+      const rows = await this.db.query<{ title: string; content: string }>(
+        "SELECT title, content FROM inspirations WHERE type = 'seed' ORDER BY created_at DESC LIMIT 8"
+      );
+      const recentLines: string[] = [];
+      for (const r of rows) {
+        let logline = '';
+        try {
+          logline = String((JSON.parse(r.content) as { logline?: unknown }).logline ?? '');
+        } catch {
+          /* 损坏行跳过 logline */
+        }
+        if (r.title) recentLines.push(`-《${r.title}》${logline}`);
+      }
+      if (recentLines.length > 0) {
+        lines.push('已探索方向（新种子的核心创意须避开以下条目的设定）：', ...recentLines);
+      }
+    } catch {
+      /* 历史读取失败不影响生成 */
+    }
     lines.push(`请生成 ${params.count} 个故事种子，严格按 JSON 数组输出。`);
 
     const messages: ChatMessage[] = [
@@ -134,16 +172,22 @@ export class StorySeedService {
 
   /**
    * 随机生成参数（骰子按钮）：AI 提供随机题材 + 元素组合 + 搭配理由
-   * 功能键同 seed-gen；解析失败抛错
+   * 功能键同 seed-gen；每次注入本地随机发散参考项，避免模型输出分布固化；解析失败抛错
    */
   async randomize(signal?: AbortSignal): Promise<RandomSeedParams> {
     const provider = await resolveProviderForFeature(this.bridge, '', 'seed-gen', this.providerFactory);
     const model = await resolveModelNameForFeature(this.bridge, '', 'seed-gen');
 
+    const hintA = pick(RANDOM_HINTS);
+    const hintB = pick(RANDOM_HINTS.filter((h) => h !== hintA));
+    const twist = pick(RANDOM_TWISTS);
     const res = await provider.chat(
       [
         { role: 'system', content: RANDOM_SYSTEM_PROMPT },
-        { role: 'user', content: '请随机给出一组题材与元素组合，严格按 JSON 对象输出。' }
+        {
+          role: 'user',
+          content: `请随机给出一组题材与元素组合。本次发散参考（尽量围绕，可自由发挥）：「${hintA}」「${hintB}」，并带一点「${twist}」。严格按 JSON 对象输出。`
+        }
       ],
       { model, temperature: 1.1, maxTokens: 400, signal }
     );

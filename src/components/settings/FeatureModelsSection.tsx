@@ -7,7 +7,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSettingsStore } from '../../store/settingsStore';
 import { getAppContext } from '../../context/app-context';
-import { alertDialog, confirmDialog } from '../../native/dialog';
+import { confirmDialog } from '../../native/dialog';
+import { toast } from '../common/toast';
 import {
   AI_FEATURES,
   FEATURE_DOMAINS,
@@ -75,7 +76,7 @@ export function FeatureModelsSection(): JSX.Element {
       await getAppContext().modelRouting.setBinding(feature, configId);
       setSavedAt(Date.now());
     } catch (e) {
-      void alertDialog(`保存失败：${e instanceof Error ? e.message : String(e)}`);
+      void toast.error(`保存失败：${e instanceof Error ? e.message : String(e)}`);
       // 回滚本地状态，避免 UI 与存储不一致
       try {
         setBindings(await getAppContext().modelRouting.getBindings());
@@ -91,7 +92,7 @@ export function FeatureModelsSection(): JSX.Element {
       void getAppContext()
         .modelRouting.clearAll()
         .then(() => setBindings({}))
-        .catch((e) => void alertDialog(`清空失败：${e instanceof Error ? e.message : String(e)}`));
+        .catch((e) => void toast.error(`清空失败：${e instanceof Error ? e.message : String(e)}`));
     });
   };
 
@@ -184,7 +185,7 @@ export function FeatureModelsSection(): JSX.Element {
                             .modelRouting.setEmbeddingModel(embedModel)
                             .then(() => setSavedAt(Date.now()))
                             .catch((e) =>
-                              void alertDialog(`保存失败：${e instanceof Error ? e.message : String(e)}`)
+                              void toast.error(`保存失败：${e instanceof Error ? e.message : String(e)}`)
                             )
                         }
                         placeholder="嵌入模型名，如 text-embedding-3-small"

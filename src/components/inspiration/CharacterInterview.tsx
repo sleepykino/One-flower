@@ -7,7 +7,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Mic, Send, Square, Check, X, History, RotateCcw, Trash2 } from 'lucide-react';
 import { getAppContext } from '../../context/app-context';
-import { alertDialog, confirmDialog } from '../../native/dialog';
+import { confirmDialog } from '../../native/dialog';
+import { toast } from '../common/toast';
 import {
   INTERVIEW_ANGLE_LABEL
 } from '../../services/inspiration/types';
@@ -83,7 +84,7 @@ export function CharacterInterview({ bookId }: { bookId: string }): JSX.Element 
 
   const start = async (): Promise<void> => {
     if (!characterId) {
-      void alertDialog('本书暂无角色卡，请先在「角色」面板创建');
+      void toast.info('本书暂无角色卡，请先在「角色」面板创建');
       return;
     }
     setError('');
@@ -220,7 +221,7 @@ export function CharacterInterview({ bookId }: { bookId: string }): JSX.Element 
         void loadHistory();
       }
     } catch (e) {
-      void alertDialog(`删除失败：${e instanceof Error ? e.message : String(e)}`);
+      void toast.error(`删除失败：${e instanceof Error ? e.message : String(e)}`);
     }
   };
 

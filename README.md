@@ -2,7 +2,7 @@
 
 **AI 辅助的小说创作工作台**
 
-一花一世界，AI 助力你的想象力，快速创造属于你的世界。
+一花一世界，AI 助力你的灵感，快速创造属于你的世界。
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2.0-FFC131?logo=tauri&logoColor=white)](https://tauri.app)
@@ -227,7 +227,7 @@ npm run build
 2. **模型分工**：设置 → 模型分工，按功能域（写作生成 / 规划与校验 / 灵感与素材 / 视觉生成 / 向量与后台）绑定不同配置；未绑定的功能默认使用第一组配置。徽章提示强度建议：写作生成建议强模型，章节摘要等后台任务用便宜模型
 3. **向量嵌入（可选）**：为「向量嵌入」绑定支持 embeddings 的配置并填嵌入模型（如 `text-embedding-3-small`，或 Ollama 本地嵌入模型实现离线 RAG）；更换嵌入模型后需在世界书面板重新批量向量化
 4. **本书指令（可选）**：编辑器 AI 面板顶部「本书指令」编写 agents.md（世界观铁律 / 称谓 / 禁令）与 hook.md（输出替换 / 提醒 / 阻断规则），设置页「指令说明」有完整优先级说明
-6. **文风 Skill（可选）**：将 Skill 文件放入 `~/.novelagent/skills/`，在编辑器「AI」分组的 Skill 面板启用
+5. **文风 Skill（可选）**：将 Skill 文件放入 `~/.novelagent/skills/`，在编辑器「AI」分组的 Skill 面板启用
 
 ## 🔒 数据存储
 

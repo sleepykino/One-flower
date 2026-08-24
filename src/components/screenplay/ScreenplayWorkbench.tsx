@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { getAppContext } from '../../context/app-context';
-import { alertDialog } from '../../native/dialog';
+import { toast } from '../common/toast';
 import { useEditorStore } from '../../store/editorStore';
 import { useTaskStore } from '../../store/taskStore';
 import type { Chapter } from '../../types';
@@ -147,9 +147,9 @@ export function ScreenplayWorkbench({ bookId, initialScreenplayId, initialWizard
       try {
         await getAppContext().screenplayService.exportFountain(screenplay.id, target);
         setSavedAt(Date.now());
-        void alertDialog(`已导出 Fountain：${target}`);
+        void toast.success(`已导出 Fountain：${target}`);
       } catch (e) {
-        void alertDialog(`导出失败：${e instanceof Error ? e.message : String(e)}`);
+        void toast.error(`导出失败：${e instanceof Error ? e.message : String(e)}`);
       }
     })();
   };
@@ -164,9 +164,9 @@ export function ScreenplayWorkbench({ bookId, initialScreenplayId, initialWizard
       if (!target || typeof target !== 'string') return;
       try {
         await getAppContext().screenplayService.exportStoryboardMarkdown(screenplay.id, target);
-        void alertDialog(`已导出分镜表：${target}`);
+        void toast.success(`已导出分镜表：${target}`);
       } catch (e) {
-        void alertDialog(`导出失败：${e instanceof Error ? e.message : String(e)}`);
+        void toast.error(`导出失败：${e instanceof Error ? e.message : String(e)}`);
       }
     })();
   };

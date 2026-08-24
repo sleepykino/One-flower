@@ -50,6 +50,8 @@ interface EditorStore {
   selectedText: string;
   saveState: 'saved' | 'dirty' | 'saving';
   editorApi: EditorApi | null;
+  /** 打字过程中的实时字数（节流计算；null = 尚未就绪，展示层回退 chapter.wordCount） */
+  liveWordCount: number | null;
 
   setBookId: (bookId: string) => void;
   loadChapters: (bookId: string) => Promise<void>;
@@ -58,6 +60,7 @@ interface EditorStore {
   setSelectedText: (text: string) => void;
   setSaveState: (s: EditorStore['saveState']) => void;
   setEditorApi: (api: EditorApi | null) => void;
+  setLiveWordCount: (n: number | null) => void;
 
   createChapter: (title: string, parentId?: string | null) => Promise<void>;
   deleteChapter: (chapterId: string) => Promise<void>;
@@ -77,6 +80,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   selectedText: '',
   saveState: 'saved',
   editorApi: null,
+  liveWordCount: null,
 
   setBookId: (bookId) => set({ bookId, chapters: [], currentChapterId: null }),
 
@@ -91,11 +95,12 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     }));
   },
 
-  setCurrentChapter: (chapterId) => set({ currentChapterId: chapterId, selectedText: '' }),
+  setCurrentChapter: (chapterId) => set({ currentChapterId: chapterId, selectedText: '', liveWordCount: null }),
   setChapters: (chapters) => set({ chapters }),
   setSelectedText: (selectedText) => set({ selectedText }),
   setSaveState: (saveState) => set({ saveState }),
   setEditorApi: (editorApi) => set({ editorApi }),
+  setLiveWordCount: (liveWordCount) => set({ liveWordCount }),
 
   createChapter: async (title, parentId) => {
     const { bookId, loadChapters } = get();

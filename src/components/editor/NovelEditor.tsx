@@ -20,8 +20,8 @@ import { createPasteHandler } from './extensions/PasteHandler';
 import { ImageGenDialog } from '../image/ImageGenDialog';
 import { useEditorStore, type EditorApi } from '../../store/editorStore';
 import { getAppContext } from '../../context/app-context';
-import { alertDialog } from '../../native/dialog';
-import { docToPlainText } from '../../utils/pmdoc';
+import { toast } from '../common/toast';
+import { countWords, docToPlainText } from '../../utils/pmdoc';
 import type { ImageAsset } from '../../services/image/types';
 import {
   FONT_FAMILIES,
@@ -252,6 +252,16 @@ export function NovelEditor({ bookId }: { bookId: string }) {
     }, 3000);
   };
 
+  /** 实时字数：打字时节流 400ms 计算一次，顶栏即时可见（保存后仍会以落盘值校正） */
+  const liveWordTimerRef = useRef<number | null>(null);
+  const scheduleLiveWordCount = (e: Editor): void => {
+    if (liveWordTimerRef.current) return;
+    liveWordTimerRef.current = window.setTimeout(() => {
+      liveWordTimerRef.current = null;
+      useEditorStore.getState().setLiveWordCount(countWords(e.getJSON() as ProseMirrorDoc));
+    }, 400);
+  };
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
@@ -303,13 +313,32 @@ export function NovelEditor({ bookId }: { bookId: string }) {
         return false;
       }
     },
-    onUpdate: () => scheduleSave(),
+    onUpdate: ({ editor: e }) => {
+      scheduleSave();
+      scheduleLiveWordCount(e);
+    },
     onSelectionUpdate: ({ editor: e }) => {
       const { from, to, empty } = e.state.selection;
       setSelectedText(empty ? '' : e.state.doc.textBetween(from, to, '\n'));
     },
     onTransaction: () => forceTick((t) => t + 1)
   });
+
+  // ============ Ctrl+S 手动保存 ============
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        if (useEditorStore.getState().saveState === 'saved') return;
+        if (useEditorStore.getState().saveState === 'saving') return;
+        // 立即取消防抖定时器，手动触发保存
+        if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+        void useEditorStore.getState().saveCurrentChapter();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // ============ 章节虚拟化：切换章节时保存旧章 + 载入新章 ============
   useEffect(() => {
@@ -347,6 +376,8 @@ export function NovelEditor({ bookId }: { bookId: string }) {
       editor.commands.setContent(doc as unknown as JSONContent);
       loadedChapterRef.current = currentChapterId;
       setSaveState('saved');
+      // 载入完成后立即校正实时字数
+      useEditorStore.getState().setLiveWordCount(countWords(doc));
     };
     void run();
     return () => {
@@ -590,7 +621,7 @@ export function NovelEditor({ bookId }: { bookId: string }) {
   /** P3：选区生图入口 -- 需先选中一段场景文字 */
   const openIllustrationGen = (): void => {
     if (!selectedText.trim()) {
-      void alertDialog('请先在正文中选中一段场景文字，再生成插图');
+      void toast.info('请先在正文中选中一段场景文字，再生成插图');
       return;
     }
     setImageGenOpen(true);
@@ -607,7 +638,12 @@ export function NovelEditor({ bookId }: { bookId: string }) {
   };
 
   if (!editor) {
-    return <div className="p-8 text-ink-400">编辑器加载中…</div>;
+    return (
+      <div className="flex h-full items-center justify-center gap-2 text-sm text-ink-400">
+        <span className="h-4 w-4 animate-spin rounded-full border-2 border-violet-300 border-t-transparent" />
+        编辑器加载中…
+      </div>
+    );
   }
 
   return (

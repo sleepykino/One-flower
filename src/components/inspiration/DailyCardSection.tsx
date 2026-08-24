@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { ChevronDown, ChevronUp, RefreshCw, Star, Ban, Lightbulb } from 'lucide-react';
+import { ChevronDown, ChevronUp, RefreshCw, Shuffle, Star, Ban, Lightbulb } from 'lucide-react';
 import { getAppContext } from '../../context/app-context';
 import { renderMarkdown } from '../../utils/markdown';
 import { CARD_TYPE_LABEL } from '../../services/inspiration/types';
@@ -30,12 +30,12 @@ export function DailyCardSection(): JSX.Element {
   }, []);
 
   /** 显式生成（首次生成 / 换一张共用；当日重复调用替换旧卡） */
-  const generate = async (): Promise<void> => {
+  const generate = async (randomTopic = false): Promise<void> => {
     setLoading(true);
     setError('');
     try {
       const { dailyCardService } = getAppContext();
-      const c = await dailyCardService.generateToday();
+      const c = await dailyCardService.generateToday(undefined, randomTopic ? { randomTopic: true } : undefined);
       setCard(c);
       setIsToday(true);
       setFavorited(false);
@@ -111,13 +111,21 @@ export function DailyCardSection(): JSX.Element {
         <div className="border-t border-ink-100 p-4">
           {card ? (
             <div className="rounded-lg bg-gradient-to-br from-amber-50 to-violet-50 p-4">
-              <div className="mb-1 flex items-center gap-2">
+              <div className="mb-1 flex flex-wrap items-center gap-2">
                 <span className="rounded-full bg-violet-600 px-2 py-0.5 text-[11px] text-white">
                   {CARD_TYPE_LABEL[card.type]}
                 </span>
                 {card.source === 'builtin' && (
                   <span className="rounded-full bg-ink-200/60 px-2 py-0.5 text-[11px] text-ink-500">
                     默认卡片
+                  </span>
+                )}
+                {card.source === 'ai' && card.themeSource && (
+                  <span
+                    className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] text-sky-700"
+                    title="本次卡片的题材来源"
+                  >
+                    题材 · {card.themeSource}
                   </span>
                 )}
                 <span className="font-medium">{card.title}</span>
@@ -174,6 +182,16 @@ export function DailyCardSection(): JSX.Element {
                 >
                   <RefreshCw size={12} />
                   {loading ? '生成中…' : '换一张'}
+                </button>
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => void generate(true)}
+                  className="flex items-center gap-1 rounded border border-ink-200 bg-white px-3 py-1.5 text-xs text-violet-700 hover:bg-violet-50 disabled:opacity-40"
+                  title="忽略书籍类型，从内置题材池随机抽一个题材重新生成"
+                >
+                  <Shuffle size={12} />
+                  换个题材
                 </button>
                 <button
                   type="button"

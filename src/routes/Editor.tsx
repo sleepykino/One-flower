@@ -52,7 +52,7 @@ import { ScreenplayPanel } from '../components/screenplay/ScreenplayPanel';
 import { ScreenplayWorkbench } from '../components/screenplay/ScreenplayWorkbench';
 import { ErrorBoundary } from '../components/common/ErrorBoundary';
 import { getAppContext } from '../context/app-context';
-import { alertDialog } from '../native/dialog';
+import { toast } from '../components/common/toast';
 import type { LongFormSession } from '../services/longform/types';
 import { resolveProviderConfigIdForFeature } from '../services/ai/providerResolver';
 import { createProvider, isLocalBaseUrl } from '../services/ai/providers/LLMProvider';
@@ -144,6 +144,7 @@ export function Editor(): JSX.Element {
   const chapters = useEditorStore((s) => s.chapters);
   const currentChapterId = useEditorStore((s) => s.currentChapterId);
   const saveState = useEditorStore((s) => s.saveState);
+  const liveWordCount = useEditorStore((s) => s.liveWordCount);
   const [tab, setTab] = useState<RightTab>('ai');
   const [searchOpen, setSearchOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -255,7 +256,7 @@ export function Editor(): JSX.Element {
       await getAppContext().bookService.update(bookId, { title: name });
       setBookTitle(name);
     } catch (e) {
-      alertDialog(e instanceof Error ? e.message : String(e));
+      toast.error(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -295,8 +296,8 @@ export function Editor(): JSX.Element {
             </button>
           </div>
         )}
-        <div className="text-xs text-ink-400">
-          {currentChapter ? `${currentChapter.title} · ${currentChapter.wordCount} 字` : '未选择章节'}
+        <div className="text-xs tabular-nums text-ink-400" title="实时字数（保存后与落盘值同步）">
+          {currentChapter ? `${currentChapter.title} · ${liveWordCount ?? currentChapter.wordCount} 字` : '未选择章节'}
         </div>
         <div className="ml-auto flex items-center gap-2 text-xs">
           {/* P2 工具组：专注 / 地图 / 时间线 / 命名 */}

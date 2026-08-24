@@ -18,6 +18,12 @@ import { DEFAULT_CARD } from './default-card';
 const KEY_TODAY = 'dailyCard.today';
 const KEY_BLOCKED = 'dailyCard.blockedTypes';
 
+/** 书籍类型之外的题材池：每日卡缺省题材的发散来源（避免单本书书架把题材锁死） */
+const TOPIC_POOL = [
+  '科幻', '悬疑', '都市', '历史', '奇幻', '乡土', '废土', '蒸汽朋克',
+  '志怪', '武侠', '谍战', '美食', '体育竞技', '民国传奇', '太空歌剧'
+];
+
 /** app_settings dailyCard.today 存储结构 */
 interface DailyCardState {
   date: string; // YYYY-MM-DD（本地时区）
@@ -122,23 +128,37 @@ export class DailyInspirationService {
 
   /**
    * AI 生成今日卡片（功能键 card-gen；显式调用）
-   * topic 为题材提示，缺省取书架最近更新书籍的类型；屏蔽类型生效；当日重复调用替换旧卡
+   * topic 缺省时：50% 取最近更新书籍的类型、50% 从内置题材池随机（randomTopic=true 则强制随机），
+   * 避免单本书书架把题材锁死；卡片带 themeSource 来源标注；屏蔽类型生效；当日重复调用替换旧卡
    */
-  async generateToday(topic?: string, signal?: AbortSignal): Promise<InspirationCard> {
+  async generateToday(
+    topic?: string,
+    opts?: { randomTopic?: boolean; signal?: AbortSignal }
+  ): Promise<InspirationCard> {
     let theme = topic?.trim() ?? '';
+    let themeSource = theme ? '自定义题材' : '';
     if (!theme) {
-      // 缺省取书架最近更新书籍的类型
-      const row = await this.db.queryOne<{ genre: string | null }>(
-        'SELECT genre FROM books ORDER BY updated_at DESC LIMIT 1'
+      const row = await this.db.queryOne<{ title: string; genre: string | null }>(
+        'SELECT title, genre FROM books ORDER BY updated_at DESC LIMIT 1'
       );
-      if (row?.genre) theme = row.genre;
+      const bookGenre = row?.genre?.trim() ?? '';
+      const useBookGenre = !opts?.randomTopic && bookGenre !== '' && Math.random() < 0.5;
+      if (useBookGenre) {
+        theme = bookGenre;
+        themeSource = `取自《${String(row!.title)}》`;
+      } else {
+        // 从池中随机，优先避开书籍类型（保持发散）
+        const pool = TOPIC_POOL.filter((t) => t !== bookGenre);
+        theme = pool[Math.floor(Math.random() * pool.length)] ?? '科幻';
+        themeSource = '随机题材';
+      }
     }
 
     const blocked = await this.getBlockedTypes();
     const blockedLabels = blocked.map((t) => CARD_TYPE_LABEL[t]).filter(Boolean);
 
     const lines: string[] = [];
-    if (theme) lines.push(`题材提示：${theme}`);
+    if (theme) lines.push(`题材提示：${theme}（卡片示例与方法请贴合该题材）`);
     if (blockedLabels.length > 0) {
       lines.push(`不要生成以下类型（用户已屏蔽）：${blockedLabels.join('、')}`);
     }
@@ -154,9 +174,10 @@ export class DailyInspirationService {
       model,
       temperature: 0.9,
       maxTokens: 1500,
-      signal
+      signal: opts?.signal
     });
     const card = this.parseCard(res.content);
+    card.themeSource = themeSource;
 
     // 当日重复调用替换旧卡
     const state: DailyCardState = { date: todayStr(), card };

@@ -5,7 +5,8 @@
 
 import { useEffect, useState } from 'react';
 import { getAppContext } from '../../context/app-context';
-import { alertDialog, confirmDialog } from '../../native/dialog';
+import { confirmDialog } from '../../native/dialog';
+import { toast } from '../common/toast';
 import type { WorldbookEntry } from '../../types';
 import { SettingFactsView } from './SettingFactsView';
 
@@ -69,7 +70,7 @@ export function WorldbookPanel({ bookId }: { bookId: string }): JSX.Element {
 
   const save = async (): Promise<void> => {
     if (!editing?.title?.trim()) {
-      void alertDialog('标题不能为空');
+      void toast.info('标题不能为空');
       return;
     }
     const { db, wq } = getAppContext();
@@ -140,7 +141,7 @@ export function WorldbookPanel({ bookId }: { bookId: string }): JSX.Element {
         }
       }
     } catch (e) {
-      void alertDialog(`向量化失败：${e instanceof Error ? e.message : String(e)}`);
+      void toast.error(`向量化失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setEmbedBatch({ done, total, running: false, errorCount });
       void loadEmbedded();
