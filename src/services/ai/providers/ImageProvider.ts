@@ -28,6 +28,8 @@ export interface ImageGenParams {
   /** 1-4 多候选；服务端不支持 n>1 时前端循环请求 */
   count: number;
   seed?: number;
+  /** 取消信号：传入后底层 HTTP 请求与轮询都会被中止 */
+  signal?: AbortSignal;
 }
 
 export interface GeneratedImage {

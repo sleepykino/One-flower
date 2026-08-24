@@ -28,6 +28,7 @@ import type {
   TypoReport
 } from './types';
 import { docToPlainText } from '../../utils/pmdoc';
+import { parseLooseJson } from '../../utils/looseJson';
 import type { ProseMirrorDoc } from '../../types';
 
 /** P1/P2 依赖（可选注入，不破坏 P0 构造签名） */
@@ -545,57 +546,42 @@ export class AIOrchestrator {
     return this.parseTypoReport(res.content);
   }
 
-  /** 从模型输出解析错字报告（容忍 markdown 代码块包裹与前后杂文，解析失败抛错提示用户） */
+  /** 从模型输出解析错字报告（容忍 markdown 围栏/杂文/注释，公共实现 parseLooseJson；解析失败抛错提示用户） */
   private parseTypoReport(raw: string): TypoReport {
-    let text = raw.trim();
-    const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (fence) text = fence[1].trim();
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
-    if (start >= 0 && end > start) text = text.slice(start, end + 1);
-    try {
-      const parsed = JSON.parse(text) as {
-        typos?: Array<{ original?: string; suggestion?: string; reason?: string }>;
-      };
-      return {
-        typos: (parsed.typos ?? [])
-          .filter(
-            (t) =>
-              typeof t.original === 'string' &&
-              typeof t.suggestion === 'string' &&
-              t.original.trim() !== '' &&
-              t.suggestion.trim() !== '' &&
-              t.original !== t.suggestion
-          )
-          .map((t) => ({
-            original: String(t.original),
-            suggestion: String(t.suggestion),
-            reason: String(t.reason ?? '')
-          })),
-        checkedAt: Date.now()
-      };
-    } catch {
-      throw new Error(`模型输出无法解析为 JSON：${raw.slice(0, 200)}`);
-    }
+    const parsed = parseLooseJson<{
+      typos?: Array<{ original?: string; suggestion?: string; reason?: string }>;
+    }>(raw);
+    if (!parsed) throw new Error(`模型输出无法解析为 JSON：${raw.slice(0, 200)}`);
+    return {
+      typos: (parsed.typos ?? [])
+        .filter(
+          (t) =>
+            typeof t.original === 'string' &&
+            typeof t.suggestion === 'string' &&
+            t.original.trim() !== '' &&
+            t.suggestion.trim() !== '' &&
+            t.original !== t.suggestion
+        )
+        .map((t) => ({
+          original: String(t.original),
+          suggestion: String(t.suggestion),
+          reason: String(t.reason ?? '')
+        })),
+      checkedAt: Date.now()
+    };
   }
 
-  /** 从模型输出解析矛盾报告（容忍 markdown 代码块包裹） */
+  /** 从模型输出解析矛盾报告（容忍 markdown 围栏/杂文/注释） */
   private parseReport(raw: string): ConsistencyReport {
-    let text = raw.trim();
-    const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (fence) text = fence[1].trim();
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
-    if (start >= 0 && end > start) text = text.slice(start, end + 1);
-    try {
-      const parsed = JSON.parse(text) as {
-        contradictions?: Array<{
-          severity?: string;
-          description?: string;
-          relatedSetting?: string;
-          chapterExcerpt?: string;
-        }>;
-      };
+    const parsed = parseLooseJson<{
+      contradictions?: Array<{
+        severity?: string;
+        description?: string;
+        relatedSetting?: string;
+        chapterExcerpt?: string;
+      }>;
+    }>(raw);
+    if (parsed) {
       return {
         contradictions: (parsed.contradictions ?? []).map((c) => ({
           severity: (['high', 'medium', 'low'].includes(String(c.severity))
@@ -607,19 +593,18 @@ export class AIOrchestrator {
         })),
         checkedAt: Date.now()
       };
-    } catch {
-      return {
-        contradictions: [
-          {
-            severity: 'low',
-            description: `模型输出无法解析为 JSON，原文如下：${raw.slice(0, 500)}`,
-            relatedSetting: '',
-            chapterExcerpt: ''
-          }
-        ],
-        checkedAt: Date.now()
-      };
     }
+    return {
+      contradictions: [
+        {
+          severity: 'low',
+          description: `模型输出无法解析为 JSON，原文如下：${raw.slice(0, 500)}`,
+          relatedSetting: '',
+          chapterExcerpt: ''
+        }
+      ],
+      checkedAt: Date.now()
+    };
   }
 
   /** 本次调用使用的模型名（P2 二期：按功能点路由） */

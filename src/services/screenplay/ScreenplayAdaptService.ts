@@ -15,6 +15,7 @@ import type { ProjectDirectiveService } from '../ai/ProjectDirectiveService';
 import type { ScreenplayService } from './ScreenplayService';
 import type { DialogueLine, Scene, ScreenplayEpisode, Shot, ShotSize } from './types';
 import { SHOT_SIZES } from './types';
+import { parseLooseJson } from '../../utils/looseJson';
 
 /** 角色卡概要（转化取材用，仅需 name + 结构化字段） */
 interface CharBrief {
@@ -45,30 +46,8 @@ interface ChapterMeta {
   summary: string | null;
 }
 
-/** 容错 JSON 对象解析（剥 think 段/围栏/首尾杂文/尾逗号） */
-function parseJsonObject<T>(raw: string): T | null {
-  let s = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fence) s = fence[1].trim();
-  const start = s.indexOf('{');
-  const end = s.lastIndexOf('}');
-  if (start < 0 || end <= start) return null;
-  let text = s.slice(start, end + 1);
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    try {
-      return JSON.parse(
-        text
-          .replace(/\/\*[\s\S]*?\*\//g, '')
-          .replace(/(^|[^:"'\\])\/\/[^\n\r]*/g, '$1')
-          .replace(/,(\s*[}\]])/g, '$1')
-      ) as T;
-    } catch {
-      return null;
-    }
-  }
-}
+/** 容错 JSON 解析（剥 think 段/围栏/首尾杂文/注释/尾逗号），公共实现见 utils/looseJson */
+const parseJsonObject = parseLooseJson;
 
 const OUTLINE_SYSTEM = `你是资深影视编剧策划。把小说章节素材改编为剧集大纲。
 严格只输出 JSON（不要 markdown 围栏、不要解释）：

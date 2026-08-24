@@ -48,6 +48,7 @@ export function ImageGenDialog({ bookId, scene, usage, refId, title, onConfirm, 
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const objUrlsRef = useRef<string[]>([]);
+  const abortRef = useRef<AbortController | null>(null);
   // P4-M2：生图配置为 ComfyUI 且已导入自定义工作流时，高级模式可选工作流
   const [isComfy, setIsComfy] = useState(false);
   const [hasCustomWf, setHasCustomWf] = useState(false);
@@ -75,7 +76,8 @@ export function ImageGenDialog({ bookId, scene, usage, refId, title, onConfirm, 
 
   useEffect(() => {
     return () => {
-      // 卸载时释放未入库候选的 object URL
+      // 卸载时中止进行中的生图请求，并释放未入库候选的 object URL
+      abortRef.current?.abort();
       for (const u of objUrlsRef.current) URL.revokeObjectURL(u);
     };
   }, []);
@@ -93,6 +95,8 @@ export function ImageGenDialog({ bookId, scene, usage, refId, title, onConfirm, 
     setError(null);
     setWarning(null);
     setPhase('working');
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
       // 第一步：提示词（高级模式手写覆盖；转写失败降级为直接使用场景描述）
       let prompt: string;
@@ -118,7 +122,13 @@ export function ImageGenDialog({ bookId, scene, usage, refId, title, onConfirm, 
       // 第二步：生图（'image' 路由）
       setStatus(`正在生成 ${count} 张候选（${size}）…`);
       const { provider, model, configId } = await resolveImageProvider(bridge, bookId);
-      const images = await provider.generate({ prompt, negativePrompt: negativePrompt || undefined, size, count });
+      const images = await provider.generate({
+        prompt,
+        negativePrompt: negativePrompt || undefined,
+        size,
+        count,
+        signal: controller.signal
+      });
       if (images.length === 0) throw new Error('生图返回为空，请重试或更换模型');
 
       // 释放上一轮候选
@@ -137,9 +147,20 @@ export function ImageGenDialog({ bookId, scene, usage, refId, title, onConfirm, 
       setSelected(new Set());
       setPhase('pick');
     } catch (e) {
+      if (controller.signal.aborted) {
+        // 用户主动取消：回到配置态，不报错
+        setPhase('config');
+        return;
+      }
       setError(e instanceof Error ? e.message : String(e));
       setPhase('config');
+    } finally {
+      if (abortRef.current === controller) abortRef.current = null;
     }
+  };
+
+  const cancelRun = (): void => {
+    abortRef.current?.abort();
   };
 
   const confirm = async (): Promise<void> => {
@@ -311,6 +332,13 @@ export function ImageGenDialog({ bookId, scene, usage, refId, title, onConfirm, 
           <div className="flex flex-col items-center justify-center gap-3 py-12">
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-violet-200 border-t-violet-600" />
             <div className="text-sm text-ink-600">{status || '生成中…'}</div>
+            <button
+              type="button"
+              className="mt-2 rounded border border-ink-200 px-3 py-1.5 text-sm text-ink-600 hover:bg-ink-100"
+              onClick={cancelRun}
+            >
+              取消生成
+            </button>
           </div>
         )}
 

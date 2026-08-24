@@ -50,14 +50,15 @@ export function FeatureModelsSection(): JSX.Element {
     const t = window.setTimeout(() => setSavedAt(0), 2000);
     return () => window.clearTimeout(t);
   }, [savedAt]);
-  /** 默认配置 = 第一组（created_at 最早） */
-  const defaultConfig = configs.length > 0 ? configs[0] : null;
+  /** 默认配置 = 第一组对话可用配置（comfyui 生图专用不参与，与运行时路由守卫一致） */
+  const defaultConfig = configs.find((c) => c.provider !== 'comfyui') ?? null;
 
-  /** 某功能当前实际会用的模型（未绑定时显示第一组配置的模型，路由透明可见） */
+  /** 某功能当前实际会用的模型（未绑定或绑定不可用时显示默认配置的模型，路由透明可见） */
   const effectiveModel = (feature: FeatureKey): string => {
     const bound = bindings[feature];
-    if (bound && configById.has(bound)) {
-      return configById.get(bound)!.model;
+    const boundConfig = bound ? configById.get(bound) : undefined;
+    if (boundConfig && (feature === 'image' || boundConfig.provider !== 'comfyui')) {
+      return boundConfig.model;
     }
     return defaultConfig ? `${defaultConfig.model}（默认）` : '未配置任何模型';
   };
@@ -162,11 +163,14 @@ export function FeatureModelsSection(): JSX.Element {
                       className="w-56 shrink-0 rounded border border-ink-200 px-1.5 py-1 text-xs"
                     >
                       <option value={FOLLOW_DEFAULT}>用默认配置（第一组）</option>
-                      {configs.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}（{c.model}）
-                        </option>
-                      ))}
+                      {/* comfyui 为生图专用协议，仅「图片生成」可选，避免误绑对话功能运行时才报错 */}
+                      {configs
+                        .filter((c) => f.key === 'image' || c.provider !== 'comfyui')
+                        .map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}（{c.model}）
+                          </option>
+                        ))}
                     </select>
                     <span className="min-w-0 flex-1 truncate text-[10px] text-ink-400" title={effectiveModel(f.key)}>
                       实际使用：{effectiveModel(f.key)}

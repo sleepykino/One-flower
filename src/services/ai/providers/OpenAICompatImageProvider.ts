@@ -40,6 +40,7 @@ export class OpenAICompatImageProvider implements ImageProvider {
   async generate(params: ImageGenParams): Promise<GeneratedImage[]> {
     const count = Math.max(1, Math.min(4, Math.floor(params.count) || 1));
     const negative = params.negativePrompt?.trim() ?? '';
+    const { signal } = params;
 
     /** 生成指定数量的请求体候选风格（按兼容性排序） */
     const makeBodies = (n: number): Array<Record<string, unknown>> => {
@@ -68,17 +69,20 @@ export class OpenAICompatImageProvider implements ImageProvider {
 
     let lastErr: unknown = null;
     for (const body of makeBodies(count)) {
+      signal?.throwIfAborted();
       try {
-        const images = await this.request(body);
+        const images = await this.request(body, signal);
         if (images.length === 0) throw new Error('生图响应为空');
         // 成功但数量不足：用同风格单张补齐
         while (images.length < count) {
-          const more = await this.request(singleOf(body));
+          signal?.throwIfAborted();
+          const more = await this.request(singleOf(body), signal);
           if (more.length === 0) break;
           images.push(...more);
         }
         return images;
       } catch (err) {
+        if (signal?.aborted) throw err;
         lastErr = err;
       }
     }
@@ -86,13 +90,14 @@ export class OpenAICompatImageProvider implements ImageProvider {
   }
 
   /** 单次请求：POST images/generations 并解析响应 */
-  private async request(body: Record<string, unknown>): Promise<GeneratedImage[]> {
+  private async request(body: Record<string, unknown>, signal?: AbortSignal): Promise<GeneratedImage[]> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (this.apiKey) headers.Authorization = `Bearer ${this.apiKey}`;
     const res = await tauriFetch(this.endpoint, {
       method: 'POST',
       headers,
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal
     });
     if (!res.ok) {
       const text = await res.text();
@@ -111,7 +116,7 @@ export class OpenAICompatImageProvider implements ImageProvider {
         const bytes = base64ToUint8Array(item.b64_json);
         out.push({ bytes, mimeType: sniffImageMime(bytes), revisedPrompt });
       } else if (item.url) {
-        const imgRes = await tauriFetch(item.url, { method: 'GET' });
+        const imgRes = await tauriFetch(item.url, { method: 'GET', signal });
         if (!imgRes.ok) throw new Error(`下载生成图片失败 ${imgRes.status}`);
         const buf = new Uint8Array(await imgRes.arrayBuffer());
         const headerMime = imgRes.headers.get('content-type')?.split(';')[0]?.trim();

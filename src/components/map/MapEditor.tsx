@@ -19,7 +19,6 @@ import { MapEditorService } from '../../services/map/MapEditorService';
 import { MapAssetService, type MapAsset } from '../../services/map/MapAssetService';
 import {
   ICON_LIBRARY,
-  LAYER_LABELS,
   TERRAIN_LIBRARY,
   TILE_SIZE,
   createEmptyTiles,
@@ -37,8 +36,11 @@ import type { ScatterSite } from '../../services/map/terrainGen';
 import { drawTileCell, renderTilesToCanvas } from '../../services/map/tileRender';
 import { autoLayoutNodes } from '../../services/map/autoLayout';
 import { getCachedImage, loadAssetImage } from './imageCache';
+import { parseLooseJson } from '../../utils/looseJson';
 import { MapInspector } from './MapInspector';
 import { MapAssetPanel } from './MapAssetPanel';
+import { MapToolbar } from './MapToolbar';
+import { MapLayerPanel } from './MapLayerPanel';
 import { MapGenDialog, type GenResult } from './MapGenDialog';
 import { resolveImageProvider } from '../../services/ai/providers/ImageProvider';
 
@@ -118,41 +120,16 @@ function base64ToU8(b64: string): Uint8Array {
 }
 
 /**
- * 解析 AI 返回内容（容错增强）：
- * 1. 剥 <think> 推理段 / ```json 围栏 / 首尾说明文字（截取首尾大括号）
- * 2. 首次解析失败时，移除 // 注释与尾逗号后重试（AI 常见格式瑕疵）
- * 3. nodes / connections 任一存在即视为有效（只返回其一不算失败）
+ * 解析 AI 返回内容（容错：公共实现 parseLooseJson，剥 think 段/围栏/杂文/注释）：
+ * nodes / connections 任一存在即视为有效（只返回其一不算失败）
  */
 function parseAiContent(raw: string): { nodes: MapNode[]; connections: MapConnection[] } | null {
-  try {
-    let s = raw
-      .replace(/<think>[\s\S]*?<\/think>/gi, '') // 剥推理模型思考段
-      .trim();
-    const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (fence) s = fence[1].trim();
-    const start = s.indexOf('{');
-    const end = s.lastIndexOf('}');
-    if (start >= 0 && end > start) s = s.slice(start, end + 1);
-
-    let parsed: { nodes?: MapNode[]; connections?: MapConnection[] };
-    try {
-      parsed = JSON.parse(s) as { nodes?: MapNode[]; connections?: MapConnection[] };
-    } catch {
-      // 重试：去 // 行注释、/* 块注释 */ 与尾逗号
-      const cleaned = s
-        .replace(/\/\*[\s\S]*?\*\//g, '')
-        .replace(/(^|[^:"'\\])\/\/[^\n\r]*/g, '$1')
-        .replace(/,(\s*[}\]])/g, '$1');
-      parsed = JSON.parse(cleaned) as { nodes?: MapNode[]; connections?: MapConnection[] };
-    }
-
-    const nodes = Array.isArray(parsed.nodes) ? parsed.nodes : [];
-    const connections = Array.isArray(parsed.connections) ? parsed.connections : [];
-    if (nodes.length === 0 && connections.length === 0) return null;
-    return { nodes, connections };
-  } catch {
-    return null;
-  }
+  const parsed = parseLooseJson<{ nodes?: MapNode[]; connections?: MapConnection[] }>(raw);
+  if (!parsed) return null;
+  const nodes = Array.isArray(parsed.nodes) ? parsed.nodes : [];
+  const connections = Array.isArray(parsed.connections) ? parsed.connections : [];
+  if (nodes.length === 0 && connections.length === 0) return null;
+  return { nodes, connections };
 }
 
 /** 右键菜单状态（屏幕坐标） */
@@ -1744,141 +1721,34 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="flex h-[94vh] w-[min(1500px,97vw)] flex-col overflow-hidden rounded bg-white shadow-2xl">
-        {/* 标题栏 + 顶部工具栏 */}
-        <div className="flex items-center justify-between gap-2 border-b border-ink-200 px-4 py-1.5">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="shrink-0 text-sm font-semibold">地图编辑</span>
-            {/* 地图切换下拉（左栏列表之外的显式入口） */}
-            {currentMap && (
-              <select
-                value={currentMap.id}
-                className="min-w-0 max-w-40 truncate rounded border border-ink-200 px-1.5 py-0.5 text-xs outline-none hover:border-violet-300"
-                title="切换地图"
-                onChange={(e) => {
-                  const v = e.target.value;
-                  if (v === '__new__') {
-                    e.target.value = currentMap.id;
-                    void handleCreate();
-                  } else {
-                    void switchMap(v);
-                  }
-                }}
-              >
-                {maps.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-                <option value="__new__">＋ 新建地图…</option>
-              </select>
-            )}
-            {currentMap && (
-              <span className="truncate text-xs text-ink-400">{dirty ? '有未保存修改' : saveStatus || '就绪'}</span>
-            )}
-          </div>
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              title="撤销 (Ctrl+Z)"
-              disabled={past.length === 0}
-              className="rounded border border-ink-200 px-2 py-1 text-sm hover:bg-ink-100 disabled:opacity-40"
-              onClick={undo}
-            >
-              ↶
-            </button>
-            <button
-              type="button"
-              title="重做 (Ctrl+Y)"
-              disabled={future.length === 0}
-              className="rounded border border-ink-200 px-2 py-1 text-sm hover:bg-ink-100 disabled:opacity-40"
-              onClick={redo}
-            >
-              ↷
-            </button>
-            <div className="mx-1 flex items-center overflow-hidden rounded border border-ink-200">
-              <button
-                type="button"
-                title="缩小"
-                className="px-2 py-1 text-sm hover:bg-ink-100"
-                onClick={() => zoomAtPoint(size.width / 2, size.height / 2, 1 / 1.2)}
-              >
-                −
-              </button>
-              <span className="w-12 text-center text-xs tabular-nums text-ink-500">{zoomPct}%</span>
-              <button
-                type="button"
-                title="放大"
-                className="px-2 py-1 text-sm hover:bg-ink-100"
-                onClick={() => zoomAtPoint(size.width / 2, size.height / 2, 1.2)}
-              >
-                +
-              </button>
-              <button
-                type="button"
-                title="适应画布"
-                className="border-l border-ink-200 px-2 py-1 text-xs hover:bg-ink-100"
-                onClick={() => fitView(currentMap)}
-              >
-                适应
-              </button>
-            </div>
-            <button
-              type="button"
-              className="rounded border border-ink-200 px-2 py-1 text-sm hover:bg-ink-100 disabled:opacity-40"
-              disabled={!currentMap}
-              title="力导向自动排布地点节点（可撤销）"
-              onClick={runAutoLayout}
-            >
-              自动布局
-            </button>
-            <button
-              type="button"
-              className={`rounded border px-2 py-1 text-sm ${
-                genOpen ? 'border-emerald-300 text-emerald-700' : 'border-ink-200 hover:bg-ink-100'
-              }`}
-              disabled={!currentMap}
-              title="预设地形生成（环岛/群岛/大陆等，seeded 可复现）"
-              onClick={() => setGenOpen((v) => !v)}
-            >
-              预设生成
-            </button>
-            {aiGenerateMap && (
-              <button
-                type="button"
-                className={`rounded border px-2 py-1 text-sm ${aiOpen ? 'border-violet-300 text-violet-700' : 'border-ink-200 hover:bg-ink-100'}`}
-                onClick={() => setAiOpen((v) => !v)}
-              >
-                AI 生成
-              </button>
-            )}
-            <button
-              type="button"
-              className="rounded border border-ink-200 px-2 py-1 text-sm hover:bg-ink-100"
-              onClick={() => void exportPng()}
-              title={`导出为 PNG 图片（${exportScale}x${exportTransparent ? '，透明背景' : ''}）`}
-            >
-              导出 PNG
-            </button>
-            <button
-              type="button"
-              className="rounded border border-ink-200 px-2 py-1 text-sm hover:bg-ink-100"
-              onClick={() => void insertToDoc()}
-              title="当前地图导出为 PNG 插入正文光标处（作为插图）"
-            >
-              插入正文
-            </button>
-            <button
-              type="button"
-              className="rounded border border-violet-300 px-2 py-1 text-sm text-violet-700 hover:bg-violet-50"
-              onClick={() => void save()}
-            >
-              保存
-            </button>
-            <button type="button" className="rounded border border-ink-200 px-2 py-1 text-sm hover:bg-ink-100" onClick={onClose} title="关闭">
-              ×
-            </button>
-          </div>
-        </div>
+        {/* 标题栏 + 顶部工具栏（子组件） */}
+        <MapToolbar
+          maps={maps}
+          currentMap={currentMap}
+          dirty={dirty}
+          saveStatus={saveStatus}
+          canUndo={past.length > 0}
+          canRedo={future.length > 0}
+          zoomPct={zoomPct}
+          genOpen={genOpen}
+          aiOpen={aiOpen}
+          hasAiGenerate={!!aiGenerateMap}
+          exportScale={exportScale}
+          exportTransparent={exportTransparent}
+          onSwitchMap={(id) => void switchMap(id)}
+          onCreateMap={() => void handleCreate()}
+          onUndo={undo}
+          onRedo={redo}
+          onZoom={(factor) => zoomAtPoint(size.width / 2, size.height / 2, factor)}
+          onFit={() => fitView(currentMap)}
+          onAutoLayout={runAutoLayout}
+          onToggleGen={() => setGenOpen((v) => !v)}
+          onToggleAi={() => setAiOpen((v) => !v)}
+          onExportPng={() => void exportPng()}
+          onInsertToDoc={() => void insertToDoc()}
+          onSave={() => void save()}
+          onClose={onClose}
+        />
 
         {/* 主体三栏 */}
         <div className="relative flex min-h-0 flex-1">
@@ -2076,89 +1946,18 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
               />
             </div>
 
-            {/* 瓦片图层管理 + 图层显隐 */}
-            <div className="mt-auto border-t border-ink-200 px-3 pb-1 pt-2.5 text-sm font-medium">图层</div>
-            <div className="px-2 pb-2">
-              <div className="mb-1 flex items-center justify-between text-xs text-ink-500">
-                <span>瓦片图层（{(currentMap?.tileLayers.length ?? 0)}）</span>
-                <button
-                  type="button"
-                  className="rounded border border-ink-200 px-1.5 py-0.5 text-[11px] hover:bg-ink-100"
-                  onClick={addTileLayer}
-                >
-                  + 新建层
-                </button>
-              </div>
-              <div className="mb-2 space-y-0.5">
-                {(currentMap?.tileLayers ?? []).map((l, i) => (
-                  <div
-                    key={l.id}
-                    className={`flex items-center gap-1 rounded border px-1.5 py-0.5 text-xs ${
-                      i === activeLayerIdx ? 'border-violet-300 bg-violet-50' : 'border-ink-100'
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      title={l.visible ? '隐藏该层' : '显示该层'}
-                      className="shrink-0"
-                      onClick={() => toggleTileLayerVisible(i)}
-                    >
-                      {l.visible ? '👁' : '🚫'}
-                    </button>
-                    <input
-                      className="min-w-0 flex-1 bg-transparent text-xs outline-none"
-                      value={l.name}
-                      onChange={(e) => renameTileLayer(i, e.target.value)}
-                      title="图层名（直接编辑）"
-                    />
-                    <button
-                      type="button"
-                      title="上移（渲染更靠上）"
-                      className="shrink-0 text-ink-400 hover:text-ink-700"
-                      onClick={() => moveTileLayer(i, -1)}
-                    >
-                      ↑
-                    </button>
-                    <button
-                      type="button"
-                      title="下移"
-                      className="shrink-0 text-ink-400 hover:text-ink-700"
-                      onClick={() => moveTileLayer(i, 1)}
-                    >
-                      ↓
-                    </button>
-                    <button
-                      type="button"
-                      title="删除该层"
-                      className="shrink-0 text-red-400 hover:text-red-600"
-                      onClick={() => removeTileLayer(i)}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-                {(currentMap?.tileLayers.length ?? 0) === 0 && (
-                  <div className="rounded border border-dashed border-ink-200 px-2 py-1.5 text-[11px] text-ink-400">
-                    无瓦片图层。笔刷落下第一笔会自动创建，或点「+ 新建层」/「预设生成」。
-                  </div>
-                )}
-              </div>
-              <div className="grid grid-cols-2 gap-1">
-                {LAYER_LABELS.map((l) => (
-                  <button
-                    key={l.key}
-                    type="button"
-                    className={`rounded border px-1 py-1 text-xs ${
-                      layers[l.key] ? 'border-ink-200 text-ink-600' : 'border-ink-200 bg-ink-100 text-ink-400'
-                    }`}
-                    onClick={() => setLayers((v) => ({ ...v, [l.key]: !v[l.key] }))}
-                  >
-                    {layers[l.key] ? '👁 ' : '🚫 '}
-                    {l.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            {/* 瓦片图层管理 + 图层显隐（子组件） */}
+            <MapLayerPanel
+              tileLayers={currentMap?.tileLayers ?? []}
+              activeLayerIdx={activeLayerIdx}
+              visibility={layers}
+              onAddLayer={addTileLayer}
+              onRemoveLayer={removeTileLayer}
+              onMoveLayer={moveTileLayer}
+              onRenameLayer={renameTileLayer}
+              onToggleLayerVisible={toggleTileLayerVisible}
+              onToggleVisibility={(key) => setLayers((v) => ({ ...v, [key]: !v[key] }))}
+            />
             </div>
           </aside>
 

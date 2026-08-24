@@ -135,8 +135,10 @@ export class ComfyUIImageProvider implements ImageProvider {
     const [width, height] = params.size.split('x').map((n) => parseInt(n, 10));
     const negative = params.negativePrompt ?? '';
     const baseSeed = params.seed ?? randomSeed();
+    const { signal } = params;
     const out: GeneratedImage[] = [];
     for (let i = 0; i < params.count; i++) {
+      signal?.throwIfAborted();
       // 深拷贝工作流，逐张注入（seed 递增避免同图）
       const wf: ComfyWorkflow = JSON.parse(JSON.stringify(this.workflow));
       injectParams(wf, {
@@ -147,19 +149,20 @@ export class ComfyUIImageProvider implements ImageProvider {
         seed: (baseSeed + i) % 1_000_000_000_000,
         checkpoint: this.checkpoint
       });
-      const images = await this.runWorkflow(wf);
+      const images = await this.runWorkflow(wf, signal);
       out.push(...images);
     }
     return out;
   }
 
   /** 提交单个工作流并等待完成，下载全部输出图片 */
-  private async runWorkflow(wf: ComfyWorkflow): Promise<GeneratedImage[]> {
+  private async runWorkflow(wf: ComfyWorkflow, signal?: AbortSignal): Promise<GeneratedImage[]> {
     const clientId = crypto.randomUUID();
     const res = await tauriFetch(`${this.baseUrl}/prompt`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: wf, client_id: clientId })
+      body: JSON.stringify({ prompt: wf, client_id: clientId }),
+      signal
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
@@ -172,8 +175,10 @@ export class ComfyUIImageProvider implements ImageProvider {
     const deadline = Date.now() + POLL_TIMEOUT_MS;
     let images: HistoryImage[] = [];
     while (Date.now() < deadline) {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
       await sleep(POLL_INTERVAL_MS);
-      const h = await tauriFetch(`${this.baseUrl}/history/${promptId}`);
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+      const h = await tauriFetch(`${this.baseUrl}/history/${promptId}`, { signal });
       if (!h.ok) continue;
       const json = (await h.json()) as Record<
         string,
@@ -190,16 +195,17 @@ export class ComfyUIImageProvider implements ImageProvider {
       }
     }
     if (images.length === 0) {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
       throw new Error('ComfyUI 生成超时（5 分钟无输出），请检查节点是否报错');
     }
-    return Promise.all(images.map((f) => this.downloadImage(f)));
+    return Promise.all(images.map((f) => this.downloadImage(f, signal)));
   }
 
-  private async downloadImage(f: HistoryImage): Promise<GeneratedImage> {
+  private async downloadImage(f: HistoryImage, signal?: AbortSignal): Promise<GeneratedImage> {
     const url =
       `${this.baseUrl}/view?filename=${encodeURIComponent(f.filename)}` +
       `&subfolder=${encodeURIComponent(f.subfolder ?? '')}&type=${encodeURIComponent(f.type ?? 'output')}`;
-    const res = await tauriFetch(url);
+    const res = await tauriFetch(url, { signal });
     if (!res.ok) throw new Error(`下载 ComfyUI 输出失败 HTTP ${res.status}（${f.filename}）`);
     const buf = await res.arrayBuffer();
     return { bytes: new Uint8Array(buf), mimeType: mimeOf(f.filename) };

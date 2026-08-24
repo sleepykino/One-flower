@@ -5,6 +5,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getAppContext } from '../../context/app-context';
+import { confirmDialog } from '../../native/dialog';
 import {
   SHOT_SIZES,
   SHOT_SIZE_LABEL,
@@ -12,6 +13,14 @@ import {
   type Screenplay,
   type Scene
 } from '../../services/screenplay/types';
+
+/** 简易撤销条：一次一个动作，8 秒后自动消失 */
+interface UndoAction {
+  label: string;
+  act: () => void;
+}
+
+const UNDO_TIMEOUT_MS = 8000;
 
 interface Props {
   bookId: string;
@@ -29,8 +38,19 @@ interface Props {
 export function ScreenplayEditor({ screenplay, onChanged, onUpdated, onJumpChapter, onGeneratePending }: Props): JSX.Element {
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Scene | null>(null);
+  const [undoAction, setUndoAction] = useState<UndoAction | null>(null);
   const dirtyRef = useRef(false);
   const timerRef = useRef<number | null>(null);
+  /** 撤销动作闭包里读取最新草稿用 */
+  const draftRef = useRef<Scene | null>(null);
+  draftRef.current = draft;
+
+  /** 撤销条自动消失 */
+  useEffect(() => {
+    if (!undoAction) return;
+    const t = window.setTimeout(() => setUndoAction(null), UNDO_TIMEOUT_MS);
+    return () => window.clearTimeout(t);
+  }, [undoAction]);
 
   const flat = useMemo(
     () => screenplay.data.episodes.flatMap((ep) => ep.scenes.map((sc) => ({ ep, sc }))),
@@ -85,9 +105,24 @@ export function ScreenplayEditor({ screenplay, onChanged, onUpdated, onJumpChapt
   };
   const removeShot = (shotId: string): void => {
     if (!draft) return;
+    const idx = draft.shots.findIndex((s) => s.id === shotId);
+    if (idx < 0) return;
+    const removed = draft.shots[idx];
+    const sceneId = draft.id;
     commit({
       ...draft,
       shots: draft.shots.filter((s) => s.id !== shotId).map((s, i) => ({ ...s, number: i + 1 }))
+    });
+    setUndoAction({
+      label: `已删除镜 ${idx + 1}`,
+      act: (): void => {
+        const cur = draftRef.current;
+        // 已切换到其他场则放弃撤销，避免恢复进错误场景
+        if (!cur || cur.id !== sceneId) return;
+        const shots = [...cur.shots];
+        shots.splice(Math.max(0, Math.min(shots.length, idx)), 0, removed);
+        commit({ ...cur, shots: shots.map((s, i) => ({ ...s, number: i + 1 })) });
+      }
     });
   };
   const patchDialogue = (shotId: string, dlIdx: number, patch: Partial<Scene['shots'][number]['dialogue'][number]>): void => {
@@ -112,9 +147,32 @@ export function ScreenplayEditor({ screenplay, onChanged, onUpdated, onJumpChapt
   };
   const removeDialogue = (shotId: string, dlIdx: number): void => {
     if (!draft) return;
+    const shot = draft.shots.find((s) => s.id === shotId);
+    const removed = shot?.dialogue[dlIdx];
     commit({
       ...draft,
       shots: draft.shots.map((s) => (s.id === shotId ? { ...s, dialogue: s.dialogue.filter((_, i) => i !== dlIdx) } : s))
+    });
+    if (!shot || !removed) return;
+    const sceneId = draft.id;
+    setUndoAction({
+      label: '已删除一句对白',
+      act: (): void => {
+        const cur = draftRef.current;
+        // 已切换到其他场则放弃撤销
+        if (!cur || cur.id !== sceneId) return;
+        commit({
+          ...cur,
+          shots: cur.shots.map((s) =>
+            s.id === shotId
+              ? {
+                  ...s,
+                  dialogue: [...s.dialogue.slice(0, dlIdx), removed, ...s.dialogue.slice(dlIdx)]
+                }
+              : s
+          )
+        });
+      }
     });
   };
 
@@ -129,12 +187,42 @@ export function ScreenplayEditor({ screenplay, onChanged, onUpdated, onJumpChapt
       });
   };
   const removeScene = (episodeId: string, sceneId: string): void => {
-    void getAppContext()
-      .screenplayService.removeScene(screenplay.id, episodeId, sceneId)
-      .then((sp) => {
-        if (selectedSceneId === sceneId) setSelectedSceneId(null);
-        if (sp) onUpdated(sp);
-      });
+    const ep = screenplay.data.episodes.find((e) => e.id === episodeId);
+    const idx = ep?.scenes.findIndex((s) => s.id === sceneId) ?? -1;
+    const scene = idx >= 0 ? ep!.scenes[idx] : null;
+    if (!ep || !scene) return;
+    void confirmDialog(
+      `确认删除本场「${scene.interior}·${scene.location}」（含 ${scene.shots.length} 个镜头）？删除后可在下方提示条内撤销。`
+    ).then((ok) => {
+      if (!ok) return;
+      // 取消未落盘的防抖保存，避免已删场景被旧定时器写回
+      if (timerRef.current) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      dirtyRef.current = false;
+      void getAppContext()
+        .screenplayService.removeScene(screenplay.id, episodeId, sceneId)
+        .then((sp) => {
+          if (selectedSceneId === sceneId) setSelectedSceneId(null);
+          if (sp) onUpdated(sp);
+          setUndoAction({
+            label: `已删除场 ${idx + 1}（${scene.interior}·${scene.location}）`,
+            act: (): void => {
+              void getAppContext()
+                .screenplayService.restoreScene(screenplay.id, episodeId, scene, idx)
+                .then((restored) => {
+                  if (restored) {
+                    onUpdated(restored);
+                    setSelectedSceneId(scene.id);
+                  }
+                })
+                .catch((e) => console.warn('[Screenplay] 撤销删除失败:', e));
+            }
+          });
+        })
+        .catch((e) => console.warn('[Screenplay] 场删除失败:', e));
+    });
   };
   const moveScene = (episodeId: string, sceneId: string, delta: number): void => {
     const ep = screenplay.data.episodes.find((e) => e.id === episodeId);
@@ -150,7 +238,28 @@ export function ScreenplayEditor({ screenplay, onChanged, onUpdated, onJumpChapt
   const pendingScenes = stats.scenes - stats.doneScenes;
 
   return (
-    <div className="flex min-h-0 flex-1">
+    <div className="relative flex min-h-0 flex-1">
+      {/* 撤销条（删除镜头/对白/场后短暂显示） */}
+      {undoAction && (
+        <div className="absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded border border-ink-200 bg-white px-3 py-1.5 text-xs shadow-lg">
+          <span className="text-ink-500">{undoAction.label}</span>
+          <button
+            type="button"
+            className="font-medium text-violet-600 hover:underline"
+            onClick={undoAction.act}
+          >
+            撤销
+          </button>
+          <button
+            type="button"
+            title="关闭"
+            className="text-ink-300 hover:text-ink-500"
+            onClick={() => setUndoAction(null)}
+          >
+            ×
+          </button>
+        </div>
+      )}
       {/* 左：场次树 */}
       <div className="w-64 shrink-0 overflow-y-auto border-r border-ink-100 bg-ink-50/40 p-2">
         {screenplay.data.episodes.map((ep) => (

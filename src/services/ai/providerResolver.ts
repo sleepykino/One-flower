@@ -10,16 +10,21 @@ import type { NativeBridge } from '../../native/NativeBridge';
 import type { LLMProvider } from './providers/LLMProvider';
 import type { FeatureKey } from './modelRouting';
 
-/** 默认配置的 configId（模型分工未指定时的全局默认：优先被标记为默认的配置，无标记回退第一组） */
+/**
+ * 默认配置的 configId（模型分工未指定时的全局默认：优先被标记为默认的配置，无标记回退第一组）
+ * requireChat=true 时跳过 comfyui 生图专用协议（不能作为对话模型，误选会在运行时才报错）
+ */
 export async function resolveDefaultProviderConfigId(
-  bridge: NativeBridge
+  bridge: NativeBridge,
+  requireChat = true
 ): Promise<string | null> {
+  const cond = requireChat ? "provider != 'comfyui'" : '1 = 1';
   const marked = await bridge.db.queryOne<{ id: string }>(
-    'SELECT id FROM provider_configs WHERE is_default = 1 ORDER BY created_at ASC LIMIT 1'
+    `SELECT id FROM provider_configs WHERE ${cond} AND is_default = 1 ORDER BY created_at ASC LIMIT 1`
   );
   if (marked?.id) return marked.id;
   const first = await bridge.db.queryOne<{ id: string }>(
-    'SELECT id FROM provider_configs ORDER BY created_at ASC LIMIT 1'
+    `SELECT id FROM provider_configs WHERE ${cond} ORDER BY created_at ASC LIMIT 1`
   );
   return first?.id ?? null;
 }
@@ -49,12 +54,15 @@ async function readFeatureBindings(
 /**
  * 按功能点解析 configId：功能绑定 -> 第一组配置
  * （embedding 功能走专用 key embedding.providerConfigId；历史书籍绑定不再参与）
+ * comfyui 为生图专用协议：除 image 功能外，绑定/默认落到 comfyui 配置时回退对话模型并告警，
+ * 避免「误绑对话功能要到运行时才报错」
  */
 export async function resolveProviderConfigIdForFeature(
   bridge: NativeBridge,
   bookId: string,
   feature: FeatureKey
 ): Promise<string | null> {
+  const isImageFeature = feature === 'image';
   const settingKey =
     feature === 'embedding' ? 'embedding.providerConfigId' : 'ai.featureModels';
   let bound: string | undefined;
@@ -68,14 +76,18 @@ export async function resolveProviderConfigIdForFeature(
     bound = (await readFeatureBindings(bridge))[feature];
   }
   if (bound) {
-    const exists = await bridge.db.queryOne<{ id: string }>(
-      'SELECT id FROM provider_configs WHERE id = ?',
+    const row = await bridge.db.queryOne<{ id: string; provider: string }>(
+      'SELECT id, provider FROM provider_configs WHERE id = ?',
       [bound]
     );
-    if (exists) return bound;
-    console.warn(`[ModelRouting] 功能「${feature}」绑定的配置已不存在，回退默认配置`);
+    if (row && !(row.provider === 'comfyui' && !isImageFeature)) return bound;
+    if (row) {
+      console.warn(`[ModelRouting] 功能「${feature}」绑定了 ComfyUI 生图配置，不能用于该功能，已回退默认对话模型`);
+    } else {
+      console.warn(`[ModelRouting] 功能「${feature}」绑定的配置已不存在，回退默认配置`);
+    }
   }
-  return resolveDefaultProviderConfigId(bridge);
+  return resolveDefaultProviderConfigId(bridge, !isImageFeature);
 }
 
 /** 按功能点解析模型名（ContextPanel 路由可见性等） */

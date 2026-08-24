@@ -12,6 +12,7 @@ import type { TaskCenterService } from '../task/TaskCenterService';
 import type { ConsistencyReport } from '../ai/types';
 import type { ExtractionScope, FactKind, FactSource, InferenceChainItem, SettingFact } from './types';
 import { docToPlainText } from '../../utils/pmdoc';
+import { parseLooseJson } from '../../utils/looseJson';
 import type { ProseMirrorDoc } from '../../types';
 
 const EXTRACT_SYSTEM = `你是小说世界观分析师。从给定材料中抽取可核验的"设定事实"（物件、技术、社会形态、魔法体系、地理等，作为时代感基线）。
@@ -31,23 +32,8 @@ const CHECK_SYSTEM = `你是严谨的小说一致性审校。给定"时代感基
 {"contradictions":[{"severity":"high|medium|low","description":"越级矛盾描述","relatedSetting":"关联的基线事实或推导链","chapterExcerpt":"章节原文片段"}]}
 无矛盾时 contradictions 为空数组。`;
 
-/** 从 LLM 输出解析 JSON（容忍围栏与前后缀文本） */
-function parseJsonLoose<T>(raw: string): T | null {
-  let text = raw.trim();
-  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fence) text = fence[1].trim();
-  const start = Math.min(
-    ...[text.indexOf('['), text.indexOf('{')].filter((i) => i >= 0).concat([Number.MAX_SAFE_INTEGER])
-  );
-  const isArray = text.indexOf('[') === start;
-  const end = isArray ? text.lastIndexOf(']') : text.lastIndexOf('}');
-  if (start >= Number.MAX_SAFE_INTEGER || end <= start) return null;
-  try {
-    return JSON.parse(text.slice(start, end + 1)) as T;
-  } catch {
-    return null;
-  }
-}
+/** 容错 JSON 解析（公共实现见 utils/looseJson） */
+const parseJsonLoose = parseLooseJson;
 
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];

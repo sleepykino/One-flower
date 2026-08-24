@@ -7,6 +7,7 @@
 import type { NativeBridge } from '../../native/NativeBridge';
 import type { LLMProvider } from '../ai/providers/LLMProvider';
 import { resolveProviderConfigIdForFeature } from '../ai/providerResolver';
+import { parseLooseJson } from '../../utils/looseJson';
 import type { ImageScene } from './types';
 
 const PROMPT_SYSTEM = `你是资深的 AI 绘画提示词工程师，为小说配图（封面 / 角色立绘 / 正文插图）撰写生图提示词。
@@ -80,24 +81,16 @@ export class ImagePromptService {
   }
 }
 
-/** 解析模型输出的 JSON（容错：剥离代码围栏/前后杂文） */
+/** 解析模型输出的 JSON（容错：公共实现 parseLooseJson，剥围栏/杂文/注释） */
 export function parsePromptResult(content: string): { prompt: string; negativePrompt: string } {
-  let text = content.trim();
-  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fence) text = fence[1].trim();
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start >= 0 && end > start) text = text.slice(start, end + 1);
-  try {
-    const parsed = JSON.parse(text) as { prompt?: unknown; negativePrompt?: unknown };
+  const parsed = parseLooseJson<{ prompt?: unknown; negativePrompt?: unknown }>(content);
+  if (parsed) {
     const prompt = typeof parsed.prompt === 'string' ? parsed.prompt.trim() : '';
     const negativePrompt = typeof parsed.negativePrompt === 'string' ? parsed.negativePrompt.trim() : '';
     if (prompt) return { prompt, negativePrompt };
-  } catch {
-    /* 落到兜底 */
   }
   // 兜底：整段输出直接作为 prompt
-  const fallback = content.trim();
+  const fallback = content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
   if (!fallback) throw new Error('提示词转写失败：模型返回为空');
   return { prompt: fallback, negativePrompt: '' };
 }

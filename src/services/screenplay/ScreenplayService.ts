@@ -183,6 +183,17 @@ export class ScreenplayService {
     });
   }
 
+  /** 恢复误删的场到原位置（简易 undo 用；场景已存在则原地覆盖不重复插入） */
+  async restoreScene(screenplayId: string, episodeId: string, scene: Scene, index: number): Promise<Screenplay | null> {
+    return this.mutate(screenplayId, (sp) => {
+      const ep = sp.data.episodes.find((e) => e.id === episodeId);
+      if (!ep) return;
+      const i = ep.scenes.findIndex((s) => s.id === scene.id);
+      if (i >= 0) ep.scenes[i] = scene;
+      else ep.scenes.splice(Math.max(0, Math.min(ep.scenes.length, index)), 0, scene);
+    });
+  }
+
   async moveScene(screenplayId: string, episodeId: string, sceneId: string, targetIndex: number): Promise<Screenplay | null> {
     return this.mutate(screenplayId, (sp) => {
       const ep = sp.data.episodes.find((e) => e.id === episodeId);

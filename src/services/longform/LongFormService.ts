@@ -15,6 +15,7 @@ import type { LLMProvider } from '../ai/providers/LLMProvider';
 import type { LongFormBeat, LongFormRunHooks, LongFormSession, SeamIssue } from './types';
 import { countTokens } from '../../utils/tokens';
 import { docToPlainText } from '../../utils/pmdoc';
+import { parseLooseJson } from '../../utils/looseJson';
 
 /** 单次调用的固定上下文开销估算（token） */
 const PER_CALL_OVERHEAD = 800;
@@ -32,19 +33,8 @@ const SEAM_SYSTEM = `你是小说接缝审校。给定同一章内相邻两拍�
 ]
 beatIndex 为接缝前那一拍的 0-based 序号；无问题输出 []。`;
 
-function parseJsonLoose<T>(raw: string): T | null {
-  let text = raw.trim();
-  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fence) text = fence[1].trim();
-  const start = text.indexOf('[');
-  const end = text.lastIndexOf(']');
-  if (start < 0 || end <= start) return null;
-  try {
-    return JSON.parse(text.slice(start, end + 1)) as T;
-  } catch {
-    return null;
-  }
-}
+/** 容错 JSON 解析（公共实现见 utils/looseJson） */
+const parseJsonLoose = parseLooseJson;
 
 export class LongFormService {
   private bridge: NativeBridge;
