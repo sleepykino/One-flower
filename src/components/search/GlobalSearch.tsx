@@ -76,6 +76,7 @@ export function GlobalSearchModal({ bookId, onClose }: { bookId: string; onClose
 
   const jumpTo = (chapterId: string): void => {
     setCurrentChapter(chapterId);
+    onClose();
   };
 
   return (

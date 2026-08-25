@@ -237,6 +237,30 @@ export function replaceInDoc(
   return { doc: cloned, count };
 }
 
+/** 移除文档中指向指定世界书条目的引用原子节点（条目删除时联动清理），返回新文档与移除数量 */
+export function removeWorldbookRefs(
+  doc: ProseMirrorDoc,
+  entryId: string
+): { doc: ProseMirrorDoc; count: number } {
+  let count = 0;
+  const cloned = structuredClone(doc) as unknown as PMNode;
+
+  const walk = (node: PMNode): void => {
+    if (!node.content) return;
+    node.content = node.content.filter((child) => {
+      if (child.type === 'worldbookRef' && child.attrs?.id === entryId) {
+        count += 1;
+        return false;
+      }
+      walk(child);
+      return true;
+    });
+  };
+  walk(cloned);
+
+  return { doc: cloned as unknown as ProseMirrorDoc, count };
+}
+
 /** 字数统计（去空白后字符数） */
 export function countWords(doc: ProseMirrorDoc): number {
   return docToPlainText(doc).replace(/\s/g, '').length;

@@ -208,7 +208,7 @@ export class AIOrchestrator {
     Array<{ id: string; title: string; category: string | null; content: string }>
   > {
     const rows = await this.bridge.db.query<Record<string, unknown>>(
-      'SELECT id, title, category, content FROM worldbook_entries WHERE book_id = ?',
+      'SELECT id, title, category, content FROM worldbook_entries WHERE book_id = ? AND enabled = 1',
       [bookId]
     );
     return rows.map((r) => ({
@@ -274,7 +274,7 @@ export class AIOrchestrator {
           });
         } else if (r.refType === 'worldbook') {
           const row = await this.bridge.db.queryOne<{ title: string; content: string }>(
-            'SELECT title, content FROM worldbook_entries WHERE id = ?',
+            'SELECT title, content FROM worldbook_entries WHERE id = ? AND enabled = 1',
             [r.refId]
           );
           if (!row) continue;

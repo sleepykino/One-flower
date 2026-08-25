@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS worldbook_entries (
   category TEXT,
   content TEXT NOT NULL,
   tags TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,   -- 1=启用（参与 AI 注入/RAG/引用）；0=禁用（migration 010）
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE

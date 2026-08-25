@@ -158,7 +158,7 @@ export class WorldbookRAGService {
     opts?: { force?: boolean }
   ): AsyncGenerator<EmbedProgress> {
     const rows = await this.db.query<Record<string, unknown>>(
-      'SELECT e.id, e.title, e.updated_at, emb.updated_at AS embedded_at FROM worldbook_entries e LEFT JOIN worldbook_embeddings emb ON emb.entry_id = e.id WHERE e.book_id = ? ORDER BY e.created_at ASC',
+      'SELECT e.id, e.title, e.updated_at, emb.updated_at AS embedded_at FROM worldbook_entries e LEFT JOIN worldbook_embeddings emb ON emb.entry_id = e.id WHERE e.book_id = ? AND e.enabled = 1 ORDER BY e.created_at ASC',
       [bookId]
     );
     for (const r of rows) {
@@ -190,10 +190,10 @@ export class WorldbookRAGService {
     const queryText = query.trim();
     if (!queryText) return [];
     const rows = await this.db.query<Record<string, unknown>>(
-      `SELECT e.id, e.book_id, e.title, e.category, e.content, e.tags, emb.embedding
+      `SELECT e.id, e.book_id, e.title, e.category, e.content, e.tags, e.enabled, emb.embedding
        FROM worldbook_embeddings emb
        JOIN worldbook_entries e ON e.id = emb.entry_id
-       WHERE emb.book_id = ?
+       WHERE emb.book_id = ? AND e.enabled = 1
        ORDER BY e.created_at ASC`,
       [bookId]
     );
@@ -219,6 +219,7 @@ export class WorldbookRAGService {
       category: (row.category as string) ?? null,
       content: String(row.content ?? ''),
       tags: (row.tags as string) ?? '[]',
+      enabled: Number(row.enabled ?? 1) !== 0,
       createdAt: 0,
       updatedAt: 0
     }));

@@ -24,6 +24,9 @@ export function ChapterTree(): JSX.Element {
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ id: string; pos: 'before' | 'child' } | null>(null);
   const [outlineEditId, setOutlineEditId] = useState<string | null>(null);
+  const [renameId, setRenameId] = useState<string | null>(null);
+  /** 已收起章节 id 集合（仅影响展示，不影响数据） */
+  const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<string>>(new Set());
   const [newTitle, setNewTitle] = useState('');
   const [newParent, setNewParent] = useState<string | null>(null);
   const [batch, setBatch] = useState<{ done: number; total: number; running: boolean; errorCount: number } | null>(null);
@@ -70,6 +73,15 @@ export function ChapterTree(): JSX.Element {
   }, [bookId]);
 
   const roots = chapters.filter((c) => c.parentId === null);
+
+  const toggleCollapse = (id: string): void => {
+    setCollapsedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   /** 批量补全全书摘要（导入旧书 / 首次启用摘要链） */
   const runBatchSummaries = async (): Promise<void> => {
@@ -127,6 +139,7 @@ export function ChapterTree(): JSX.Element {
     const children = chapters.filter((c) => c.parentId === chapter.id);
     const isCurrent = chapter.id === currentChapterId;
     const mark = foreshadowMarks.get(chapter.id);
+    const isCollapsed = collapsedIds.has(chapter.id);
     return (
       <div key={chapter.id}>
         <div
@@ -154,7 +167,17 @@ export function ChapterTree(): JSX.Element {
           style={{ paddingLeft: `${8 + depth * 14}px` }}
           onClick={() => setCurrentChapter(chapter.id)}
         >
-          <span className="text-ink-400">{children.length > 0 ? '▾' : '·'}</span>
+          <span
+            className={`text-ink-400 ${children.length > 0 ? 'cursor-pointer hover:text-violet-600' : ''}`}
+            title={children.length > 0 ? (isCollapsed ? '展开子章节' : '收起子章节') : undefined}
+            onClick={(e) => {
+              if (children.length === 0) return;
+              e.stopPropagation();
+              toggleCollapse(chapter.id);
+            }}
+          >
+            {children.length > 0 ? (isCollapsed ? '▸' : '▾') : '·'}
+          </span>
           <span className="flex-1 truncate">{chapter.title}</span>
           {mark && mark.planted > 0 && (
             <span
@@ -192,6 +215,17 @@ export function ChapterTree(): JSX.Element {
           </button>
           <button
             type="button"
+            title="重命名章节"
+            className="hidden text-xs text-ink-400 hover:text-violet-600 group-hover:block"
+            onClick={(e) => {
+              e.stopPropagation();
+              setRenameId(renameId === chapter.id ? null : chapter.id);
+            }}
+          >
+            ✎
+          </button>
+          <button
+            type="button"
             title="添加子章节"
             className="hidden text-xs text-ink-400 hover:text-violet-600 group-hover:block"
             onClick={(e) => {
@@ -219,7 +253,10 @@ export function ChapterTree(): JSX.Element {
         {outlineEditId === chapter.id && (
           <OutlineEditor chapter={chapter} onDone={() => setOutlineEditId(null)} />
         )}
-        {children.map((c) => renderNode(c, depth + 1))}
+        {renameId === chapter.id && (
+          <RenameEditor chapter={chapter} onDone={() => setRenameId(null)} />
+        )}
+        {!isCollapsed && children.map((c) => renderNode(c, depth + 1))}
       </div>
     );
   };
@@ -386,6 +423,44 @@ function OutlineEditor({ chapter, onDone }: { chapter: Chapter; onDone: () => vo
           保存
         </button>
       </div>
+    </div>
+  );
+}
+
+/** 章节重命名：行内输入，Enter/失焦保存，Esc 取消（与书籍重命名交互一致） */
+function RenameEditor({ chapter, onDone }: { chapter: Chapter; onDone: () => void }): JSX.Element {
+  const updateChapter = useEditorStore((s) => s.updateChapter);
+  const [title, setTitle] = useState(chapter.title);
+
+  const save = (): void => {
+    const t = title.trim();
+    if (t && t !== chapter.title) {
+      void updateChapter(chapter.id, { title: t });
+    }
+    onDone();
+  };
+
+  return (
+    <div className="mx-2 mb-2 flex items-center gap-1.5 rounded border border-violet-200 bg-violet-50/50 p-1.5">
+      <input
+        autoFocus
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') save();
+          if (e.key === 'Escape') onDone();
+        }}
+        onBlur={save}
+        placeholder="章节标题…"
+        className="min-w-0 flex-1 rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400"
+      />
+      <button
+        type="button"
+        className="shrink-0 rounded bg-violet-600 px-2 py-1 text-xs text-white hover:bg-violet-700"
+        onClick={save}
+      >
+        保存
+      </button>
     </div>
   );
 }

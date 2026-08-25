@@ -66,7 +66,7 @@ export class SettingInferenceService {
   async extractionScope(bookId: string, opts?: { chapterIds?: string[] }): Promise<ExtractionScope> {
     const [wb, chars, chapters] = await Promise.all([
       this.bridge.db.query<{ n: number }>(
-        'SELECT COUNT(*) AS n FROM worldbook_entries WHERE book_id = ?',
+        'SELECT COUNT(*) AS n FROM worldbook_entries WHERE book_id = ? AND enabled = 1',
         [bookId]
       ),
       this.bridge.db.query<{ n: number }>(
@@ -139,7 +139,7 @@ export class SettingInferenceService {
     // 组装材料批次：[label, text, source, sourceRef][]
     type Batch = { label: string; material: string; source: FactSource; sourceRef: string };
     const wbRows = await this.bridge.db.query<{ id: string; title: string; content: string }>(
-      'SELECT id, title, content FROM worldbook_entries WHERE book_id = ?',
+      'SELECT id, title, content FROM worldbook_entries WHERE book_id = ? AND enabled = 1',
       [bookId]
     );
     const charRows = await this.bridge.db.query<{ id: string; name: string; data: string }>(

@@ -256,7 +256,6 @@ src/
   store/         # Zustand 状态（book/editor/ai/settings/task）
   types/         # 共享类型定义
 src-tauri/       # Rust 侧：命令、存储桥、窗口配置
-doc/             # 各阶段实现规格与提示词（P0-P5、PR、Pn1/Pn2）
 docs/screenshots/# 界面截图（README 展示用）
 ```
 

@@ -324,10 +324,10 @@ export class FullRAGService {
 
     const [wbRows, sumRows, segRows] = await Promise.all([
       this.db.query<Record<string, unknown>>(
-        `SELECT e.id, e.book_id, e.title, e.category, e.content, e.tags, emb.embedding
+        `SELECT e.id, e.book_id, e.title, e.category, e.content, e.tags, e.enabled, emb.embedding
          FROM worldbook_embeddings emb
          JOIN worldbook_entries e ON e.id = emb.entry_id
-         WHERE emb.book_id = ?`,
+         WHERE emb.book_id = ? AND e.enabled = 1`,
         [bookId]
       ),
       this.db.query<Record<string, unknown>>(
@@ -379,6 +379,7 @@ export class FullRAGService {
         category: (row.category as string) ?? null,
         content: String(row.content ?? ''),
         tags: (row.tags as string) ?? '[]',
+        enabled: Number((row as Record<string, unknown>).enabled ?? 1) !== 0,
         createdAt: 0,
         updatedAt: 0
       }));

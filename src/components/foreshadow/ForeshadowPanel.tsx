@@ -188,7 +188,17 @@ export function ForeshadowPanel({ bookId }: { bookId: string }): JSX.Element {
               埋设：{chapterTitle(f.plantedChapterId)} · 回收：
               {chapterTitle(f.resolvedChapterId)}
             </div>
-            {f.status !== 'resolved' && (
+            {f.status === 'resolved' ? (
+              <div className="mt-0.5 flex gap-2 text-[11px]">
+                <button
+                  type="button"
+                  className="text-amber-600 hover:underline"
+                  onClick={() => void setStatus(f.id, 'planted')}
+                >
+                  重新打开
+                </button>
+              </div>
+            ) : (
               <div className="mt-0.5 flex gap-2 text-[11px]">
                 {f.status !== 'abandoned' && (
                   <button

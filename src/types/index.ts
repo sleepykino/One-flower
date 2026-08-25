@@ -60,6 +60,8 @@ export interface WorldbookEntry {
   category: string | null;
   content: string;
   tags: string | null;
+  /** 启用开关：false 时条目不参与 AI 注入 / RAG 检索 / [[ 新增引用列表 */
+  enabled: boolean;
   createdAt: number;
   updatedAt: number;
 }

@@ -9,6 +9,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import type { JSONContent } from '@tiptap/core';
+import { TextSelection } from '@tiptap/pm/state';
+import type { EditorView } from '@tiptap/pm/view';
 import StarterKit from '@tiptap/starter-kit';
 import { CharacterMention } from './nodes/CharacterMention';
 import { WorldbookRef } from './nodes/WorldbookRef';
@@ -95,6 +97,32 @@ function rebuildTempContent(editor: Editor, fullText: string) {
   editor.view.dispatch(
     editor.state.tr.replaceWith(found.pos + 1, found.pos + found.node.nodeSize - 1, paras)
   );
+}
+
+/**
+ * 对白段内按 Enter 时，新段落回退为普通段落（不继承对白格式），
+ * 避免连续回车产生误格式。空对白段直接转为空段落。
+ */
+function splitDialogueAsParagraph(view: EditorView): void {
+  const { state } = view;
+  const { $from } = state.selection;
+  const paraType = state.schema.nodes.paragraph;
+  const tr = state.tr;
+  if ($from.parent.content.size === 0) {
+    const blockStart = $from.before($from.depth);
+    tr.setNodeMarkup(blockStart, paraType);
+    tr.setSelection(TextSelection.create(tr.doc, blockStart + 1));
+  } else {
+    const splitTr = tr.split($from.pos, $from.depth);
+    if (!splitTr) return;
+    // split 已将 selection/映射更新到拆分后的新 doc：
+    // 用其光标位置定位右侧新段起点，将其从 dialogue 改为 paragraph
+    const afterSel = splitTr.selection as TextSelection;
+    const rightStart = afterSel.$from.before(afterSel.$from.depth);
+    splitTr.setNodeMarkup(rightStart, paraType);
+    splitTr.setSelection(TextSelection.create(splitTr.doc, rightStart + 1));
+  }
+  view.dispatch(tr);
 }
 
 export function NovelEditor({ bookId }: { bookId: string }) {
@@ -230,7 +258,7 @@ export function NovelEditor({ bookId }: { bookId: string }) {
       const chars = await ctx.characterService.list(bookId);
       setCharacters(chars.map((c) => ({ id: c.id, label: c.name })));
       const wb = await ctx.db.query<{ id: string; title: string }>(
-        'SELECT id, title FROM worldbook_entries WHERE book_id = ?',
+        'SELECT id, title FROM worldbook_entries WHERE book_id = ? AND enabled = 1',
         [bookId]
       );
       setWorldbook(wb.map((w) => ({ id: String(w.id), label: String(w.title) })));
@@ -275,6 +303,14 @@ export function NovelEditor({ bookId }: { bookId: string }) {
     ],
     editorProps: {
       handleKeyDown: (view, event) => {
+        if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+          const { selection } = view.state;
+          if (selection.empty && selection.$from.parent.type.name === 'dialogue') {
+            event.preventDefault();
+            splitDialogueAsParagraph(view);
+            return true;
+          }
+        }
         if (event.key === '@') {
           event.preventDefault();
           const coords = view.coordsAtPos(view.state.selection.from);

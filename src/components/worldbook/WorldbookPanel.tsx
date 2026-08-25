@@ -4,9 +4,12 @@
  */
 
 import { useEffect, useState } from 'react';
+import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { getAppContext } from '../../context/app-context';
 import { confirmDialog } from '../../native/dialog';
 import { toast } from '../common/toast';
+import { useEditorStore } from '../../store/editorStore';
+import { removeWorldbookRefs } from '../../utils/pmdoc';
 import type { WorldbookEntry } from '../../types';
 import { SettingFactsView } from './SettingFactsView';
 
@@ -49,6 +52,7 @@ export function WorldbookPanel({ bookId }: { bookId: string }): JSX.Element {
         category: (r.category as string) ?? null,
         content: String(r.content ?? ''),
         tags: (r.tags as string) ?? '[]',
+        enabled: Number(r.enabled ?? 1) !== 0,
         createdAt: Number(r.created_at),
         updatedAt: Number(r.updated_at)
       }))
@@ -116,12 +120,154 @@ export function WorldbookPanel({ bookId }: { bookId: string }): JSX.Element {
   };
 
   const remove = async (id: string): Promise<void> => {
-    if (!(await confirmDialog('确认删除该条目？'))) return;
-    const { db, wq, ragService } = getAppContext();
+    if (!(await confirmDialog('确认删除该条目？正文中的 [[引用]] 将一并移除。'))) return;
+    const { db, wq, ragService, chapterService } = getAppContext();
+    // 联动清理各章节正文中指向该条目的引用节点（避免悬挂引用）
+    const chRows = await db.query<{ id: string }>(
+      'SELECT id FROM chapters WHERE book_id = ?',
+      [bookId]
+    );
+    const affected: string[] = [];
+    let removedRefs = 0;
+    for (const ch of chRows) {
+      try {
+        const doc = await chapterService.getContent(ch.id);
+        const { doc: newDoc, count } = removeWorldbookRefs(doc, id);
+        if (count > 0) {
+          await chapterService.saveContent(ch.id, newDoc);
+          affected.push(ch.id);
+          removedRefs += count;
+        }
+      } catch {
+        // 单章读取失败不阻塞删除主流程
+      }
+    }
     await wq.enqueue(() => db.exec('DELETE FROM worldbook_entries WHERE id = ?', [id]));
     await ragService.removeEmbedding(id).catch(() => undefined);
     await load();
     window.dispatchEvent(new Event('novel-mentions-refresh'));
+    // 当前打开章节若受影响，重载编辑器内容与磁盘一致
+    const store = useEditorStore.getState();
+    if (store.currentChapterId && affected.includes(store.currentChapterId)) {
+      try {
+        const doc = await chapterService.getContent(store.currentChapterId);
+        store.editorApi?.setContent(doc);
+      } catch {
+        // 忽略重载失败
+      }
+    }
+    if (affected.length > 0 && store.bookId) {
+      await store.loadChapters(store.bookId);
+    }
+    if (removedRefs > 0) {
+      void toast.info(`已同步移除 ${affected.length} 个章节中的 ${removedRefs} 处引用`);
+    }
+  };
+
+  /** 启用/禁用开关：禁用条目不参与 AI 注入 / RAG 检索 / [[ 新增引用列表 */
+  const toggleEnabled = async (id: string, next: boolean): Promise<void> => {
+    const { db, wq } = getAppContext();
+    await wq.enqueue(() =>
+      db.exec('UPDATE worldbook_entries SET enabled = ?, updated_at = ? WHERE id = ?', [
+        next ? 1 : 0,
+        Date.now(),
+        id
+      ])
+    );
+    await load();
+    window.dispatchEvent(new Event('novel-mentions-refresh'));
+  };
+
+  /** 导出本书世界书为 JSON 文件（含启用状态；原生 save 对话框） */
+  const exportJson = async (): Promise<void> => {
+    if (entries.length === 0) {
+      void toast.info('暂无条目可导出');
+      return;
+    }
+    try {
+      const path = await saveDialog({
+        title: '导出世界书',
+        filters: [{ name: '世界书', extensions: ['json'] }]
+      });
+      if (!path) return;
+      const payload = JSON.stringify(
+        {
+          kind: 'oneflower-worldbook',
+          version: 1,
+          exportedAt: Date.now(),
+          count: entries.length,
+          entries: entries.map((e) => ({
+            title: e.title,
+            category: e.category ?? '其他',
+            content: e.content,
+            tags: e.tags ?? '[]',
+            enabled: e.enabled
+          }))
+        },
+        null,
+        2
+      );
+      await getAppContext().bridge.fs.writeFile(path, payload);
+      void toast.success(`已导出 ${entries.length} 个条目`);
+    } catch (e) {
+      void toast.error(`导出失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  /** 从 JSON 文件导入条目（生成新 id 归入本书；不自动向量化，可稍后批量处理） */
+  const importJson = async (): Promise<void> => {
+    try {
+      const path = await openDialog({
+        title: '导入世界书',
+        multiple: false,
+        filters: [{ name: '世界书', extensions: ['json'] }]
+      });
+      if (!path || Array.isArray(path)) return;
+      const text = await getAppContext().bridge.fs.readFile(path);
+      const parsed = JSON.parse(text) as { kind?: string; entries?: unknown };
+      const list = Array.isArray(parsed?.entries)
+        ? parsed.entries
+        : Array.isArray(parsed)
+          ? parsed
+          : null;
+      if (!list || (parsed?.kind && parsed.kind !== 'oneflower-worldbook')) {
+        void toast.error('文件格式不符：需要 OneFlower 世界书导出的 JSON');
+        return;
+      }
+      type ImportRow = { title?: unknown; category?: unknown; content?: unknown; tags?: unknown; enabled?: unknown };
+      const rows = (list as ImportRow[]).filter((r) => r && typeof r.title === 'string' && String(r.title).trim());
+      if (rows.length === 0) {
+        void toast.info('文件中没有可导入的条目');
+        return;
+      }
+      const { db, wq } = getAppContext();
+      const now = Date.now();
+      let inserted = 0;
+      for (const r of rows) {
+        await wq.enqueue(() =>
+          db.exec(
+            'INSERT INTO worldbook_entries (id, book_id, title, category, content, tags, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [
+              crypto.randomUUID(),
+              bookId,
+              String(r.title),
+              typeof r.category === 'string' && CATEGORIES.includes(r.category) ? r.category : '其他',
+              typeof r.content === 'string' ? r.content : '',
+              typeof r.tags === 'string' ? r.tags : '[]',
+              r.enabled === false ? 0 : 1,
+              now,
+              now
+            ]
+          )
+        );
+        inserted += 1;
+      }
+      await load();
+      window.dispatchEvent(new Event('novel-mentions-refresh'));
+      void toast.success(`已导入 ${inserted} 个条目，可用「批量向量化」纳入检索`);
+    } catch (e) {
+      void toast.error(`导入失败：${e instanceof Error ? e.message : String(e)}`);
+    }
   };
 
   /** 批量向量化（首次启用 RAG / 内容更新后补全） */
@@ -217,8 +363,24 @@ export function WorldbookPanel({ bookId }: { bookId: string }): JSX.Element {
         <button type="button" onClick={() => setTab('facts')} className="flex-1 py-2 text-ink-500 hover:text-ink-800">设定事实</button>
       </div>
       <div className="flex items-center justify-between border-b border-ink-200 px-3 py-2">
-        <span className="text-sm font-medium">世界书（{entries.length}）</span>
+        <span className="text-sm font-medium">
+          世界书（{entries.length}{entries.some((e) => !e.enabled) ? ` · 启用 ${entries.filter((e) => e.enabled).length}` : ''}）
+        </span>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="rounded border border-ink-200 px-2 py-1 text-xs hover:bg-ink-100"
+            onClick={() => void exportJson()}
+          >
+            导出
+          </button>
+          <button
+            type="button"
+            className="rounded border border-ink-200 px-2 py-1 text-xs hover:bg-ink-100"
+            onClick={() => void importJson()}
+          >
+            导入
+          </button>
           {embedBatch ? (
             <span className="text-[11px] text-ink-400">
               {embedBatch.running
@@ -253,7 +415,9 @@ export function WorldbookPanel({ bookId }: { bookId: string }): JSX.Element {
         {entries.map((w) => (
           <div
             key={w.id}
-            className="group mb-1 cursor-pointer rounded border border-ink-100 bg-white px-2 py-1.5 hover:border-violet-300"
+            className={`group mb-1 cursor-pointer rounded border border-ink-100 bg-white px-2 py-1.5 hover:border-violet-300 ${
+              w.enabled ? '' : 'opacity-60'
+            }`}
             onClick={() => setEditing(w)}
           >
             <div className="flex items-center gap-1">
@@ -261,15 +425,31 @@ export function WorldbookPanel({ bookId }: { bookId: string }): JSX.Element {
                 {w.category ?? '其他'}
               </span>
               <span className="text-sm font-medium">{w.title}</span>
+              {!w.enabled && (
+                <span className="rounded bg-ink-100 px-1 text-[10px] text-ink-500">已禁用</span>
+              )}
               {embeddedIds.has(w.id) && (
                 <span
                   title="已向量化（参与 RAG 检索）"
                   className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500"
                 />
               )}
+              <label
+                className="ml-auto flex cursor-pointer items-center gap-0.5"
+                title={w.enabled ? '已启用：参与 AI 注入 / 检索 / 引用' : '已禁用：暂停参与 AI 注入 / 检索 / 引用'}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <input
+                  type="checkbox"
+                  className="h-3 w-3 accent-violet-600"
+                  checked={w.enabled}
+                  onChange={(e) => void toggleEnabled(w.id, e.target.checked)}
+                />
+                <span className="text-[10px] text-ink-400">启用</span>
+              </label>
               <button
                 type="button"
-                className="ml-auto hidden text-xs text-ink-400 hover:text-red-600 group-hover:block"
+                className="hidden text-xs text-ink-400 hover:text-red-600 group-hover:block"
                 onClick={(e) => {
                   e.stopPropagation();
                   void remove(w.id);
