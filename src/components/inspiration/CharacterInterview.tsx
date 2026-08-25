@@ -425,7 +425,7 @@ export function CharacterInterview({ bookId }: { bookId: string }): JSX.Element 
       {view.kind === 'ended' && session && (
         <div className="flex-1 overflow-y-auto p-3">
           {summarizing ? (
-            <div className="py-10 text-center text-sm text-ink-400">
+            <div className="py-10 text-center text-sm text-ink-400" data-status="generating">
               正在生成采访摘要…
             </div>
           ) : (

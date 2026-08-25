@@ -7,7 +7,7 @@ import { ToastHost } from './components/common/toast';
 
 export default function App(): JSX.Element {
   return (
-    <BrowserRouter>
+    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/editor/:bookId" element={<Editor />} />

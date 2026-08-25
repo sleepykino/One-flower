@@ -15,6 +15,7 @@ import {
   FolderOpen,
   DatabaseBackup,
   Settings2,
+  Keyboard,
   type LucideIcon
 } from 'lucide-react';
 import { ModelsSection } from '../components/settings/ModelsSection';
@@ -25,6 +26,7 @@ import { BackupSection } from '../components/settings/BackupSection';
 import { DataSection } from '../components/settings/DataSection';
 import { GeneralSection } from '../components/settings/GeneralSection';
 import { DirectivesGuideSection } from '../components/settings/DirectivesGuideSection';
+import { ShortcutsSection } from '../components/settings/ShortcutsSection';
 
 type SectionKey =
   | 'models'
@@ -34,6 +36,7 @@ type SectionKey =
   | 'appearance'
   | 'backup'
   | 'data'
+  | 'shortcuts'
   | 'general';
 
 interface NavItem {
@@ -70,7 +73,10 @@ const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
   },
   {
     label: '通用',
-    items: [{ key: 'general', label: '更新与关于', icon: Settings2 }]
+    items: [
+      { key: 'shortcuts', label: '快捷键', icon: Keyboard },
+      { key: 'general', label: '更新与关于', icon: Settings2 }
+    ]
   }
 ];
 
@@ -82,6 +88,7 @@ const SECTION_TITLES: Record<SectionKey, string> = {
   appearance: '编辑器外观',
   backup: '备份与恢复',
   data: '数据管理',
+  shortcuts: '快捷键',
   general: '更新与关于'
 };
 
@@ -140,6 +147,7 @@ export function Settings(): JSX.Element {
           {section === 'appearance' && <AppearanceSection />}
           {section === 'backup' && <BackupSection />}
           {section === 'data' && <DataSection />}
+          {section === 'shortcuts' && <ShortcutsSection />}
           {section === 'general' && <GeneralSection />}
         </div>
       </main>

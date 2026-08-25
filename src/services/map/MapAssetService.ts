@@ -55,7 +55,7 @@ interface AssetRow {
 }
 
 function rowToAsset(r: AssetRow): MapAsset {
-  let tags: string[] = [];
+  let tags: string[];
   try {
     tags = JSON.parse(r.tags ?? '[]') as string[];
   } catch {

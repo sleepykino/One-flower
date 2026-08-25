@@ -1,6 +1,7 @@
 /**
  * TaskIndicator（P2.1-M4）：底部状态栏任务指示器
- * 进行中任务数徽标 + 当前任务微进度条，无任务时隐藏指示器（状态栏本身保留保存状态）
+ * 进行中任务数徽标 + 当前任务微进度条；仅存在运行中/失败任务时显示
+ * （done 任务常驻不再占入口——2026-08-25 改进项闭环；失败任务保留以便重试）
  */
 
 import { useState } from 'react';
@@ -13,8 +14,8 @@ export function TaskIndicator(): JSX.Element | null {
 
   const running = tasks.filter((t) => t.status === 'running');
   const failed = tasks.some((t) => t.status === 'failed');
-  // 无任何任务时隐藏（失败任务保留入口以便重试）
-  if (tasks.length === 0 && !panelOpen) return null;
+  // 无运行中/失败任务时隐藏（残留 done 任务不占指示器；失败任务保留入口以便重试）
+  if (running.length === 0 && !failed && !panelOpen) return null;
 
   const current = running[0];
   const pct = current ? current.progress : -1;

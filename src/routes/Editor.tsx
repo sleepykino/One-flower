@@ -28,6 +28,7 @@ import {
   type LucideIcon
 } from 'lucide-react';
 import { useEditorStore } from '../store/editorStore';
+import { getEffectiveShortcuts, matchesShortcut } from '../utils/keymap';
 import { NovelEditor } from '../components/editor/NovelEditor';
 import { FocusMode } from '../components/editor/FocusMode';
 import { ChapterTree } from '../components/chapter-tree/ChapterTree';
@@ -188,10 +189,10 @@ export function Editor(): JSX.Element {
     };
   }, [bookId, setBookId, loadChapters]);
 
-  // Ctrl+Shift+F 全局查找
+  // 全局查找（快捷键可自定义，见 utils/keymap.ts）
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'f') {
+      if (matchesShortcut(e, getEffectiveShortcuts().globalSearch)) {
         e.preventDefault();
         setSearchOpen(true);
       }
@@ -479,6 +480,8 @@ export function Editor(): JSX.Element {
                     <button
                       key={t.key}
                       type="button"
+                      aria-label={`打开${t.title}面板`}
+                      data-rail-tab={t.key}
                       title={t.title}
                       onClick={() => setTab(t.key)}
                       className={`flex h-9 w-9 items-center justify-center rounded-md ${

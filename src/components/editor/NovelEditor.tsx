@@ -38,6 +38,7 @@ import {
 } from '../../utils/editorAppearance';
 import type { ChapterBeat } from '../../services/chapter/ChapterService';
 import type { ProseMirrorDoc } from '../../types';
+import { getEffectiveShortcuts, matchesShortcut } from '../../utils/keymap';
 
 export interface MentionItem {
   id: string;
@@ -360,10 +361,10 @@ export function NovelEditor({ bookId }: { bookId: string }) {
     onTransaction: () => forceTick((t) => t + 1)
   });
 
-  // ============ Ctrl+S 手动保存 ============
+  // ============ Ctrl+S 手动保存（快捷键可自定义，见 utils/keymap.ts） ============
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      if (matchesShortcut(e, getEffectiveShortcuts().save)) {
         e.preventDefault();
         if (useEditorStore.getState().saveState === 'saved') return;
         if (useEditorStore.getState().saveState === 'saving') return;

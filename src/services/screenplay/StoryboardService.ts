@@ -158,7 +158,7 @@ export class StoryboardService {
     for (const r of rows) {
       const name = String(r.name ?? '');
       if (!name || !hay.includes(name)) continue;
-      let data: Record<string, unknown> = {};
+      let data: Record<string, unknown>;
       try {
         data = JSON.parse(String(r.data ?? '{}')) as Record<string, unknown>;
       } catch {

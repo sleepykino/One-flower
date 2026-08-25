@@ -183,7 +183,7 @@ test.describe('阶段 5：资产与工具', () => {
     await openEditorWithSavedText(tauriPage);
 
     // footer 内 TaskIndicator：tasks 为空且面板未开时整个隐藏（TaskIndicator.tsx return null）；
-    // 有残留 done 任务时显示「0」徽标（已知行为，见手工记录 T5.5）
+    // 2026-08-25 改进项 2 闭环：残留 done 任务亦不显示「0」徽标（仅运行中/失败任务占入口）
     const indicator = tauriPage.getByRole('button', { name: '打开任务中心' });
     if ((await indicator.count()) === 0) {
       test.skip(

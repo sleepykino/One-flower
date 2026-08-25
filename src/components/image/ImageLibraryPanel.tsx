@@ -7,6 +7,8 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { getAppContext } from '../../context/app-context';
 import { useEditorStore } from '../../store/editorStore';
 import { confirmDialog } from '../../native/dialog';
+import { toast } from '../common/toast';
+import { removeImageRefs } from '../../utils/pmdoc';
 import { ImageReferenceError } from '../../services/image/types';
 import type { ImageAsset, ImageUsage } from '../../services/image/types';
 import { USAGE_LABELS } from '../../services/image/types';
@@ -34,7 +36,7 @@ function refLabel(ref: { type: string; title: string }): string {
 }
 
 export function ImageLibraryPanel({ bookId }: { bookId: string }): JSX.Element {
-  const { imageAssetService } = getAppContext();
+  const { db, chapterService, imageAssetService } = getAppContext();
   const [filter, setFilter] = useState<Filter>('all');
   const [images, setImages] = useState<ImageAsset[]>([]);
   const [urls, setUrls] = useState<Record<string, string>>({});
@@ -84,11 +86,51 @@ export function ImageLibraryPanel({ bookId }: { bookId: string }): JSX.Element {
         );
         if (force) {
           await imageAssetService.remove(asset.id, true);
+          // 联动清理各章节正文中指向该图的 imageBlock 节点（避免悬挂引用，同世界书删除模式）
+          await clearImageRefsFromChapters(asset);
           await reload();
         }
       } else {
         setMsg(e instanceof Error ? e.message : String(e));
       }
+    }
+  };
+
+  /** 联动清理：移除全书章节正文中指向该图片资产的 imageBlock 节点（同世界书删除模式） */
+  const clearImageRefsFromChapters = async (asset: ImageAsset): Promise<void> => {
+    const chRows = await db.query<{ id: string }>('SELECT id FROM chapters WHERE book_id = ?', [
+      asset.bookId
+    ]);
+    const affected: string[] = [];
+    let removedRefs = 0;
+    for (const ch of chRows) {
+      try {
+        const doc = await chapterService.getContent(ch.id);
+        const { doc: newDoc, count } = removeImageRefs(doc, asset.id);
+        if (count > 0) {
+          await chapterService.saveContent(ch.id, newDoc);
+          affected.push(ch.id);
+          removedRefs += count;
+        }
+      } catch {
+        // 单章读取失败不阻塞删除主流程
+      }
+    }
+    // 当前打开的编辑器章节若受影响，重载内容与磁盘一致（避免内存 doc 覆盖复活悬挂引用）
+    const store = useEditorStore.getState();
+    if (store.currentChapterId && affected.includes(store.currentChapterId)) {
+      try {
+        const doc = await chapterService.getContent(store.currentChapterId);
+        store.editorApi?.setContent(doc);
+      } catch {
+        // 忽略重载失败
+      }
+    }
+    if (affected.length > 0 && store.bookId) {
+      await store.loadChapters(store.bookId);
+    }
+    if (removedRefs > 0) {
+      void toast.info(`已同步移除 ${affected.length} 个章节中的 ${removedRefs} 处图片引用`);
     }
   };
 

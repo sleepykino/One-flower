@@ -9,6 +9,7 @@ import { getAppContext } from '../../context/app-context';
 import type { SkillManifest } from '../../services/skill/types';
 import { SkillPackService } from '../../services/skill/SkillPackService';
 import type { ImportOptions, SkillPreview } from '../../services/skill/SkillPackService';
+import { SkillCreateDialog } from './SkillCreateDialog';
 
 const MODE_LABEL: Record<string, string> = {
   continue: '续写',
@@ -34,6 +35,7 @@ export function SkillPanel({ bookId }: { bookId: string }): JSX.Element {
   const [renameTo, setRenameTo] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
 
   const load = async (): Promise<void> => {
     const ctx = getAppContext();
@@ -136,6 +138,13 @@ export function SkillPanel({ bookId }: { bookId: string }): JSX.Element {
       <div className="flex items-center justify-between border-b border-ink-200 px-3 py-2">
         <span className="text-sm font-medium">文风 Skill（{skills.length}）</span>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="rounded border border-ink-200 px-2 py-1 text-xs hover:bg-ink-100"
+            onClick={() => setShowCreate(true)}
+          >
+            新建
+          </button>
           <button
             type="button"
             className="rounded border border-ink-200 px-2 py-1 text-xs hover:bg-ink-100"
@@ -311,6 +320,15 @@ export function SkillPanel({ bookId }: { bookId: string }): JSX.Element {
             </div>
           </div>
         </div>
+      )}
+
+      {showCreate && (
+        <SkillCreateDialog
+          onClose={() => setShowCreate(false)}
+          onCreated={() => {
+            void load();
+          }}
+        />
       )}
     </div>
   );

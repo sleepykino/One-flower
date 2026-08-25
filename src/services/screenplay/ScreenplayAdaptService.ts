@@ -328,7 +328,7 @@ export class ScreenplayAdaptService {
       .query<Record<string, unknown>>('SELECT * FROM characters WHERE book_id = ?', [bookId])
       .catch(() => []);
     return rows.map((r) => {
-      let data: Record<string, unknown> = {};
+      let data: Record<string, unknown>;
       try {
         data = JSON.parse(String(r.data ?? '{}')) as Record<string, unknown>;
       } catch {

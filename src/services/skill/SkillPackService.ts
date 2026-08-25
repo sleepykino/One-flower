@@ -8,6 +8,7 @@
 import { strFromU8, unzipSync, zipSync } from 'fflate';
 import type { NativeBridge } from '../../native/NativeBridge';
 import type { NativeBridgeWithBinary } from '../../native/types';
+import { parseKeyValues } from '../../utils/skillFrontmatter';
 
 export interface SkillPreview {
   name: string;
@@ -159,7 +160,7 @@ export class SkillPackService {
     throw new Error('包内未找到 SKILL.md，不是有效的 Skill 包');
   }
 
-  /** 解析 SKILL.md frontmatter（与 SkillLoader 相同的简化规则：--- 包围、单行 key: value、数组 [a, b]） */
+  /** 解析 SKILL.md frontmatter（与 SkillLoader 同规则：--- 包围、单行 key: value、数组 [a, b]，支持多行块标量） */
   private parseFrontmatter(raw: string): {
     name: string;
     description: string;
@@ -172,11 +173,7 @@ export class SkillPackService {
     if (end < 0) return null;
 
     const fmText = text.slice(3, end).trim();
-    const fm: Record<string, string> = {};
-    for (const line of fmText.split('\n')) {
-      const m = line.match(/^([a-zA-Z_]+)\s*:\s*(.*)$/);
-      if (m) fm[m[1]] = m[2].trim();
-    }
+    const fm = parseKeyValues(fmText.split('\n'));
 
     const parseList = (s: string | undefined): string[] => {
       if (!s) return [];

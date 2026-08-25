@@ -394,6 +394,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
           <button
             key={m.key}
             type="button"
+            data-ai-mode={m.key}
             onClick={() => {
               setMode(m.key);
               setLongform(false);
@@ -409,6 +410,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
         ))}
         <button
           type="button"
+          data-ai-mode="longform"
           onClick={() => setLongform(true)}
           className={`flex-1 px-2 py-2 text-sm ${
             longform

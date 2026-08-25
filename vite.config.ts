@@ -12,7 +12,7 @@ export default defineConfig({
   },
   envPrefix: ['VITE_', 'TAURI_'],
   build: {
-    target: 'chrome105',
+    target: 'es2022',
     minify: 'esbuild',
     sourcemap: false
   }

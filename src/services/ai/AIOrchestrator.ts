@@ -183,13 +183,13 @@ export class AIOrchestrator {
       ids
     );
     return rows.map((r) => {
-      let data: Record<string, unknown> = {};
+      let data: Record<string, unknown>;
       try {
         data = JSON.parse(String(r.data ?? '{}')) as Record<string, unknown>;
       } catch {
         data = {};
       }
-      let tags: string[] = [];
+      let tags: string[];
       try {
         tags = JSON.parse(String(r.tags ?? '[]')) as string[];
       } catch {

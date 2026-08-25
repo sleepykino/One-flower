@@ -9,6 +9,7 @@ import type { Database } from '../../db/Database';
 import type { WriteQueue } from '../../db/WriteQueue';
 import type { AIMode, SkillManifest } from './types';
 import { BUILTIN_SKILLS } from './builtin';
+import { parseKeyValues } from '../../utils/skillFrontmatter';
 
 export class SkillLoader {
   private bridge: NativeBridge;
@@ -74,11 +75,7 @@ export class SkillLoader {
     const fmText = text.slice(3, end).trim();
     const body = text.slice(text.indexOf('\n', end + 4)).trim();
 
-    const fm: Record<string, string> = {};
-    for (const line of fmText.split('\n')) {
-      const m = line.match(/^([a-zA-Z_]+)\s*:\s*(.*)$/);
-      if (m) fm[m[1]] = m[2].trim();
-    }
+    const fm = parseKeyValues(fmText.split('\n'));
 
     const parseList = (s: string | undefined): string[] => {
       if (!s) return [];

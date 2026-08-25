@@ -67,9 +67,12 @@ export class Database {
     const current = Number(row?.user_version ?? 0);
     for (const m of MIGRATIONS) {
       if (m.version > current) {
-        // 多语句批量执行（db_exec 无参数时走 execute_batch）
-        await this.adapter.exec(m.sql);
-        await this.adapter.exec(`PRAGMA user_version = ${m.version}`);
+        // 每个迁移在单事务中执行：迁移 SQL 与 user_version 前进原子化（Rust 端 db_transaction
+        // 对无参数语句走 execute_batch，支持多语句；任一失败整批回滚，不会留下半套 schema）
+        await this.transaction(async (tx) => {
+          await tx.exec(m.sql);
+          await tx.exec(`PRAGMA user_version = ${m.version}`);
+        });
       }
     }
   }

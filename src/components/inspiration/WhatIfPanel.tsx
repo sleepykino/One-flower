@@ -154,7 +154,10 @@ export function WhatIfPanel({ bookId }: { bookId: string }): JSX.Element {
 
         {/* 阶段性进度提示 */}
         {busy && (
-          <div className="mt-3 rounded border border-violet-200 bg-violet-50 p-2 text-xs text-violet-700">
+          <div
+            className="mt-3 rounded border border-violet-200 bg-violet-50 p-2 text-xs text-violet-700"
+            data-status="generating"
+          >
             {STAGE_LABEL[stage]}
           </div>
         )}

@@ -135,7 +135,7 @@ export function docToMarkdown(doc: ProseMirrorDoc, opts?: DocImageOptions): stri
           lines.push(`[图片缺失: ${attrs.fileName || attrs.assetId}]`);
           break;
         }
-        const alt = (attrs.caption || attrs.fileName).replace(/[\[\]]/g, '');
+        const alt = (attrs.caption || attrs.fileName).replace(/[[\]]/g, '');
         lines.push(`![${alt}](${src})`);
         if (attrs.caption) lines.push(`*${attrs.caption}*`);
         break;
@@ -249,6 +249,30 @@ export function removeWorldbookRefs(
     if (!node.content) return;
     node.content = node.content.filter((child) => {
       if (child.type === 'worldbookRef' && child.attrs?.id === entryId) {
+        count += 1;
+        return false;
+      }
+      walk(child);
+      return true;
+    });
+  };
+  walk(cloned);
+
+  return { doc: cloned as unknown as ProseMirrorDoc, count };
+}
+
+/** 移除文档中指向指定图片资产的 imageBlock 节点（图片强删后联动清理，避免悬挂引用），返回新文档与移除数量 */
+export function removeImageRefs(
+  doc: ProseMirrorDoc,
+  assetId: string
+): { doc: ProseMirrorDoc; count: number } {
+  let count = 0;
+  const cloned = structuredClone(doc) as unknown as PMNode;
+
+  const walk = (node: PMNode): void => {
+    if (!node.content) return;
+    node.content = node.content.filter((child) => {
+      if (child.type === 'imageBlock' && child.attrs?.assetId === assetId) {
         count += 1;
         return false;
       }

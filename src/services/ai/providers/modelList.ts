@@ -27,7 +27,7 @@ export async function listRemoteModels(baseUrl: string, apiKey?: string): Promis
     return Array.from(new Set(ids)).sort((a, b) => a.localeCompare(b));
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') {
-      throw new Error(`连接超时（${url}），请确认服务已启动`);
+      throw new Error(`连接超时（${url}），请确认服务已启动`, { cause: e });
     }
     throw e instanceof Error ? e : new Error(String(e));
   } finally {

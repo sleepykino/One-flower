@@ -201,7 +201,6 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
 
   // 画布尺寸：容器 div offsetWidth/Height，ResizeObserver 跟随
   const containerRef = useRef<HTMLDivElement>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const stageRef = useRef<any>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
 
@@ -339,7 +338,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     }
     const canvases = tls.map((l) => renderTilesToCanvas(l.tiles));
     tileCtxsRef.current = canvases.map((c) => c.getContext('2d'));
-    setTileCanvases(canvases);    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setTileCanvases(canvases);
   }, [currentMap?.tileLayers, imgTick]);
 
   /** 瓦片层最大范围（适应画布用） */
@@ -886,7 +885,6 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
   }
 
   /** 涂抹按下：吸管取色（可见最顶层）/ 油漆桶连通填充 / 笔刷橡皮开启一笔（副本作画，抬笔写回） */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleStageMouseDownPaint = (e: any): void => {
     if (!paintMode || !currentMap) return;
     e.evt.preventDefault();
@@ -950,7 +948,6 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
   };
 
   /** 涂抹拖动：按格去重后连续盖章 */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleStageMouseMovePaint = (e: any): void => {
     if (!paintingRef.current) return;
     e.evt.preventDefault();
@@ -1404,7 +1401,6 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     const opacity = node.opacity ?? 1;
     void imgTick; // 贴图加载完成后触发重渲染
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const commonProps: Record<string, any> = {
       draggable: tool === 'select',
       onMouseDown: (): void => {
