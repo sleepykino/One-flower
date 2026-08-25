@@ -14,6 +14,7 @@ import p31Sql from './migrations/007_default_provider.sql?raw';
 import p41Sql from './migrations/008_p41_map_assets.sql?raw';
 import p5Sql from './migrations/009_p5_screenplay.sql?raw';
 import wbEnabledSql from './migrations/010_worldbook_enabled.sql?raw';
+import p6Sql from './migrations/011_p6_bookshelf.sql?raw';
 
 interface Migration {
   version: number;
@@ -30,7 +31,8 @@ const MIGRATIONS: Migration[] = [
   { version: 7, sql: p31Sql },
   { version: 8, sql: p41Sql },
   { version: 9, sql: p5Sql },
-  { version: 10, sql: wbEnabledSql }
+  { version: 10, sql: wbEnabledSql },
+  { version: 11, sql: p6Sql }
 ];
 
 export class Database {

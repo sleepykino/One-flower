@@ -139,7 +139,8 @@ export class DailyInspirationService {
     let themeSource = theme ? '自定义题材' : '';
     if (!theme) {
       const row = await this.db.queryOne<{ title: string; genre: string | null }>(
-        'SELECT title, genre FROM books ORDER BY updated_at DESC LIMIT 1'
+        // P6：排除回收站中的书
+        'SELECT title, genre FROM books WHERE deleted_at IS NULL ORDER BY updated_at DESC LIMIT 1'
       );
       const bookGenre = row?.genre?.trim() ?? '';
       const useBookGenre = !opts?.randomTopic && bookGenre !== '' && Math.random() < 0.5;

@@ -42,6 +42,8 @@ async function deleteBook(page: Page, title: string): Promise<void> {
   await page.goto(APP_URL + '/');
   const card = bookCard(page, title);
   await card.hover();
+  // P6：删除入口移入 ⋮ 菜单（软删除移入回收站）
+  await card.getByRole('button', { name: '更多操作' }).click();
   await card.getByRole('button', { name: '删除' }).click();
   await acceptNativeDialog();
   await expect(card).toHaveCount(0);

@@ -9,9 +9,21 @@ export interface Book {
   storageDir: string;
   enabledSkills: string; // JSON array string
   providerConfigId: string | null;
+  /** P6：置顶（书架恒排最前） */
+  pinned: boolean;
+  /** P6：手动排序序（迁移 011，初始 = created_at） */
+  sortOrder: number;
+  /** P6：软删除时间（NULL = 正常；非空 = 回收站中） */
+  deletedAt: number | null;
   createdAt: number;
   updatedAt: number;
+  /** P6：书架聚合统计（list/listDeleted 填充，get 不保证） */
+  chapterCount?: number;
+  totalWords?: number;
 }
+
+/** P6：书架排序模式 */
+export type BookSortMode = 'updated' | 'created' | 'title' | 'manual';
 
 export type ChapterStatus = 'draft' | 'revised' | 'final';
 

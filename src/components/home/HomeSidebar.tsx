@@ -6,10 +6,11 @@
 
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lightbulb, Settings, PanelLeftClose, PanelLeftOpen, type LucideIcon } from 'lucide-react';
+import { BookOpen, Lightbulb, Settings, Trash2, PanelLeftClose, PanelLeftOpen, type LucideIcon } from 'lucide-react';
 
 const NAV_ITEMS: Array<{ key: string; label: string; icon: LucideIcon; path: string }> = [
   { key: 'shelf', label: '我的书架', icon: BookOpen, path: '/' },
+  { key: 'trash', label: '回收站', icon: Trash2, path: '/trash' },
   { key: 'inspiration', label: '灵感库', icon: Lightbulb, path: '/inspiration' },
   { key: 'settings', label: '设置', icon: Settings, path: '/settings' }
 ];

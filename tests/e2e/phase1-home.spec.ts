@@ -28,6 +28,8 @@ async function createBook(page: Page, title: string): Promise<void> {
 async function deleteViaDialog(page: Page, title: string, confirm: boolean): Promise<void> {
   const card = bookCard(page, title);
   await card.hover();
+  // P6：删除入口移入 ⋮ 菜单（软删除移入回收站）
+  await card.getByRole('button', { name: '更多操作' }).click();
   await card.getByRole('button', { name: '删除' }).click();
   if (confirm) await acceptNativeDialog();
   else await dismissNativeDialog();

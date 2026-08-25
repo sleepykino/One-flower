@@ -180,14 +180,22 @@ export function Editor(): JSX.Element {
     void loadChapters(bookId);
     void getAppContext()
       .bookService.get(bookId)
-      .then((b) => setBookTitle(b?.title ?? ''));
+      .then((b) => {
+        // P6 守卫：已删书籍（回收站中）不允许打开，拦截跳回书架
+        if (b?.deletedAt != null) {
+          toast.info('该书在回收站中，请先恢复后再打开');
+          navigate('/', { replace: true });
+          return;
+        }
+        setBookTitle(b?.title ?? '');
+      });
     // 写作统计：进入编辑器开启会话，离开时记录字数差 + 时长
     const { statsService } = getAppContext();
     void statsService.beginSession(bookId);
     return () => {
       void statsService.endSession(bookId);
     };
-  }, [bookId, setBookId, loadChapters]);
+  }, [bookId, setBookId, loadChapters, navigate]);
 
   // 全局查找（快捷键可自定义，见 utils/keymap.ts）
   useEffect(() => {

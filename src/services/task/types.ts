@@ -11,6 +11,7 @@ export type TaskKind =
   | 'batch-embed'
   | 'screenplay'
   | 'storyboard'
+  | 'backup'
   | 'generic';
 
 export type TaskStatus = 'running' | 'done' | 'failed' | 'cancelled';

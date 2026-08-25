@@ -48,6 +48,7 @@ import { ImagePromptService } from '../services/image/ImagePromptService';
 import { ScreenplayService } from '../services/screenplay/ScreenplayService';
 import { ScreenplayAdaptService } from '../services/screenplay/ScreenplayAdaptService';
 import { StoryboardService } from '../services/screenplay/StoryboardService';
+import { AutoBackupService } from '../services/backup/AutoBackupService';
 import { useTaskStore } from '../store/taskStore';
 import { createProvider, isLocalBaseUrl } from '../services/ai/providers/LLMProvider';
 import type { LLMProvider } from '../services/ai/providers/LLMProvider';
@@ -115,6 +116,8 @@ export interface AppContext {
   screenplayAdapt: ScreenplayAdaptService;
   /** P5：分镜图 prompt 组装与生成（含批量任务） */
   storyboardService: StoryboardService;
+  /** P6：自动定期备份（调度器 + 任务中心托管 + 轮换清理） */
+  autoBackupService: AutoBackupService;
 }
 
 let ctx: AppContext | null = null;
@@ -274,6 +277,9 @@ export async function initApp(): Promise<AppContext> {
   );
   const storyboardService = new StoryboardService(tauriBridge, imageAssetService, screenplayService, tasks);
 
+  // P6 自动备份：调度器（幂等检查 + 定时重检），ctx 赋值后启动
+  const autoBackupService = new AutoBackupService(tauriBridge, appSettings, exportService, bookService, tasks);
+
   ctx = {
     bridge: tauriBridge,
     db,
@@ -314,7 +320,12 @@ export async function initApp(): Promise<AppContext> {
     imagePromptService,
     screenplayService,
     screenplayAdapt,
-    storyboardService
+    storyboardService,
+    autoBackupService
   };
+
+  // P6：自动备份调度器启动（服务层挂载，StrictMode 安全；15s 首检 + 每小时重检，全程静默）
+  autoBackupService.start();
+
   return ctx;
 }

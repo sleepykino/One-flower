@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Star, BookPlus } from 'lucide-react';
+import { Search, Star, BookPlus, Trash2 } from 'lucide-react';
 import { getAppContext } from '../../context/app-context';
 import { confirmDialog } from '../../native/dialog';
 import { renderMarkdown } from '../../utils/markdown';
@@ -55,8 +55,10 @@ export function InspirationLibrary(): JSX.Element {
       if (conditions.length > 0) sql += ` WHERE ${conditions.join(' AND ')}`;
       sql += ' ORDER BY favorited DESC, created_at DESC';
       const list = await db.query<Record<string, unknown>>(sql, params);
-      // 所属书籍名（按书绑定的类型）
-      const books = await db.query<{ id: string; title: string }>('SELECT id, title FROM books');
+      // 所属书籍名（按书绑定的类型；P6：排除回收站中的书）
+      const books = await db.query<{ id: string; title: string }>(
+        'SELECT id, title FROM books WHERE deleted_at IS NULL'
+      );
       const bookMap = new Map(books.map((b) => [b.id, b.title]));
       setRows(
         list.map((r) => ({
@@ -103,6 +105,21 @@ export function InspirationLibrary(): JSX.Element {
         ])
       );
       load();
+    })();
+  };
+
+  /** 删除单条灵感（确认后从 inspirations 表移除并刷新列表） */
+  const deleteInspiration = (row: LibraryRow): void => {
+    void (async () => {
+      const ok = await confirmDialog(`确认删除这条${INSPIRATION_TYPE_LABEL[row.type]}？\n\n删除后不可恢复。`, '删除灵感');
+      if (!ok) return;
+      try {
+        const { db, wq } = getAppContext();
+        await wq.enqueue(() => db.exec('DELETE FROM inspirations WHERE id = ?', [row.id]));
+        load();
+      } catch (e) {
+        void confirmDialog(`删除失败：${e instanceof Error ? e.message : String(e)}`, '错误');
+      }
     })();
   };
 
@@ -230,6 +247,14 @@ export function InspirationLibrary(): JSX.Element {
                     size={14}
                     className={row.favorited ? 'fill-amber-500 text-amber-500' : 'text-ink-300'}
                   />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => deleteInspiration(row)}
+                  title="删除"
+                  className="shrink-0 rounded p-1 text-ink-300 hover:bg-red-50 hover:text-red-600"
+                >
+                  <Trash2 size={14} />
                 </button>
               </div>
 

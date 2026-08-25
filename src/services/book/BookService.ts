@@ -1,5 +1,7 @@
 /**
- * 书籍服务：CRUD + 启用 Skill + Provider 配置关联
+ * 书籍服务：CRUD + 启用 Skill + Provider 配置关联 + P6 回收站/置顶/排序
+ * trash/restore 只动 books.deleted_at 一列（关联行/FTS/目录零触碰，恢复零损耗）；
+ * purge 才执行硬删（FTS 手动清 + 事务 + 级联 + 目录递归删）
  */
 
 import type { NativeBridge } from '../../native/NativeBridge';
@@ -25,10 +27,29 @@ export class BookService {
     this.wq = wq;
   }
 
+  /** 书架列表：未删除书 + 章节数/字数聚合（子查询一次取齐，避免 N+1） */
   async list(): Promise<Book[]> {
-    const rows = await this.db.query<Record<string, unknown>>(
-      'SELECT * FROM books ORDER BY updated_at DESC'
-    );
+    const rows = await this.db.query<Record<string, unknown>>(`
+      SELECT b.*,
+        (SELECT COUNT(*) FROM chapters c WHERE c.book_id = b.id) AS chapter_count,
+        (SELECT COALESCE(SUM(c.word_count), 0) FROM chapters c WHERE c.book_id = b.id) AS total_words
+      FROM books b
+      WHERE b.deleted_at IS NULL
+      ORDER BY b.updated_at DESC
+    `);
+    return rows.map(rowToBook);
+  }
+
+  /** 回收站列表：已删除书按删除时间倒序，带同一套聚合 */
+  async listDeleted(): Promise<Book[]> {
+    const rows = await this.db.query<Record<string, unknown>>(`
+      SELECT b.*,
+        (SELECT COUNT(*) FROM chapters c WHERE c.book_id = b.id) AS chapter_count,
+        (SELECT COALESCE(SUM(c.word_count), 0) FROM chapters c WHERE c.book_id = b.id) AS total_words
+      FROM books b
+      WHERE b.deleted_at IS NOT NULL
+      ORDER BY b.deleted_at DESC
+    `);
     return rows.map(rowToBook);
   }
 
@@ -76,7 +97,27 @@ export class BookService {
     );
   }
 
-  async remove(id: string): Promise<void> {
+  /** 软删除（移入回收站）：仅 UPDATE deleted_at 一列，不动关联行/FTS/目录 */
+  async trash(id: string): Promise<void> {
+    await this.wq.enqueue(() =>
+      this.db.exec('UPDATE books SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL', [
+        Date.now(),
+        id
+      ])
+    );
+  }
+
+  /** 从回收站恢复：deleted_at 置 NULL */
+  async restore(id: string): Promise<void> {
+    await this.wq.enqueue(() =>
+      this.db.exec('UPDATE books SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL', [
+        id
+      ])
+    );
+  }
+
+  /** 彻底删除：原硬删全量逻辑（FTS 手动清 + 事务 + 级联行 + 递归删 storageDir） */
+  async purge(id: string): Promise<void> {
     const book = await this.get(id);
     if (!book) return;
     // 先删 FTS 索引，再删行（级联删除 chapters/characters 等），最后删目录
@@ -93,6 +134,47 @@ export class BookService {
       })
     );
     await this.bridge.fs.deletePath(book.storageDir).catch(() => undefined);
+  }
+
+  /** 清空回收站：逐本 purge（顺序执行），返回清理数量 */
+  async emptyTrash(): Promise<number> {
+    const deleted = await this.listDeleted();
+    for (const b of deleted) {
+      await this.purge(b.id);
+    }
+    return deleted.length;
+  }
+
+  /** 启动清理：超过保留期的已删书批量 purge，返回清理数；retentionDays<=0 表示永久保留 */
+  async cleanupExpired(retentionDays: number): Promise<number> {
+    if (retentionDays <= 0) return 0;
+    const threshold = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+    const rows = await this.db.query<{ id: string }>(
+      'SELECT id FROM books WHERE deleted_at IS NOT NULL AND deleted_at < ?',
+      [threshold]
+    );
+    for (const row of rows) {
+      await this.purge(row.id);
+    }
+    return rows.length;
+  }
+
+  /** P6 置顶（不刷 updated_at，避免置顶动作把书顶到"最近更新"） */
+  async setPinned(id: string, pinned: boolean): Promise<void> {
+    await this.wq.enqueue(() =>
+      this.db.exec('UPDATE books SET pinned = ? WHERE id = ?', [pinned ? 1 : 0, id])
+    );
+  }
+
+  /** P6 手动排序：orderedIds 为当前未删除书的新顺序，单事务批量回写 sort_order（index 序） */
+  async reorder(orderedIds: string[]): Promise<void> {
+    await this.wq.enqueue(() =>
+      this.db.transaction(async (tx) => {
+        for (let i = 0; i < orderedIds.length; i++) {
+          await tx.exec('UPDATE books SET sort_order = ? WHERE id = ?', [i, orderedIds[i]]);
+        }
+      })
+    );
   }
 
   async getEnabledSkills(bookId: string): Promise<string[]> {
@@ -135,7 +217,12 @@ export function rowToBook(r: Row): Book {
     storageDir: String(r.storage_dir),
     enabledSkills: (r.enabled_skills as string) ?? '[]',
     providerConfigId: (r.provider_config_id as string) ?? null,
+    pinned: Number(r.pinned ?? 0) === 1,
+    sortOrder: Number(r.sort_order ?? 0),
+    deletedAt: r.deleted_at != null ? Number(r.deleted_at) : null,
     createdAt: Number(r.created_at),
-    updatedAt: Number(r.updated_at)
+    updatedAt: Number(r.updated_at),
+    chapterCount: r.chapter_count != null ? Number(r.chapter_count) : undefined,
+    totalWords: r.total_words != null ? Number(r.total_words) : undefined
   };
 }

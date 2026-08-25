@@ -1,27 +1,53 @@
 /**
- * Home 页：书籍列表 + 新建 / 编辑 / 删除 / 打开 + 备份导入
+ * Home 页：书籍列表 + 新建 / 编辑 / 删除（回收站）/ 打开 + 备份导入
+ * P6 M3：工具条（搜索/类型筛选/排序）+ 书卡统计 + ⋮ 菜单（编辑/置顶/导出备份/删除）+ 手动拖拽排序
+ * P6 M1：删除改为软删除（移入回收站）；挂载时延迟静默清理过期回收站
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { open } from '@tauri-apps/plugin-dialog';
+import { open, save } from '@tauri-apps/plugin-dialog';
+import { Pin } from 'lucide-react';
 import { useBookStore } from '../store/bookStore';
 import { getAppContext } from '../context/app-context';
 import { confirmDialog } from '../native/dialog';
+import { toast } from '../components/common/toast';
 import { UpdateDialog } from '../components/update/UpdateDialog';
 import { HomeSidebar } from '../components/home/HomeSidebar';
 import { ImagePicker } from '../components/image/ImagePicker';
+import { BookshelfToolbar, persistSortMode, readSortMode } from '../components/home/BookshelfToolbar';
+import { BookCardMenu } from '../components/home/BookCardMenu';
+import { EditBookDialog } from '../components/home/EditBookDialog';
+import { formatWordCount } from '../components/home/TrashList';
 import { resolveAssetUrl } from '../utils/assetUrl';
 import type { ImageAsset } from '../services/image/types';
 import type { UpdateInfo } from '../services/update/UpdateService';
-import type { Book } from '../types';
+import type { Book, BookSortMode } from '../types';
+
+/** 排序比较器：任何排序下 pinned 优先 */
+function compareBooks(a: Book, b: Book, mode: BookSortMode): number {
+  if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+  switch (mode) {
+    case 'created':
+      return b.createdAt - a.createdAt;
+    case 'title':
+      return a.title.localeCompare(b.title, 'zh');
+    case 'manual':
+      return a.sortOrder - b.sortOrder;
+    case 'updated':
+    default:
+      return b.updatedAt - a.updatedAt;
+  }
+}
 
 export function Home(): JSX.Element {
   const navigate = useNavigate();
   const books = useBookStore((s) => s.books);
   const loadBooks = useBookStore((s) => s.loadBooks);
   const createBook = useBookStore((s) => s.createBook);
-  const removeBook = useBookStore((s) => s.removeBook);
+  const trashBook = useBookStore((s) => s.trashBook);
+  const setPinned = useBookStore((s) => s.setPinned);
+  const reorderBooks = useBookStore((s) => s.reorderBooks);
   const [creating, setCreating] = useState(false);
   const [title, setTitle] = useState('');
   const [genre, setGenre] = useState('');
@@ -29,10 +55,44 @@ export function Home(): JSX.Element {
   const [message, setMessage] = useState('');
   // 客户端更新：自动检查（静默失败不打扰）
   const [update, setUpdate] = useState<{ info: UpdateInfo; current: string } | null>(null);
+  // P6 M3：工具条状态
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [genreFilter, setGenreFilter] = useState('');
+  const [sortMode, setSortMode] = useState<BookSortMode>(readSortMode);
+  // P6 M3：编辑信息对话框
+  const [editingBook, setEditingBook] = useState<Book | null>(null);
+  // P6 M3：拖拽排序状态（仅 manual 模式）
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  // 指针拖拽内部态（悬停落点镜像 + 点击抑制 + 按下来源记录）
+  const dragOverRef = useRef<string | null>(null);
+  // 拖拽结束后浏览器补发 click 的抑制窗口：用时间戳而非一次性 bool，
+  // 避免 click 落在公共祖先（grid 无 onClick）时标志残留吞掉下一次真实点击
+  const suppressClickUntil = useRef(0);
+  const pointerRef = useRef<{
+    pointerId: number;
+    sourceId: string;
+    startX: number;
+    startY: number;
+    active: boolean;
+  } | null>(null);
 
   useEffect(() => {
     void loadBooks();
   }, [loadBooks]);
+
+  // P6 M1：挂载后延迟 5s 静默清理过期回收站（不打扰启动）
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const { bookService, appSettings } = getAppContext();
+        const v = await appSettings.get('trash.retentionDays');
+        await bookService.cleanupExpired(v != null ? Number(v) : 30);
+      })().catch(() => undefined);
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   // 启动自动检查更新：开关开 && 距上次超 24h；延迟 3s 不打断启动；失败静默
   useEffect(() => {
@@ -57,6 +117,40 @@ export function Home(): JSX.Element {
       window.clearTimeout(timer);
     };
   }, []);
+
+  // P6 M3：搜索防抖 200ms
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 200);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  // P6 M3：排序偏好持久化
+  const changeSortMode = (mode: BookSortMode): void => {
+    setSortMode(mode);
+    persistSortMode(mode);
+  };
+
+  /** 过滤 + 排序后的书架列表（全部客户端内存计算） */
+  const visibleBooks = useMemo(() => {
+    const q = debouncedSearch.toLowerCase();
+    return books
+      .filter((b) => {
+        if (genreFilter && (b.genre ?? '') !== genreFilter) return false;
+        if (!q) return true;
+        return [b.title, b.genre, b.author].some((f) => f != null && f.toLowerCase().includes(q));
+      })
+      .sort((a, b) => compareBooks(a, b, sortMode));
+  }, [books, debouncedSearch, genreFilter, sortMode]);
+
+  /** 类型下拉选项（当前书架去重 genre） */
+  const genres = useMemo(
+    () => [...new Set(books.map((b) => b.genre).filter((g): g is string => !!g))].sort((a, b) => a.localeCompare(b, 'zh')),
+    [books]
+  );
+
+  const filtering = debouncedSearch !== '' || genreFilter !== '';
+  /** 拖拽仅 manual 模式且未过滤时启用（过滤视图下换位语义不明） */
+  const dragEnabled = sortMode === 'manual' && !filtering;
 
   const submit = async (): Promise<void> => {
     if (!title.trim()) return;
@@ -87,6 +181,154 @@ export function Home(): JSX.Element {
       setMessage(`导入失败：${e instanceof Error ? e.message : String(e)}`);
     }
   };
+
+  /** P6 M1：删除 = 移入回收站（软删除，可恢复） */
+  const trashBookFlow = async (book: Book): Promise<void> => {
+    const ok = await confirmDialog(`确认将《${book.title}》移入回收站？\n\n可随时在回收站恢复或彻底删除。`);
+    if (!ok) return;
+    try {
+      await trashBook(book.id);
+      toast.info(`《${book.title}》已移入回收站`);
+    } catch (e) {
+      toast.error(`删除失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  /** P6 M3：置顶切换 */
+  const togglePin = async (book: Book): Promise<void> => {
+    try {
+      await setPinned(book.id, !book.pinned);
+    } catch (e) {
+      toast.error(`置顶失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  /** P6 M3：从书架直接导出单书备份（逻辑同设置页 BackupSection） */
+  const exportBookBackup = async (book: Book): Promise<void> => {
+    const path = await save({
+      defaultPath: `${book.title}.zip`,
+      filters: [{ name: '备份包', extensions: ['zip'] }]
+    });
+    if (!path) return;
+    toast.info('备份中…');
+    try {
+      await getAppContext().exportService.exportBook(book.id, 'backup', path);
+      toast.success(`备份完成：${path}`);
+    } catch (e) {
+      toast.error(`备份失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  /** P6 M3：拖拽落点 -> 重排未置顶书 -> 整表持久化（置顶恒前） */
+  const handleDrop = (sourceId: string, targetId: string): void => {
+    setDragId(null);
+    setDragOverId(null);
+    dragOverRef.current = null;
+    // 拖拽结束后浏览器会补发一次 click，500ms 内吞掉，避免误入编辑器
+    suppressClickUntil.current = Date.now() + 500;
+    if (sourceId === targetId) return;
+    // 全局监听只挂一次，这里从 store 取最新列表，避免闭包过期
+    const current = useBookStore.getState().books;
+    const pinnedIds = current.filter((b) => b.pinned).map((b) => b.id);
+    const unpinned = current.filter((b) => !b.pinned);
+    const from = unpinned.findIndex((b) => b.id === sourceId);
+    const to = unpinned.findIndex((b) => b.id === targetId);
+    if (from < 0 || to < 0) return;
+    const next = [...unpinned];
+    next.splice(to, 0, next.splice(from, 1)[0]);
+    void reorderBooks([...pinnedIds, ...next.map((b) => b.id)]).catch((e) => {
+      toast.error(`排序保存失败：${e instanceof Error ? e.message : String(e)}`);
+    });
+  };
+
+  /** P6 M3：打开书卡前吞掉拖拽结束后补发的 click（时间窗口内忽略一次） */
+  const handleOpen = (book: Book): void => {
+    if (Date.now() < suppressClickUntil.current) {
+      suppressClickUntil.current = 0;
+      return;
+    }
+    navigate(`/editor/${book.id}`);
+  };
+
+  /**
+   * P6 M3：指针拖拽换位（不用 HTML5 DnD——WebView2 真实鼠标拖动不可靠，
+   * 且书卡内含封面图会被原生图片拖拽抢占）。按下记录来源，位移超 6px 判定为拖动，
+   * 拖动中高亮悬停卡片，释放后按落点重排；纯点击仍走 onClick 打开书。
+   */
+  const isInteractiveTarget = (t: EventTarget | null): boolean =>
+    t instanceof Element && !!t.closest('button, a, input, select, textarea');
+
+  const hoveredCardId = (x: number, y: number): string | null => {
+    const el = document.elementFromPoint(x, y) as HTMLElement | null;
+    return el?.closest('[data-book-id]')?.getAttribute('data-book-id') ?? null;
+  };
+
+  const onCardPointerDown = (e: React.PointerEvent<HTMLDivElement>, bookId: string): void => {
+    if (!dragEnabled || isInteractiveTarget(e.target)) return;
+    pointerRef.current = {
+      pointerId: e.pointerId,
+      sourceId: bookId,
+      startX: e.clientX,
+      startY: e.clientY,
+      active: false
+    };
+  };
+
+  // 全局监听只挂一次（处理函数只依赖 ref + 稳定 setter + store.getState，无闭包过期问题），
+  // 卸载时统一移除
+  useEffect(() => {
+    const onMove = (e: PointerEvent): void => {
+      const p = pointerRef.current;
+      if (!p || e.pointerId !== p.pointerId) return;
+      if (e.buttons !== 1) {
+        pointerRef.current = null;
+        setDragId(null);
+        setDragOverId(null);
+        dragOverRef.current = null;
+        return;
+      }
+      if (!p.active) {
+        if (Math.hypot(e.clientX - p.startX, e.clientY - p.startY) < 6) return;
+        p.active = true;
+        setDragId(p.sourceId);
+      }
+      const target = hoveredCardId(e.clientX, e.clientY);
+      const next = target && target !== p.sourceId ? target : null;
+      dragOverRef.current = next;
+      setDragOverId(next);
+    };
+
+    const onUp = (e: PointerEvent): void => {
+      const p = pointerRef.current;
+      if (!p || e.pointerId !== p.pointerId) return;
+      pointerRef.current = null;
+      if (p.active) {
+        handleDrop(p.sourceId, dragOverRef.current ?? p.sourceId);
+      } else {
+        setDragId(null);
+        setDragOverId(null);
+        dragOverRef.current = null;
+      }
+    };
+
+    const onCancel = (): void => {
+      if (!pointerRef.current) return;
+      pointerRef.current = null;
+      setDragId(null);
+      setDragOverId(null);
+      dragOverRef.current = null;
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="flex h-full">
@@ -120,16 +362,48 @@ export function Home(): JSX.Element {
         )}
 
         <main className="mx-auto max-w-5xl px-6 pb-10">
+          {books.length > 0 && (
+            <BookshelfToolbar
+              search={search}
+              onSearch={setSearch}
+              genres={genres}
+              genreFilter={genreFilter}
+              onGenreFilter={setGenreFilter}
+              sortMode={sortMode}
+              onSortMode={changeSortMode}
+            />
+          )}
+
           {books.length === 0 && !creating && (
             <div className="rounded-lg border-2 border-dashed border-ink-200 p-16 text-center text-ink-400">
               还没有书籍。点击「新建书籍」开始创作。
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
-            {books.map((b) => (
-              <BookCard key={b.id} book={b} onOpen={() => navigate(`/editor/${b.id}`)} onDelete={() => void removeBook(b.id)} />
-            ))}
+          {books.length > 0 && visibleBooks.length === 0 && (
+            <div className="rounded-lg border-2 border-dashed border-ink-200 p-16 text-center text-ink-400">
+              没有匹配「{debouncedSearch || genreFilter}」的书籍
+            </div>
+          )}
+
+          <div className={`grid grid-cols-2 gap-4 md:grid-cols-3 ${dragId ? 'select-none' : ''}`}>
+            {visibleBooks.map((b) => {
+              const draggable = dragEnabled && !b.pinned;
+              return (
+                <BookCard
+                  key={b.id}
+                  book={b}
+                  onOpen={() => handleOpen(b)}
+                  onEdit={() => setEditingBook(b)}
+                  onTogglePin={() => void togglePin(b)}
+                  onExportBackup={() => void exportBookBackup(b)}
+                  onDelete={() => void trashBookFlow(b)}
+                  isDragging={dragId === b.id}
+                  isDragOver={draggable && dragOverId === b.id && dragId != null && dragId !== b.id}
+                  onCardPointerDown={draggable ? (e) => onCardPointerDown(e, b.id) : undefined}
+                />
+              );
+            })}
 
             {creating && (
               <div className="rounded-lg border border-violet-200 bg-white p-3">
@@ -174,6 +448,9 @@ export function Home(): JSX.Element {
         </main>
       </div>
 
+      {/* P6 M3：编辑书籍信息 */}
+      {editingBook && <EditBookDialog book={editingBook} onClose={() => setEditingBook(null)} />}
+
       {/* 启动自动检查发现新版本：下载弹窗 */}
       {update && (
         <UpdateDialog
@@ -189,11 +466,23 @@ export function Home(): JSX.Element {
 function BookCard({
   book,
   onOpen,
-  onDelete
+  onEdit,
+  onTogglePin,
+  onExportBackup,
+  onDelete,
+  onCardPointerDown,
+  isDragging,
+  isDragOver
 }: {
   book: Book;
   onOpen: () => void;
+  onEdit: () => void;
+  onTogglePin: () => void;
+  onExportBackup: () => void;
   onDelete: () => void;
+  onCardPointerDown?: (e: React.PointerEvent<HTMLDivElement>) => void;
+  isDragging: boolean;
+  isDragOver: boolean;
 }): JSX.Element {
   const loadBooks = useBookStore((s) => s.loadBooks);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -208,11 +497,25 @@ function BookCard({
     await loadBooks();
   };
 
+  const grabClass = onCardPointerDown ? 'cursor-grab active:cursor-grabbing' : '';
+
   return (
-    <div className="group cursor-pointer rounded-lg border border-ink-200 bg-white p-4 transition hover:border-violet-400 hover:shadow" onClick={onOpen}>
+    <div
+      data-book-id={book.id}
+      className={`group cursor-pointer rounded-lg border bg-white p-4 transition hover:border-violet-400 hover:shadow ${
+        isDragOver ? 'border-violet-500 ring-2 ring-violet-300' : 'border-ink-200'
+      } ${isDragging ? 'opacity-40' : ''} ${grabClass}`}
+      onClick={onOpen}
+      onPointerDown={onCardPointerDown}
+    >
       <div className="relative mb-3 h-28">
         {coverUrl ? (
-          <img src={coverUrl} alt={book.title} className="h-full w-full rounded object-cover" />
+          <img
+            src={coverUrl}
+            alt={book.title}
+            draggable={false}
+            className="h-full w-full rounded object-cover"
+          />
         ) : (
           <div className="flex h-full w-full items-center justify-center rounded bg-gradient-to-br from-violet-200 to-sky-200 text-3xl font-bold text-white">
             {book.title.slice(0, 2)}
@@ -232,26 +535,29 @@ function BookCard({
       </div>
       <div className="flex items-center justify-between">
         <div className="min-w-0">
-          <div className="truncate font-medium">{book.title}</div>
-          <div className="text-xs text-ink-400">
+          <div className="flex items-center gap-1">
+            {book.pinned && (
+              <span title="已置顶" className="shrink-0">
+                <Pin size={11} className="text-violet-500" />
+              </span>
+            )}
+            <span className="truncate font-medium">{book.title}</span>
+          </div>
+          <div className="truncate text-xs text-ink-400">
             {[book.genre, book.author].filter(Boolean).join(' · ') || '未设置类型'}
           </div>
-          <div className="text-[11px] text-ink-300">
+          <div className="truncate text-[11px] text-ink-300">
+            {book.chapterCount != null && `${book.chapterCount} 章 · ${formatWordCount(book.totalWords)} · `}
             更新于 {new Date(book.updatedAt).toLocaleDateString()}
           </div>
         </div>
-        <button
-          type="button"
-          className="hidden text-xs text-ink-400 hover:text-red-600 group-hover:block"
-          onClick={(e) => {
-            e.stopPropagation();
-            void confirmDialog(`确认删除《${book.title}》？本地文件将一并删除。`).then((ok) => {
-              if (ok) void onDelete();
-            });
-          }}
-        >
-          删除
-        </button>
+        <BookCardMenu
+          book={book}
+          onEdit={onEdit}
+          onTogglePin={onTogglePin}
+          onExportBackup={onExportBackup}
+          onDelete={onDelete}
+        />
       </div>
 
       {pickerOpen && (
