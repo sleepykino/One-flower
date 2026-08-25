@@ -34,6 +34,7 @@ import {
   type NovelMap
 } from '../../services/map/types';
 import type { ScatterSite } from '../../services/map/terrainGen';
+import { floodFillTiles } from '../../services/map/floodFill';
 import { drawTileCell, renderTilesToCanvas } from '../../services/map/tileRender';
 import { autoLayoutNodes } from '../../services/map/autoLayout';
 import { getCachedImage, loadAssetImage } from './imageCache';
@@ -72,27 +73,6 @@ const TOOL_HINT: Record<Tool, string> = Object.fromEntries(TOOLS.map((t) => [t.v
 /** 瓦片绘制类工具（笔刷/橡皮/填充/吸管）：画布元素让位，直接操作地形层 */
 function isPaintTool(t: Tool): boolean {
   return t === 'brush' || t === 'eraser' || t === 'fill' || t === 'picker';
-}
-
-/** 油漆桶：从 (col,row) 把与起始格同地形的连通区域整体替换为 to */
-function floodFillTiles(tiles: MapTiles, col: number, row: number, to: string): MapTiles {
-  const { cols, rows, data } = tiles;
-  const from = data[row * cols + col];
-  if (from === to) return tiles;
-  const next = [...data];
-  const stack: number[] = [row * cols + col];
-  while (stack.length > 0) {
-    const i = stack.pop() as number;
-    if (next[i] !== from) continue;
-    next[i] = to;
-    const c = i % cols;
-    const r = (i - c) / cols;
-    if (c > 0) stack.push(i - 1);
-    if (c < cols - 1) stack.push(i + 1);
-    if (r > 0) stack.push(i - cols);
-    if (r < rows - 1) stack.push(i + cols);
-  }
-  return { ...tiles, data: next };
 }
 
 /** 视图变换（画布坐标 -> 屏幕坐标） */

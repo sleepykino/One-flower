@@ -6,5 +6,4 @@ src-tauri/gen
 .DS_Store
 doc/*
 mcp/*
-tests/*
 test-results/*
