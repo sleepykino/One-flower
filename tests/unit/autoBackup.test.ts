@@ -148,7 +148,7 @@ describe('AutoBackupService.listBookBackups / purgeBookBackups（P6 补充：联
 
   it('purgeBookBackups 逐个删除匹配文件并返回数量；路径含备份目录', async () => {
     const listDir = vi.fn(async (): Promise<DirEntry[]> => ENTRIES);
-    const deletePath = vi.fn(async (): Promise<void> => undefined);
+    const deletePath = vi.fn(async (p: string): Promise<void> => undefined);
     const { svc } = createService({}, { listDir, deletePath });
     expect(await svc.purgeBookBackups(BOOK)).toBe(2);
     expect(deletePath.mock.calls.map((c) => String(c[0]))).toEqual([
@@ -175,7 +175,7 @@ describe('AutoBackupService.listBookBackups / purgeBookBackups（P6 补充：联
   });
 
   it('自定义备份目录生效', async () => {
-    const listDir = vi.fn(async (): Promise<DirEntry[]> => ENTRIES);
+    const listDir = vi.fn(async (_dir?: string): Promise<DirEntry[]> => ENTRIES);
     const { svc } = createService({ 'backup.auto.dir': 'D:/my-backups' }, { listDir });
     await svc.listBookBackups(BOOK);
     expect(String(listDir.mock.calls[0][0])).toBe('D:/my-backups');

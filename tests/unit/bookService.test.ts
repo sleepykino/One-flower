@@ -19,7 +19,7 @@ function createFixture() {
   const txCalls: ExecCall[] = [];
   const txCount = { n: 0 };
   const deletedPaths: string[] = [];
-  const queryImpl = vi.fn(async (): Promise<Row[]> => []);
+  const queryImpl = vi.fn(async (_sql?: string): Promise<Row[]> => []);
   const queryOneImpl = vi.fn(async (): Promise<Row | null> => null);
 
   const db = {

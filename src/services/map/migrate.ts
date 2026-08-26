@@ -52,7 +52,7 @@ function normalizeLayer(v: unknown, fallbackName: string): MapTileLayer | null {
  * 旧 data JSON 容错升级到当前版本（可传字符串或已解析对象）
  * v0/v1（tiles 单层）-> v2（tileLayers 多层）
  */
-export function migrateMapData(raw: unknown): MapData {
+export function migrateMapData(raw: unknown): MapData & { tileLayers: MapTileLayer[] } {
   let obj: unknown = raw;
   if (typeof obj === 'string') {
     try {

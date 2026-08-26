@@ -145,6 +145,6 @@ describe('持久化（getEffectiveShortcuts / setCustomShortcut / resetShortcut�
     resetShortcut('save');
     const km = getEffectiveShortcuts();
     expect(km.save).toEqual(SHORTCUT_DEFS.save.default);
-    expect((globalThis as Record<string, unknown>).localStorage.getItem('oneflower.shortcuts')).toBeNull();
+    expect((globalThis as { localStorage: Storage }).localStorage.getItem('oneflower.shortcuts')).toBeNull();
   });
 });

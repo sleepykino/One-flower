@@ -61,7 +61,7 @@ CREATE INDEX idx_seg_emb_book ON chapter_segments_embeddings(book_id);
 CREATE TABLE chapter_summary_embeddings (
   chapter_id TEXT PRIMARY KEY,
   book_id TEXT NOT NULL,
-  embedding TEXT NOT NU
+  embedding TEXT NOT NULL,
   dim INTEGER NOT NULL,
   model TEXT,
   updated_at INTEGER NOT NULL,
