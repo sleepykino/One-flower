@@ -25,6 +25,7 @@
     "@tiptap/starter-kit": "^2.10.0",
     "@xyflow/react": "^12.3.0",
     "docx": "^9.1.0",
+    "driver.js": "^1.8.0",
     "fflate": "^0.8.2",
     "konva": "^9.3.16",
     "lucide-react": "^1.31.0",

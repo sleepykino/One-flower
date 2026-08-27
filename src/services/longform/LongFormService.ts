@@ -19,6 +19,12 @@ import { parseLooseJson } from '../../utils/looseJson';
 
 /** 单次调用的固定上下文开销估算（token） */
 const PER_CALL_OVERHEAD = 800;
+/** 节拍初稿（draft）单次调用估算 token：输入（摘要+大纲+尾段+RAG）+ 输出节拍表 */
+const DRAFT_TOKENS = 2000;
+/** 接缝自检（seam）单批调用估算 token：输入接缝摘录 + 输出 JSON */
+const SEAM_TOKENS = 1500;
+/** 接缝自检每批处理的接缝数（分批防止单次 maxTokens=4096 被多接缝截断） */
+const SEAM_BATCH = 4;
 
 const ACTIVE_STATUSES = "('ready','running','paused','seam-review')";
 
@@ -161,25 +167,34 @@ export class LongFormService {
 
   // ---------------- 步骤 2：成本预估 ----------------
 
-  /** 成本预估：calls = beat 数；estimatedTokens ≈ Σ(targetWords × 2.2 + 单次上下文开销) */
+  /** 成本预估：节拍初稿 ×1 + 逐拍生成 + 接缝自检（分批）；
+   *  estimatedTokens ≈ Σ(targetWords × 2.2 + 单次上下文开销) + 初稿/自检 token */
   estimate(beats: LongFormBeat[]): { calls: number; estimatedTokens: number } {
-    const calls = beats.length;
-    const estimatedTokens = beats.reduce(
-      (sum, b) => sum + Math.round(b.targetWords * 2.2) + PER_CALL_OVERHEAD,
-      0
-    );
+    const genCalls = beats.length;
+    const seams = Math.max(0, beats.length - 1);
+    const seamCalls = seams > 0 ? Math.ceil(seams / SEAM_BATCH) : 0;
+    const calls = 1 + genCalls + seamCalls;
+    const estimatedTokens =
+      beats.reduce((sum, b) => sum + Math.round(b.targetWords * 2.2) + PER_CALL_OVERHEAD, 0) +
+      DRAFT_TOKENS +
+      SEAM_TOKENS * seamCalls;
     return { calls, estimatedTokens };
   }
 
   // ---------------- 会话持久化 ----------------
 
-  createSession(chapterId: string, beats: LongFormBeat[]): Promise<LongFormSession> {
-    return this.createSessionInner(chapterId, beats);
+  createSession(
+    chapterId: string,
+    beats: LongFormBeat[],
+    opts?: { hints?: string; characterIds?: string[] }
+  ): Promise<LongFormSession> {
+    return this.createSessionInner(chapterId, beats, opts);
   }
 
   private async createSessionInner(
     chapterId: string,
-    beats: LongFormBeat[]
+    beats: LongFormBeat[],
+    opts?: { hints?: string; characterIds?: string[] }
   ): Promise<LongFormSession> {
     const chapter = await this.chapters.get(chapterId);
     if (!chapter) throw new Error('章节不存在');
@@ -192,9 +207,19 @@ export class LongFormService {
     const est = this.estimate(beats);
     await this.wq.enqueue(() =>
       this.bridge.db.exec(
-        `INSERT INTO longform_sessions (id, book_id, chapter_id, status, beats, current_beat_index, used_tokens, estimated_tokens, created_at, updated_at)
-         VALUES (?, ?, ?, 'ready', ?, 0, 0, ?, ?, ?)`,
-        [id, chapter.bookId, chapterId, JSON.stringify(beats), est.estimatedTokens, now, now]
+        `INSERT INTO longform_sessions (id, book_id, chapter_id, status, beats, current_beat_index, used_tokens, estimated_tokens, hints, character_ids, created_at, updated_at)
+         VALUES (?, ?, ?, 'ready', ?, 0, 0, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          chapter.bookId,
+          chapterId,
+          JSON.stringify(beats),
+          est.estimatedTokens,
+          opts?.hints?.trim() ?? '',
+          JSON.stringify(opts?.characterIds ?? []),
+          now,
+          now
+        ]
       )
     );
     return (await this.getSession(id))!;
@@ -248,6 +273,15 @@ export class LongFormService {
     } catch {
       beats = [];
     }
+    let characterIds: string[] = [];
+    try {
+      const parsed = JSON.parse(String(r.character_ids ?? '[]')) as unknown;
+      if (Array.isArray(parsed)) {
+        characterIds = parsed.filter((c): c is string => typeof c === 'string');
+      }
+    } catch {
+      characterIds = [];
+    }
     return {
       id: String(r.id),
       bookId: String(r.book_id),
@@ -257,6 +291,8 @@ export class LongFormService {
       currentBeatIndex: Number(r.current_beat_index ?? 0),
       usedTokens: Number(r.used_tokens ?? 0),
       estimatedTokens: Number(r.estimated_tokens ?? 0),
+      hints: (r.hints as string) ?? '',
+      characterIds,
       createdAt: Number(r.created_at),
       updatedAt: Number(r.updated_at)
     };
@@ -273,13 +309,15 @@ export class LongFormService {
     s.updatedAt = Date.now();
     await this.wq.enqueue(() =>
       this.bridge.db.exec(
-        'UPDATE longform_sessions SET status = ?, beats = ?, current_beat_index = ?, used_tokens = ?, estimated_tokens = ?, updated_at = ? WHERE id = ?',
+        'UPDATE longform_sessions SET status = ?, beats = ?, current_beat_index = ?, used_tokens = ?, estimated_tokens = ?, hints = ?, character_ids = ?, updated_at = ? WHERE id = ?',
         [
           s.status,
           JSON.stringify(s.beats),
           s.currentBeatIndex,
           s.usedTokens,
           s.estimatedTokens,
+          s.hints ?? '',
+          JSON.stringify(s.characterIds ?? []),
           s.updatedAt,
           sessionId
         ]
@@ -332,7 +370,14 @@ export class LongFormService {
   ): Promise<void> {
     let session = await this.getSession(sessionId);
     if (!session) throw new Error('会话不存在');
-    this.chapterTitleCache.set(sessionId, (await this.chapters.get(session.chapterId))?.title ?? '');
+    const chapterMeta = await this.chapters.get(session.chapterId).catch(() => null);
+    this.chapterTitleCache.set(sessionId, chapterMeta?.title ?? '');
+    const outline = chapterMeta?.outline ?? '';
+    // 参与角色：会话指定优先，未指定则默认注入本书全部角色卡
+    const charIds =
+      session.characterIds && session.characterIds.length > 0
+        ? session.characterIds
+        : await this.loadBookCharacterIds(session.bookId);
     const { hooks, opts } = runCtx;
 
     await this.patchSession(sessionId, (s) => {
@@ -366,11 +411,13 @@ export class LongFormService {
         hooks.onBeatStart?.(i, beat);
         const prev = i > 0 ? session.beats[i - 1] : null;
         const next = i < total - 1 ? session.beats[i + 1] : null;
+        const hintLine = session.hints?.trim() ? `【作者补充提示】${session.hints.trim()}` : '';
         const requirement = [
           `本拍（第 ${i + 1}/${total} 拍）：${beat.text}`,
           `本拍目标字数：约 ${beat.targetWords} 字`,
           prev ? `上一拍已完成内容梗概：${prev.text}` : '',
           next ? `下一拍预告（本拍不要提前写到）：${next.text}` : '',
+          hintLine,
           '请只写本拍内容，写完自然收束。'
         ]
           .filter(Boolean)
@@ -383,7 +430,7 @@ export class LongFormService {
             chapterId: session.chapterId,
             currentContent: chapterTail,
             recentChapters: [],
-            selectedCharacterIds: [],
+            selectedCharacterIds: charIds,
             requirement,
             aiReferences: opts?.aiReferences,
             beat: {
@@ -392,6 +439,8 @@ export class LongFormService {
               targetWords: beat.targetWords,
               done: false
             },
+            // RAG 检索 query 并入大纲 + 当前拍文本 + 章内尾段，提升长输出的召回
+            ragQuery: `${outline}\n${beat.text}\n${chapterTail}`.trim(),
             maxTokens: Math.min(8192, Math.max(512, Math.round(beat.targetWords * 2.2))),
             temperature: 0.85,
             signal
@@ -479,29 +528,37 @@ export class LongFormService {
     }
     if (seams.length === 0) return [];
 
-    // P2 二期：接缝自检走 'longform-seam' 功能点路由
+    // P2 二期：接缝自检走 'longform-seam' 功能点路由；分批调用，防止单次 maxTokens=4096 被多接缝截断
     const provider = await resolveProviderForFeature(this.bridge, session.bookId, 'longform-seam', this.providerFactory);
     const model = await resolveModelNameForFeature(this.bridge, session.bookId, 'longform-seam');
-    const res = await provider.chat(
-      [
-        { role: 'system', content: SEAM_SYSTEM },
-        { role: 'user', content: seams.join('\n\n') }
-      ],
-      { model, temperature: 0.2, maxTokens: 4096, signal }
-    );
-    const parsed = parseJsonLoose<
-      Array<{ beatIndex?: number; kind?: string; description?: string; excerpt?: string }>
-    >(res.content);
-    if (!Array.isArray(parsed)) return [];
     const KINDS = ['tone', 'address', 'timeline', 'repetition', 'other'];
-    return parsed
-      .filter((it) => typeof it.beatIndex === 'number')
-      .map((it) => ({
-        beatIndex: Number(it.beatIndex),
-        kind: (KINDS.includes(String(it.kind)) ? it.kind : 'other') as SeamIssue['kind'],
-        description: String(it.description ?? ''),
-        excerpt: String(it.excerpt ?? '')
-      }));
+    const out: SeamIssue[] = [];
+    for (let off = 0; off < seams.length; off += SEAM_BATCH) {
+      if (signal?.aborted) throw new DOMException('已取消', 'AbortError');
+      const batch = seams.slice(off, off + SEAM_BATCH);
+      const res = await provider.chat(
+        [
+          { role: 'system', content: SEAM_SYSTEM },
+          { role: 'user', content: batch.join('\n\n') }
+        ],
+        { model, temperature: 0.2, maxTokens: 4096, signal }
+      );
+      const parsed = parseJsonLoose<
+        Array<{ beatIndex?: number; kind?: string; description?: string; excerpt?: string }>
+      >(res.content);
+      if (!Array.isArray(parsed)) continue;
+      out.push(
+        ...parsed
+          .filter((it) => typeof it.beatIndex === 'number')
+          .map((it) => ({
+            beatIndex: Number(it.beatIndex),
+            kind: (KINDS.includes(String(it.kind)) ? it.kind : 'other') as SeamIssue['kind'],
+            description: String(it.description ?? ''),
+            excerpt: String(it.excerpt ?? '')
+          }))
+      );
+    }
+    return out;
   }
 
   /** 最近一次接缝自检结果（内存态；步骤 4 展示用） */
@@ -517,6 +574,19 @@ export class LongFormService {
       return docToPlainText(doc);
     } catch {
       return '';
+    }
+  }
+
+  /** 本书全部角色卡 id（参与角色未明确指定时的默认注入） */
+  private async loadBookCharacterIds(bookId: string): Promise<string[]> {
+    try {
+      const rows = await this.bridge.db.query<{ id: string }>(
+        'SELECT id FROM characters WHERE book_id = ? ORDER BY created_at ASC',
+        [bookId]
+      );
+      return rows.map((r) => r.id);
+    } catch {
+      return [];
     }
   }
 }

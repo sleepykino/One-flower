@@ -382,8 +382,8 @@ export class AIOrchestrator {
       params.chapterId,
       params.recentChapters
     );
-    // P2：三路检索（query 取当前章末尾约 2000 字）
-    const ragQuery = params.currentContent.slice(-2000);
+    // P2：三路检索（默认取当前章末尾约 2000 字；长文等场景可用 ragQuery 覆盖以提升召回）
+    const ragQuery = params.ragQuery?.trim() ? params.ragQuery : params.currentContent.slice(-2000);
     const { worldbookEntries, segments } = await this.fetchRag(params.bookId, ragQuery);
     const ctx: PromptContext = {
       mode: 'continue',

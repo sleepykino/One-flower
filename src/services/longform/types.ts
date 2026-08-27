@@ -24,6 +24,10 @@ export interface LongFormSession {
   currentBeatIndex: number;
   usedTokens: number;
   estimatedTokens: number;
+  /** 作者补充提示（节拍初稿输入，透传到逐拍生成） */
+  hints?: string;
+  /** 参与生成的角色卡 id（空 = 生成时默认注入本书全部角色） */
+  characterIds?: string[];
   createdAt: number;
   updatedAt: number;
 }

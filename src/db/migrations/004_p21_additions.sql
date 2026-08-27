@@ -4,7 +4,7 @@
 ALTER TABLE chapters ADD COLUMN beats TEXT;
 
 -- M6: 设定事实
-CREATE TABLE setting_facts (
+CREATE TABLE IF NOT EXISTS setting_facts (
   id TEXT PRIMARY KEY,
   book_id TEXT NOT NULL,
   kind TEXT NOT NULL,           -- object/technology/social/magic/geography/other
@@ -18,10 +18,10 @@ CREATE TABLE setting_facts (
   created_at INTEGER NOT NULL,
   FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
 );
-CREATE INDEX idx_setting_facts_book ON setting_facts(book_id, domain);
+CREATE INDEX IF NOT EXISTS idx_setting_facts_book ON setting_facts(book_id, domain);
 
 -- M6: 推导链
-CREATE TABLE setting_inferences (
+CREATE TABLE IF NOT EXISTS setting_inferences (
   id TEXT PRIMARY KEY,
   fact_id TEXT NOT NULL,
   book_id TEXT NOT NULL,
@@ -32,10 +32,10 @@ CREATE TABLE setting_inferences (
   FOREIGN KEY (fact_id) REFERENCES setting_facts(id) ON DELETE CASCADE,
   FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
 );
-CREATE INDEX idx_setting_inferences_book ON setting_inferences(book_id);
+CREATE INDEX IF NOT EXISTS idx_setting_inferences_book ON setting_inferences(book_id);
 
 -- M7: 长文会话
-CREATE TABLE longform_sessions (
+CREATE TABLE IF NOT EXISTS longform_sessions (
   id TEXT PRIMARY KEY,
   book_id TEXT NOT NULL,
   chapter_id TEXT NOT NULL,
@@ -49,6 +49,6 @@ CREATE TABLE longform_sessions (
   FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
   FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE CASCADE
 );
-CREATE INDEX idx_longform_book ON longform_sessions(book_id, status);
+CREATE INDEX IF NOT EXISTS idx_longform_book ON longform_sessions(book_id, status);
 
 -- M1 无迁移：全局提示词存 app_settings（key 'ai.globalPrompts' / 'ai.globalPrompts.enabled'）

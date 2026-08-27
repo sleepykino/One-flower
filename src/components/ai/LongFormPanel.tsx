@@ -9,7 +9,6 @@ import { getAppContext } from '../../context/app-context';
 import { confirmDialog } from '../../native/dialog';
 import { toast } from '../common/toast';
 import { useEditorStore } from '../../store/editorStore';
-import { useTaskStore } from '../../store/taskStore';
 import type { LongFormBeat, LongFormSession, SeamIssue } from '../../services/longform/types';
 
 type Step = 'draft' | 'confirm' | 'running' | 'seam';
@@ -38,7 +37,6 @@ async function appendBeatToChapter(chapterId: string, text: string): Promise<voi
 
 export function LongFormPanel({ bookId }: { bookId: string }): JSX.Element {
   const currentChapterId = useEditorStore((s) => s.currentChapterId);
-  const tasks = useTaskStore((s) => s.tasks);
 
   const [step, setStep] = useState<Step>('draft');
   const [beatCount, setBeatCount] = useState(5);
@@ -50,7 +48,22 @@ export function LongFormPanel({ bookId }: { bookId: string }): JSX.Element {
   const [session, setSession] = useState<LongFormSession | null>(null);
   const [issues, setIssues] = useState<SeamIssue[]>([]);
   const [err, setErr] = useState('');
+  /** 本书角色卡（参与角色选择；不勾选则默认注入全书角色） */
+  const [characters, setCharacters] = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedCharIds, setSelectedCharIds] = useState<string[]>([]);
   const dragIndexRef = useRef<number | null>(null);
+
+  // 加载本书角色卡（参与角色选择用）
+  useEffect(() => {
+    void getAppContext()
+      .characterService.list(bookId)
+      .then((cs) => setCharacters(cs.map((c) => ({ id: c.id, name: c.name }))))
+      .catch(() => setCharacters([]));
+  }, [bookId]);
+
+  const toggleChar = (id: string): void => {
+    setSelectedCharIds((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+  };
 
   // 挂载：检测本书进行中的长文会话（恢复入口）
   const checkActive = useCallback((): void => {
@@ -93,10 +106,6 @@ export function LongFormPanel({ bookId }: { bookId: string }): JSX.Element {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [step, session?.id]);
-
-  const longformTask = tasks.find(
-    (t) => t.kind === 'longform' && t.status === 'running' && t.title.includes('')
-  );
 
   // ---------- 步骤 ①：节拍表 ----------
 
@@ -162,7 +171,10 @@ export function LongFormPanel({ bookId }: { bookId: string }): JSX.Element {
     if (!currentChapterId) return;
     const { longformService } = getAppContext();
     try {
-      const s = await longformService.createSession(currentChapterId, beats);
+      const s = await longformService.createSession(currentChapterId, beats, {
+        hints,
+        characterIds: selectedCharIds
+      });
       setSession(s);
       launchRun(s);
     } catch (e) {
@@ -241,6 +253,8 @@ export function LongFormPanel({ bookId }: { bookId: string }): JSX.Element {
 
   const doneCount = beats.filter((b) => b.status === 'done').length;
   const isPaused = session?.status === 'paused';
+  // 进度按已完成拍数计算（不依赖任务状态，暂停/后台化时进度条不消失）
+  const progressPct = beats.length > 0 ? (doneCount / beats.length) * 100 : 0;
 
   return (
     <div className="flex h-full flex-col text-sm">
@@ -316,9 +330,32 @@ export function LongFormPanel({ bookId }: { bookId: string }): JSX.Element {
               rows={2}
               value={hints}
               onChange={(e) => setHints(e.target.value)}
-              placeholder="补充提示（可选）：本章基调 / 必须出现的事件 / 禁止内容…"
+              placeholder="补充提示（可选）：本章基调 / 必须出现的事件 / 禁止内容…（会透传逐拍生成）"
               className="mt-2 w-full resize-none rounded border border-ink-200 px-2 py-1 text-xs outline-none focus:border-violet-400"
             />
+
+            {/* 参与角色（不勾选则默认注入本书全部角色卡） */}
+            {characters.length > 0 && (
+              <div className="mt-2">
+                <div className="mb-1 text-[11px] text-ink-500">
+                  参与角色（书中共 {characters.length} 位，选 {selectedCharIds.length}）
+                </div>
+                <div className="max-h-24 overflow-y-auto rounded border border-ink-100 p-1.5">
+                  {characters.map((c) => (
+                    <label key={c.id} className="flex items-center gap-1.5 py-0.5 text-xs">
+                      <input
+                        type="checkbox"
+                        checked={selectedCharIds.includes(c.id)}
+                        onChange={() => toggleChar(c.id)}
+                      />
+                      <span className="truncate">{c.name}</span>
+                    </label>
+                  ))}
+                </div>
+                <div className="mt-1 text-[10px] text-ink-400">不勾选则默认注入本书全部角色卡</div>
+              </div>
+            )}
+
             <div className="mt-1 flex gap-1">
               <button
                 type="button"
@@ -420,8 +457,10 @@ export function LongFormPanel({ bookId }: { bookId: string }): JSX.Element {
         {step === 'confirm' && (
           <div>
             <div className="rounded border border-amber-200 bg-amber-50 p-3 text-xs leading-6 text-amber-900">
-              <div>预计 <span className="font-bold">{est.calls}</span> 次 LLM 调用</div>
-              <div>预计消耗约 <span className="font-bold">{est.estimatedTokens}</span> token（按各拍字数 × 2.2 + 单次上下文开销估算）</div>
+              <div>
+                预计 <span className="font-bold">{est.calls}</span> 次 LLM 调用（含节拍初稿 × 1 + 逐拍生成 + 接缝自检，接缝按每批 4 条分批）
+              </div>
+              <div>预计消耗约 <span className="font-bold">{est.estimatedTokens}</span> token（按各拍字数 × 2.2 + 单次上下文开销 + 初稿/自检估算）</div>
               <div className="mt-1 text-amber-700">
                 生成期间可切章继续写作（任务后台化）；每拍完成自动落正文并保存。
               </div>
@@ -463,23 +502,18 @@ export function LongFormPanel({ bookId }: { bookId: string }): JSX.Element {
                 {doneCount}/{beats.length} 拍 · 已用约 {session.usedTokens} / 预估 {session.estimatedTokens} token
               </span>
             </div>
-            {longformTask && longformTask.status === 'running' && (
-              <div className="mb-2">
-                <div className="h-1.5 overflow-hidden rounded bg-ink-100">
-                  {longformTask.progress >= 0 ? (
-                    <div
-                      className="h-full rounded bg-violet-600 transition-[width]"
-                      style={{ width: `${Math.min(100, Math.max(0, longformTask.progress))}%` }}
-                    />
-                  ) : (
-                    <div className="h-full w-1/2 animate-pulse rounded bg-violet-400" />
-                  )}
-                </div>
-                {longformTask.detail && (
-                  <div className="mt-0.5 text-[10px] text-ink-400">{longformTask.detail}</div>
+            <div className="mb-2">
+              <div className="h-1.5 overflow-hidden rounded bg-ink-100">
+                {progressPct > 0 ? (
+                  <div
+                    className="h-full rounded bg-violet-600 transition-[width]"
+                    style={{ width: `${Math.min(100, Math.max(0, progressPct))}%` }}
+                  />
+                ) : (
+                  <div className="h-full w-1/2 animate-pulse rounded bg-violet-400" />
                 )}
               </div>
-            )}
+            </div>
             <div className="space-y-1">
               {beats.map((b, i) => (
                 <div

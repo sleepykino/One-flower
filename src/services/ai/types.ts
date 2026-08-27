@@ -69,6 +69,8 @@ export interface ContinueParams {
   aiReferences?: AiReference[];
   /** M5: 当前应执行的节拍（AIPanel 按 beats 与开关填充） */
   beat?: ChapterBeat;
+  /** 三路检索 query 覆盖：默认取 currentContent 末尾；长文模式下并入拍文本/大纲以提升召回 */
+  ragQuery?: string;
   /** 单次回复的 token 上限（约等于中文字数） */
   maxTokens?: number;
   /** 采样温度，默认 0.85 */

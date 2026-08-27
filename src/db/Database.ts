@@ -15,13 +15,14 @@ import p41Sql from './migrations/008_p41_map_assets.sql?raw';
 import p5Sql from './migrations/009_p5_screenplay.sql?raw';
 import wbEnabledSql from './migrations/010_worldbook_enabled.sql?raw';
 import p6Sql from './migrations/011_p6_bookshelf.sql?raw';
+import lfEnhSql from './migrations/012_longform_hints.sql?raw';
 
 interface Migration {
   version: number;
   sql: string;
 }
 
-const MIGRATIONS: Migration[] = [
+export const MIGRATIONS: Migration[] = [
   { version: 1, sql: initSql },
   { version: 2, sql: p1Sql },
   { version: 3, sql: p2Sql },
@@ -32,8 +33,25 @@ const MIGRATIONS: Migration[] = [
   { version: 8, sql: p41Sql },
   { version: 9, sql: p5Sql },
   { version: 10, sql: wbEnabledSql },
-  { version: 11, sql: p6Sql }
+  { version: 11, sql: p6Sql },
+  { version: 12, sql: lfEnhSql }
 ];
+
+/**
+ * 从迁移 SQL 提取 `ALTER TABLE ... ADD COLUMN ...` 的目标列。
+ * 用于迁移幂等预检：SQLite 不支持 ADD COLUMN IF NOT EXISTS，
+ * 若 user_version 与真实 schema 不同步（如恢复了旧备份），直接重放会因
+ * duplicate column 报错；此处先探测列是否已存在，全部存在则跳过该迁移。
+ */
+export function extractAddedColumns(sql: string): Array<{ table: string; column: string }> {
+  const out: Array<{ table: string; column: string }> = [];
+  const re = /ALTER\s+TABLE\s+([A-Za-z_][\w-]*)\s+ADD\s+COLUMN\s+([A-Za-z_][\w-]*)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(sql)) !== null) {
+    out.push({ table: m[1], column: m[2] });
+  }
+  return out;
+}
 
 export class Database {
   private bridge: NativeBridge;
@@ -68,15 +86,36 @@ export class Database {
     );
     const current = Number(row?.user_version ?? 0);
     for (const m of MIGRATIONS) {
-      if (m.version > current) {
-        // 每个迁移在单事务中执行：迁移 SQL 与 user_version 前进原子化（Rust 端 db_transaction
-        // 对无参数语句走 execute_batch，支持多语句；任一失败整批回滚，不会留下半套 schema）
-        await this.transaction(async (tx) => {
-          await tx.exec(m.sql);
-          await tx.exec(`PRAGMA user_version = ${m.version}`);
-        });
+      if (m.version <= current) continue;
+      // 幂等预检：若该迁移要 ADD 的列已全部存在，说明 schema 已处于该版本
+      // （典型场景：恢复了旧备份导致 user_version 落后于实际 schema），
+      // 跳过执行、仅推进版本号，避免 ADD COLUMN 重复报错导致启动失败。
+      if (await this.isMigrationApplied(m)) {
+        await this.adapter.exec(`PRAGMA user_version = ${m.version}`);
+        continue;
       }
+      // 每个迁移在单事务中执行：迁移 SQL 与 user_version 前进原子化（Rust 端 db_transaction
+      // 对无参数语句走 execute_batch，支持多语句；任一失败整批回滚，不会留下半套 schema）
+      await this.transaction(async (tx) => {
+        await tx.exec(m.sql);
+        await tx.exec(`PRAGMA user_version = ${m.version}`);
+      });
     }
+  }
+
+  /** 判断迁移是否已被应用：其全部 ADD COLUMN 目标列已存在即为已应用 */
+  private async isMigrationApplied(m: Migration): Promise<boolean> {
+    const targets = extractAddedColumns(m.sql);
+    if (targets.length === 0) return false;
+    let existing = 0;
+    for (const { table, column } of targets) {
+      // table/column 均来自仓库内受控迁移 SQL（标识符白名单），可安全内插
+      const cols = await this.adapter.query<{ name: string }>(
+        `PRAGMA table_info(${table})`
+      );
+      if (cols.some((c) => c.name === column)) existing++;
+    }
+    return existing === targets.length;
   }
 
   exec(sql: string, params?: unknown[]): Promise<void> {
