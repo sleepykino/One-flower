@@ -137,6 +137,13 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
   const [currentMap, setCurrentMap] = useState<NovelMap | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saveStatus, setSaveStatus] = useState('');
+  /** 最新地图/脏标记引用：供关闭/卸载/快捷键等异步路径读取，避免闭包捕获过期状态 */
+  const currentMapRef = useRef<NovelMap | null>(currentMap);
+  currentMapRef.current = currentMap;
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  /** 保存进行中标记：防止工具栏「保存」/Ctrl+S/关闭 flush 并发重复写 */
+  const savingRef = useRef(false);
 
   const [tool, setTool] = useState<Tool>('select');
   /** 连续放置：内置图标 id 或 'asset:{素材id}'，null 表示未在放置 */
@@ -608,12 +615,36 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     setMaps((prev) => prev.map((m) => (m.id === map.id ? { ...map } : m)));
   };
 
+  /** 保存当前地图：读 ref 最新值（工具栏「保存」/Ctrl+S/关闭 flush 共用，savingRef 防并发） */
   const save = async (): Promise<void> => {
-    if (!currentMap) return;
-    await svc.saveMap(currentMap);
-    syncMapInList(currentMap);
-    setDirty(false);
-    setSaveStatus(`已保存 ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`);
+    const m = currentMapRef.current;
+    if (!m || savingRef.current) return;
+    savingRef.current = true;
+    try {
+      await svc.saveMap(m);
+      syncMapInList(m);
+      dirtyRef.current = false;
+      setDirty(false);
+      setSaveStatus(`已保存 ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`);
+    } finally {
+      savingRef.current = false;
+    }
+  };
+
+  /** 有未保存修改时先保存（关闭/卸载 flush，读 ref 避免闭包过期） */
+  const flushIfDirty = async (): Promise<void> => {
+    if (dirtyRef.current && currentMapRef.current) await save();
+  };
+
+  /** 关闭入口：先 flush 未保存修改再关闭，保存失败不关闭（防静默丢数据） */
+  const handleClose = async (): Promise<void> => {
+    try {
+      await flushIfDirty();
+    } catch (e) {
+      void toast.error(`保存失败，未关闭：${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+    onClose();
   };
 
   const switchMap = async (id: string): Promise<void> => {
@@ -1057,11 +1088,17 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      const ctrl = e.ctrlKey || e.metaKey;
+      // Ctrl+S 保存为全局快捷键：优先于输入框拦截（输入框聚焦时也要可保存）
+      if (ctrl && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        void save();
+        return;
+      }
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) {
         return;
       }
-      const ctrl = e.ctrlKey || e.metaKey;
       if (ctrl && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         if (e.shiftKey) redo();
@@ -1104,6 +1141,30 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   });
+
+  // ---------- 关闭/卸载保护 ----------
+
+  /** 卸载时 flush 未保存修改（覆盖路由切换/错误边界关闭等未走 handleClose 的路径） */
+  useEffect(() => {
+    return () => {
+      const m = currentMapRef.current;
+      if (m && dirtyRef.current && !savingRef.current) {
+        void svc.saveMap(m).catch((e) => console.error('地图卸载保存失败', e));
+      }
+    };
+  }, [svc]);
+
+  /** 应用/窗口关闭守卫：有未保存修改时提示，防直接退出静默丢数据 */
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent): void => {
+      if (!dirtyRef.current) return;
+      e.preventDefault();
+      // 兼容旧约定：部分 WebView/浏览器需 returnValue 才弹确认框
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, []);
 
   // ---------- 底图操作 ----------
 
@@ -1254,7 +1315,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
           });
           if (!ok) throw new Error('插入失败：请先在编辑器中选择章节与光标位置');
           setSaveStatus('已插入正文');
-          onClose();
+          await handleClose();
         } catch (err) {
           void toast.error(`插入正文失败：${err instanceof Error ? err.message : String(err)}`);
         }
@@ -1724,7 +1785,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
           onExportPng={() => void exportPng()}
           onInsertToDoc={() => void insertToDoc()}
           onSave={() => void save()}
-          onClose={onClose}
+          onClose={() => void handleClose()}
         />
 
         {/* 主体三栏 */}

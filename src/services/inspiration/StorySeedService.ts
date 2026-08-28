@@ -9,6 +9,7 @@ import type { NativeBridge } from '../../native/NativeBridge';
 import type { Database } from '../../db/Database';
 import type { WriteQueue } from '../../db/WriteQueue';
 import type { LLMProvider, ChatMessage } from '../ai/providers/LLMProvider';
+import type { GenerationContextService } from '../ai/GenerationContext';
 import { resolveProviderForFeature, resolveModelNameForFeature } from '../ai/providerResolver';
 import type { BookService } from '../book/BookService';
 import type { WorldbookRAGService } from '../worldbook/WorldbookRAGService';
@@ -101,6 +102,8 @@ export class StorySeedService {
   private providerFactory: (configId: string) => Promise<LLMProvider>;
   private bookService: BookService;
   private ragService: WorldbookRAGService;
+  /** 批次11-4：不经 orchestrator 的调用统一补充全局提示词 + 文风 Skill */
+  private generation: GenerationContextService;
 
   constructor(
     bridge: NativeBridge,
@@ -108,7 +111,8 @@ export class StorySeedService {
     wq: WriteQueue,
     providerFactory: (configId: string) => Promise<LLMProvider>,
     bookService: BookService,
-    ragService: WorldbookRAGService
+    ragService: WorldbookRAGService,
+    generation: GenerationContextService
   ) {
     this.bridge = bridge;
     this.db = db;
@@ -116,6 +120,7 @@ export class StorySeedService {
     this.providerFactory = providerFactory;
     this.bookService = bookService;
     this.ragService = ragService;
+    this.generation = generation;
   }
 
   /** 生成故事种子（功能键 seed-gen；JSON 数组输出 + 容错解析，解析失败抛错不静默） */
@@ -156,8 +161,10 @@ export class StorySeedService {
     }
     lines.push(`请生成 ${params.count} 个故事种子，严格按 JSON 数组输出。`);
 
+    // 批次11-4：全局灵感入口无书上下文，注入作者全局要求（Skill 自然为空）
+    const extras = await this.generation.systemExtras('', 'continue');
     const messages: ChatMessage[] = [
-      { role: 'system', content: SEED_SYSTEM_PROMPT },
+      { role: 'system', content: [SEED_SYSTEM_PROMPT, ...extras].join('\n\n') },
       { role: 'user', content: lines.join('\n') }
     ];
 
@@ -181,9 +188,11 @@ export class StorySeedService {
     const hintA = pick(RANDOM_HINTS);
     const hintB = pick(RANDOM_HINTS.filter((h) => h !== hintA));
     const twist = pick(RANDOM_TWISTS);
+    // 批次11-4：全局灵感入口无书上下文，注入作者全局要求（Skill 自然为空）
+    const extras = await this.generation.systemExtras('', 'continue');
     const res = await provider.chat(
       [
-        { role: 'system', content: RANDOM_SYSTEM_PROMPT },
+        { role: 'system', content: [RANDOM_SYSTEM_PROMPT, ...extras].join('\n\n') },
         {
           role: 'user',
           content: `请随机给出一组题材与元素组合。本次发散参考（尽量围绕，可自由发挥）：「${hintA}」「${hintB}」，并带一点「${twist}」。严格按 JSON 对象输出。`

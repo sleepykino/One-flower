@@ -9,6 +9,7 @@ import type { NativeBridge } from '../../native/NativeBridge';
 import type { Database } from '../../db/Database';
 import type { WriteQueue } from '../../db/WriteQueue';
 import type { LLMProvider, ChatMessage } from '../ai/providers/LLMProvider';
+import type { GenerationContextService } from '../ai/GenerationContext';
 import { resolveProviderForFeature, resolveModelNameForFeature } from '../ai/providerResolver';
 import { rowToCharacter } from '../character/CharacterService';
 import type { WhatIfParams, WhatIfReport } from './types';
@@ -38,17 +39,21 @@ export class WhatIfSimulator {
   private db: Database;
   private wq: WriteQueue;
   private providerFactory: (configId: string) => Promise<LLMProvider>;
+  /** 批次11-4：不经 orchestrator 的调用统一补充全局提示词 + 文风 Skill */
+  private generation: GenerationContextService;
 
   constructor(
     bridge: NativeBridge,
     db: Database,
     wq: WriteQueue,
-    providerFactory: (configId: string) => Promise<LLMProvider>
+    providerFactory: (configId: string) => Promise<LLMProvider>,
+    generation: GenerationContextService
   ) {
     this.bridge = bridge;
     this.db = db;
     this.wq = wq;
     this.providerFactory = providerFactory;
+    this.generation = generation;
   }
 
   /** 推演（非流式，返回完整报告；功能键 whatif；JSON 输出 + 容错解析，解析失败抛错） */
@@ -117,8 +122,10 @@ export class WhatIfSimulator {
     if (wbText) userParts.push(`【世界书设定】\n${wbText}`);
     userParts.push(`请推演该假设对后续 ${params.range} 章剧情的影响，严格按 JSON 对象输出。`);
 
+    // 批次11-4：不经 orchestrator 的调用统一补充「作者全局要求 + 文风 Skill」
+    const extras = await this.generation.systemExtras(params.bookId, 'continue');
     const messages: ChatMessage[] = [
-      { role: 'system', content: WHATIF_SYSTEM_PROMPT },
+      { role: 'system', content: [WHATIF_SYSTEM_PROMPT, ...extras].join('\n\n') },
       { role: 'user', content: userParts.join('\n\n') }
     ];
     const res = await provider.chat(messages, {

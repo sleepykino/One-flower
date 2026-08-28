@@ -69,6 +69,8 @@ export interface ContinueParams {
   aiReferences?: AiReference[];
   /** M5: 当前应执行的节拍（AIPanel 按 beats 与开关填充） */
   beat?: ChapterBeat;
+  /** 批次11-6：本次续写注入角色卡的 token 预算覆盖（默认取 PromptAssembler characters 预算；长文模式下放大以承载全文角色） */
+  characterBudget?: number;
   /** 三路检索 query 覆盖：默认取 currentContent 末尾；长文模式下并入拍文本/大纲以提升召回 */
   ragQuery?: string;
   /** 单次回复的 token 上限（约等于中文字数） */

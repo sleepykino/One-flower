@@ -7,13 +7,14 @@
 import type { NativeBridge } from '../../native/NativeBridge';
 import type { WriteQueue } from '../../db/WriteQueue';
 import type { AIOrchestrator } from '../ai/AIOrchestrator';
+import type { GenerationContextService } from '../ai/GenerationContext';
 import type { AiReference } from '../ai/types';
 import type { TaskCenterService } from '../task/TaskCenterService';
 import type { ChapterService } from '../chapter/ChapterService';
 import { resolveProviderForFeature, resolveModelNameForFeature } from '../ai/providerResolver';
 import type { LLMProvider } from '../ai/providers/LLMProvider';
 import type { LongFormBeat, LongFormRunHooks, LongFormSession, SeamIssue } from './types';
-import { countTokens } from '../../utils/tokens';
+import { countTokens, truncateToTokenBudget } from '../../utils/tokens';
 import { docToPlainText } from '../../utils/pmdoc';
 import { parseLooseJson } from '../../utils/looseJson';
 
@@ -25,6 +26,8 @@ const DRAFT_TOKENS = 2000;
 const SEAM_TOKENS = 1500;
 /** 接缝自检每批处理的接缝数（分批防止单次 maxTokens=4096 被多接缝截断） */
 const SEAM_BATCH = 4;
+/** 长文模式角色卡 token 预算（批次11-6：由默认 1500 放大到 5000，承载全书角色；草稿注入与生成循环共用） */
+const LONG_FORM_CHARACTER_BUDGET = 5000;
 
 const ACTIVE_STATUSES = "('ready','running','paused','seam-review')";
 
@@ -49,6 +52,8 @@ export class LongFormService {
   private orchestrator: AIOrchestrator;
   private tasks: TaskCenterService;
   private chapters: ChapterService;
+  /** 批次11-4：不经 orchestrator 的调用统一补充全局提示词 + 文风 Skill */
+  private generation: GenerationContextService;
   /** 会话 -> 任务 id（pause 经任务取消触发 abort） */
   private taskIds = new Map<string, string>();
   /** 会话 -> 接缝自检结果（内存态，UI 读取展示） */
@@ -61,7 +66,8 @@ export class LongFormService {
     providerFactory: (configId: string) => Promise<LLMProvider>,
     orchestrator: AIOrchestrator,
     tasks: TaskCenterService,
-    chapters: ChapterService
+    chapters: ChapterService,
+    generation: GenerationContextService
   ) {
     this.bridge = bridge;
     this.wq = db.wq;
@@ -69,6 +75,7 @@ export class LongFormService {
     this.orchestrator = orchestrator;
     this.tasks = tasks;
     this.chapters = chapters;
+    this.generation = generation;
   }
 
   // ---------------- 步骤 1：节拍表初稿 ----------------
@@ -86,7 +93,7 @@ export class LongFormService {
     const provider = await resolveProviderForFeature(this.bridge, params.bookId, 'longform-draft', this.providerFactory);
     const model = await resolveModelNameForFeature(this.bridge, params.bookId, 'longform-draft');
 
-    // 材料：前情摘要（近 5 章摘要）+ 本章大纲 + 已有正文尾段 + RAG
+    // 材料：前情摘要（近 5 章摘要）+ 本章大纲 + 已有正文尾段 + RAG + 本书角色卡概要（批次11-1）
     const summaryRows = await this.bridge.db.query<{ title: string; summary: string }>(
       `SELECT title, summary FROM chapters
        WHERE book_id = ? AND id != ? AND summary IS NOT NULL
@@ -103,6 +110,9 @@ export class LongFormService {
     }));
 
     const material: string[] = [];
+    // 批次11-1：注入角色卡概要，让节拍规划师知晓出场角色与弧光（与后续生成循环装配对齐）
+    const characters = await this.loadCharacterSummaries(params.bookId);
+    if (characters) material.push('【本书角色卡概要】', characters);
     if (summaryRows.length > 0) {
       material.push(
         '【前情摘要（远 -> 近）】',
@@ -134,12 +144,16 @@ export class LongFormService {
       `【任务】规划 ${params.beatCount} 个节拍，总字数约 ${params.totalWords} 字（各拍 targetWords 合计接近该值）。`
     ].join('\n');
 
+    // 批次11-4：统一补充作者全局要求 + 文风 Skill（节拍规划与长文风格保持感知）
+    const extras = await this.generation.systemExtras(params.bookId, 'continue');
+    const systemContent = [DRAFT_SYSTEM, ...extras].join('\n\n');
+
     let lastErr = '';
     for (let attempt = 0; attempt < 2; attempt++) {
       if (params.signal?.aborted) throw new DOMException('已取消', 'AbortError');
       const res = await provider.chat(
         [
-          { role: 'system', content: DRAFT_SYSTEM },
+          { role: 'system', content: systemContent },
           { role: 'user', content: user }
         ],
         { model, temperature: 0.6, maxTokens: 4096, signal: params.signal }
@@ -243,6 +257,27 @@ export class LongFormService {
     return row ? this.rowToSession(row) : null;
   }
 
+  /**
+   * 纠正「僵尸 active 会话」（批次4建议1）：状态要求有运行中任务（ready/running/seam-review），
+   * 但任务中心（内存态）无对应 running 任务——典型为重启/杀进程后任务中心消亡，status 残留。
+   * 此时 pause() 无任务可取消（taskIds 已空）、UI 只有「暂停」无「恢复/丢弃」入口，会话卡死无法处置。
+   * 置为 paused 使其走既有「恢复生成 / 丢弃」控制，重启自愈不留死会话。
+   * 本进程确有对应 running 任务的会话视为正常生成，跳过纠正，不误伤运行中任务。
+   */
+  async healZombie(session: LongFormSession): Promise<{ session: LongFormSession; wasHealed: boolean }> {
+    const zombieLike =
+      session.status === 'ready' || session.status === 'running' || session.status === 'seam-review';
+    if (!zombieLike) return { session, wasHealed: false };
+    const taskId = this.taskIds.get(session.id);
+    if (taskId && this.tasks.list().some((t) => t.id === taskId && t.status === 'running')) {
+      return { session, wasHealed: false }; // 确有运行中任务，非假死
+    }
+    const healed = await this.patchSession(session.id, (s) => {
+      if (s.status === session.status) s.status = 'paused';
+    });
+    return { session: healed ?? session, wasHealed: true };
+  }
+
   /** 步骤 1 编辑节拍表后保存，过 wq */
   async saveBeats(sessionId: string, beats: LongFormBeat[]): Promise<void> {
     await this.patchSession(sessionId, (s) => {
@@ -282,6 +317,22 @@ export class LongFormService {
     } catch {
       characterIds = [];
     }
+    // 批次4建议2：seams 为可选列（旧库无）；有值才解出，用于重启后回读遗留接缝问题
+    let seams: SeamIssue[] | undefined;
+    try {
+      const raw = r.seams;
+      if (raw) {
+        const parsed = JSON.parse(String(raw)) as unknown;
+        if (Array.isArray(parsed)) {
+          seams = parsed.filter(
+            (s): s is SeamIssue =>
+              typeof s === 'object' && s !== null && typeof (s as SeamIssue).beatIndex === 'number'
+          );
+        }
+      }
+    } catch {
+      seams = undefined;
+    }
     return {
       id: String(r.id),
       bookId: String(r.book_id),
@@ -293,6 +344,7 @@ export class LongFormService {
       estimatedTokens: Number(r.estimated_tokens ?? 0),
       hints: (r.hints as string) ?? '',
       characterIds,
+      seams,
       createdAt: Number(r.created_at),
       updatedAt: Number(r.updated_at)
     };
@@ -439,6 +491,8 @@ export class LongFormService {
               targetWords: beat.targetWords,
               done: false
             },
+            // 批次11-6：长文模式放大角色卡预算（承载全书角色，避免当前章关键角色被预算截掉）
+            characterBudget: LONG_FORM_CHARACTER_BUDGET,
             // RAG 检索 query 并入大纲 + 当前拍文本 + 章内尾段，提升长输出的召回
             ragQuery: `${outline}\n${beat.text}\n${chapterTail}`.trim(),
             maxTokens: Math.min(8192, Math.max(512, Math.round(beat.targetWords * 2.2))),
@@ -482,7 +536,7 @@ export class LongFormService {
         s.status = 'seam-review';
       });
       const issues = await this.reviewSeamsInternal(sessionId, signal);
-      this.seamIssues.set(sessionId, issues);
+      await this.saveSeamIssues(sessionId, issues);
       await this.patchSession(sessionId, (s) => {
         s.status = 'done';
       });
@@ -531,6 +585,9 @@ export class LongFormService {
     // P2 二期：接缝自检走 'longform-seam' 功能点路由；分批调用，防止单次 maxTokens=4096 被多接缝截断
     const provider = await resolveProviderForFeature(this.bridge, session.bookId, 'longform-seam', this.providerFactory);
     const model = await resolveModelNameForFeature(this.bridge, session.bookId, 'longform-seam');
+    // 批次11-4：接缝自检属风格相关评估（语气/称谓/重复），注入作者全局要求 + 文风 Skill 便于识别文风偏差
+    const extras = await this.generation.systemExtras(session.bookId, 'continue');
+    const systemContent = [SEAM_SYSTEM, ...extras].join('\n\n');
     const KINDS = ['tone', 'address', 'timeline', 'repetition', 'other'];
     const out: SeamIssue[] = [];
     for (let off = 0; off < seams.length; off += SEAM_BATCH) {
@@ -538,7 +595,7 @@ export class LongFormService {
       const batch = seams.slice(off, off + SEAM_BATCH);
       const res = await provider.chat(
         [
-          { role: 'system', content: SEAM_SYSTEM },
+          { role: 'system', content: systemContent },
           { role: 'user', content: batch.join('\n\n') }
         ],
         { model, temperature: 0.2, maxTokens: 4096, signal }
@@ -561,9 +618,34 @@ export class LongFormService {
     return out;
   }
 
-  /** 最近一次接缝自检结果（内存态；步骤 4 展示用） */
-  getSeamIssues(sessionId: string): SeamIssue[] {
-    return this.seamIssues.get(sessionId) ?? [];
+  /** 接缝自检结果：先读本进程内存 Map（热生成本次展示），未命中则回退读落库 seams 列（重启后遗留会话） */
+  async getSeamIssues(sessionId: string): Promise<SeamIssue[]> {
+    const inMem = this.seamIssues.get(sessionId);
+    if (inMem) return inMem;
+    const s = await this.getSession(sessionId);
+    return s?.seams ?? [];
+  }
+
+  /** 持久化接缝自检结果（批次4建议2）：写 seams 列 + 同步本进程 Map。自检完成后调用，重启后仍可回读 */
+  async saveSeamIssues(sessionId: string, issues: SeamIssue[]): Promise<void> {
+    this.seamIssues.set(sessionId, issues);
+    await this.wq.enqueue(() =>
+      this.bridge.db.exec('UPDATE longform_sessions SET seams = ? WHERE id = ?', [
+        JSON.stringify(issues),
+        sessionId
+      ])
+    );
+  }
+
+  /** 本书最近一条 status=done 且保留接缝问题的会话（重启后展示遗留接缝审阅入口） */
+  async findDoneWithSeams(bookId: string): Promise<LongFormSession | null> {
+    const rows = await this.bridge.db.query<Record<string, unknown>>(
+      `SELECT * FROM longform_sessions WHERE book_id = ? AND status = 'done'
+       AND seams IS NOT NULL AND seams != '' ORDER BY updated_at DESC LIMIT 1`,
+      [bookId]
+    );
+    const row = rows[0];
+    return row ? this.rowToSession(row) : null;
   }
 
   // ---------------- 工具 ----------------
@@ -587,6 +669,45 @@ export class LongFormService {
       return rows.map((r) => r.id);
     } catch {
       return [];
+    }
+  }
+
+  /**
+   * 批次11-1：本书角色卡概要（name + 关键字段），受限预算截断。
+   * 供节拍规划注入，让规划师知晓出场角色与弧光，与后续生成循环的装配对齐。
+   * 仅作用在生成输入，不触碰存储/热路径。
+   */
+  private async loadCharacterSummaries(bookId: string): Promise<string> {
+    try {
+      const rows = await this.bridge.db.query<{ name: string; data: string; tags: string }>(
+        'SELECT name, data, tags FROM characters WHERE book_id = ? ORDER BY created_at ASC',
+        [bookId]
+      );
+      if (rows.length === 0) return '';
+      const briefs = rows.map((r) => {
+        let data: Record<string, unknown>;
+        try {
+          data = JSON.parse(String(r.data ?? '{}')) as Record<string, unknown>;
+        } catch {
+          data = {};
+        }
+        let tags: string[];
+        try {
+          tags = JSON.parse(String(r.tags ?? '[]')) as string[];
+        } catch {
+          tags = [];
+        }
+        const details = Object.entries(data)
+          .filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '')
+          .map(([k, v]) => `${k}：${String(v)}`);
+        const line = `- ${r.name}${details.length > 0 ? `\n  ${details.join('；')}` : ''}${
+          tags.length > 0 ? `\n  标签：${tags.join('、')}` : ''
+        }`;
+        return line;
+      });
+      return truncateToTokenBudget(briefs.join('\n\n'), LONG_FORM_CHARACTER_BUDGET).text;
+    } catch {
+      return '';
     }
   }
 }

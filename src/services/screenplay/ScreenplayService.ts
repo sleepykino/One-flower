@@ -117,37 +117,52 @@ export class ScreenplayService {
 
   /** 整体保存（编辑器主路径；data/status/sourceRange 全量覆盖） */
   async save(sp: Screenplay): Promise<void> {
+    await this.wq.enqueue(() => this.write(sp));
+  }
+
+  /** 落库写（仅允许在 WriteQueue 串行任务内调用；mutate 内直接调用，避免重复入队） */
+  private async write(sp: Screenplay): Promise<void> {
     const now = Date.now();
     sp.updatedAt = now;
-    await this.wq.enqueue(() =>
-      this.db.exec('UPDATE screenplays SET title = ?, status = ?, source_range = ?, data = ?, updated_at = ? WHERE id = ?', [
-        sp.title,
-        sp.status,
-        sp.sourceRange ? JSON.stringify(sp.sourceRange) : null,
-        JSON.stringify(sp.data),
-        now,
-        sp.id
-      ])
-    );
+    await this.db.exec('UPDATE screenplays SET title = ?, status = ?, source_range = ?, data = ?, updated_at = ? WHERE id = ?', [
+      sp.title,
+      sp.status,
+      sp.sourceRange ? JSON.stringify(sp.sourceRange) : null,
+      JSON.stringify(sp.data),
+      now,
+      sp.id
+    ]);
   }
 
-  /** 载入 → 变更 → 保存（WriteQueue 串行，供结构编辑细粒度操作） */
-  private async mutate(id: string, fn: (sp: Screenplay) => void): Promise<Screenplay | null> {
-    const sp = await this.get(id);
-    if (!sp) return null;
-    fn(sp);
-    await this.save(sp);
-    return sp;
+  /**
+   * 载入 → 变更 → 保存（读-改-写整体入 WriteQueue 串行原子执行，防并发交错「后写覆盖先写」丢更新）
+   * fn 返回 false 表示未命中目标（如场已不存在/已被外部改动），跳过落库并按失败返回 null
+   */
+  private async mutate(id: string, fn: (sp: Screenplay) => boolean | void): Promise<Screenplay | null> {
+    return this.wq.enqueue(async () => {
+      const sp = await this.get(id);
+      if (!sp) return null;
+      if (fn(sp) === false) return null;
+      await this.write(sp);
+      return sp;
+    });
   }
 
-  /** 整场覆盖保存 */
-  async saveScene(screenplayId: string, episodeId: string, scene: Scene): Promise<Screenplay | null> {
+  /**
+   * 整场覆盖保存：按 scene.id 全局定位所在集（跨集稳定，不依赖调用方捕获的集 id，防旧数据写错集）。
+   * 找不到目标场、或目标场自 baseJson（编辑会话开始时的落库快照）以来已被外部改动 → 失败返回 null，不做 push 兜底，防场被复制进错误集/旧数据覆盖新数据。
+   */
+  async saveScene(screenplayId: string, scene: Scene, baseJson?: string | null): Promise<Screenplay | null> {
     return this.mutate(screenplayId, (sp) => {
-      const ep = sp.data.episodes.find((e) => e.id === episodeId);
-      if (!ep) return;
-      const i = ep.scenes.findIndex((s) => s.id === scene.id);
-      if (i >= 0) ep.scenes[i] = scene;
-      else ep.scenes.push(scene);
+      for (const ep of sp.data.episodes) {
+        const i = ep.scenes.findIndex((s) => s.id === scene.id);
+        if (i >= 0) {
+          if (baseJson != null && JSON.stringify(ep.scenes[i]) !== baseJson) return false;
+          ep.scenes[i] = scene;
+          return true;
+        }
+      }
+      return false;
     });
   }
 

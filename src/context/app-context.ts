@@ -24,6 +24,7 @@ import { PromptAssembler } from '../services/ai/PromptAssembler';
 import { AIOrchestrator } from '../services/ai/AIOrchestrator';
 import { GlobalPromptService } from '../services/ai/GlobalPromptService';
 import { ProjectDirectiveService } from '../services/ai/ProjectDirectiveService';
+import { GenerationContextService } from '../services/ai/GenerationContext';
 import { ModelRoutingService } from '../services/ai/modelRouting';
 import { SummaryService } from '../services/summary/SummaryService';
 import { AppSettingsService } from '../services/settings/AppSettingsService';
@@ -69,6 +70,8 @@ export interface AppContext {
   orchestrator: AIOrchestrator;
   /** P2.1-M1：自定义全局提示词 */
   globalPrompts: GlobalPromptService;
+  /** 批次11-4：不经 orchestrator 的生成类调用统一补充「作者全局要求 + 文风 Skill」 */
+  generationContext: GenerationContextService;
   /** 项目级指令文件（agents.md 注入 / hook.md 后处理） */
   projectDirectives: ProjectDirectiveService;
   /** P2 二期：AI 模型分工（按功能点路由 Provider 配置） */
@@ -208,11 +211,10 @@ export async function initApp(): Promise<AppContext> {
   const summaryService = new SummaryService(tauriBridge, db, wq, providerFactory, chapterService);
   const appSettings = new AppSettingsService(db, wq);
   const ragService = new WorldbookRAGService(tauriBridge, db, wq, providerFactory, appSettings);
-  // P2：全量 RAG / 地图 / 时间线 / 命名 / Skill 包
+  // P2：全量 RAG / 地图 / 时间线 / Skill 包
   const fullRagService = new FullRAGService(tauriBridge, db, wq, providerFactory, appSettings);
   const mapService = new MapEditorService(db, wq);
   const timelineService = new TimelineService(db, wq);
-  const nameGenService = new NameGeneratorService(tauriBridge, db, wq);
   const skillPackService = new SkillPackService(tauriBridge, skillsDir);
   const relationshipService = new RelationshipService(db, wq);
   const statsService = new WritingStatsService(tauriBridge, db, wq);
@@ -231,6 +233,9 @@ export async function initApp(): Promise<AppContext> {
   // 项目级 agents.md / hook.md（storage_dir 文件）
   const projectDirectives = new ProjectDirectiveService(tauriBridge);
   orchestrator.setProjectDirectiveService(projectDirectives);
+  // 批次11-4：不经 orchestrator 的生成类调用统一补充「作者全局要求 + 文风 Skill」
+  const generationContext = new GenerationContextService(globalPrompts, skillLoader);
+  const nameGenService = new NameGeneratorService(tauriBridge, db, wq, generationContext);
 
   // P2 二期：AI 模型分工（功能点 -> 配置绑定，控制成本）
   const modelRouting = new ModelRoutingService(appSettings);
@@ -249,22 +254,23 @@ export async function initApp(): Promise<AppContext> {
     providerFactory,
     orchestrator,
     tasks,
-    chapterService
+    chapterService,
+    generationContext
   );
 
   // 客户端更新（方案 A：GitHub latest release 检查，浏览器打开下载页）
   const updateService = new UpdateService(appSettings);
 
   // P2.1-B 灵感激发包：种子 / 每日卡片 / 角色采访 / 推演 / 多视角重写
-  const storySeedService = new StorySeedService(tauriBridge, db, wq, providerFactory, bookService, ragService);
-  const dailyCardService = new DailyInspirationService(tauriBridge, db, wq, providerFactory, appSettings);
-  const interviewService = new CharacterInterviewService(tauriBridge, db, wq, providerFactory, characterService);
-  const whatIfSimulator = new WhatIfSimulator(tauriBridge, db, wq, providerFactory);
-  const multiPerspectiveRewriter = new MultiPerspectiveRewriter(tauriBridge, db, wq, providerFactory, skillLoader);
+  const storySeedService = new StorySeedService(tauriBridge, db, wq, providerFactory, bookService, ragService, generationContext);
+  const dailyCardService = new DailyInspirationService(tauriBridge, db, wq, providerFactory, appSettings, generationContext);
+  const interviewService = new CharacterInterviewService(tauriBridge, db, wq, providerFactory, characterService, generationContext);
+  const whatIfSimulator = new WhatIfSimulator(tauriBridge, db, wq, providerFactory, generationContext);
+  const multiPerspectiveRewriter = new MultiPerspectiveRewriter(tauriBridge, db, wq, providerFactory, generationContext);
 
   // P3 图片能力：资产服务 + 提示词转写（生图 Provider 在组件侧经 resolveImageProvider 解析）
   const imageAssetService = new ImageAssetService(tauriBridge, db, wq);
-  const imagePromptService = new ImagePromptService(tauriBridge, providerFactory);
+  const imagePromptService = new ImagePromptService(tauriBridge, providerFactory, generationContext);
 
   // P5 剧本工作台：CRUD/导出 + 转化编排 + 分镜图链路
   const screenplayService = new ScreenplayService(tauriBridge, db, wq);
@@ -273,7 +279,8 @@ export async function initApp(): Promise<AppContext> {
     providerFactory,
     screenplayService,
     tasks,
-    projectDirectives
+    projectDirectives,
+    generationContext
   );
   const storyboardService = new StoryboardService(tauriBridge, imageAssetService, screenplayService, tasks);
 
@@ -295,6 +302,7 @@ export async function initApp(): Promise<AppContext> {
     promptAssembler,
     orchestrator,
     globalPrompts,
+    generationContext,
     projectDirectives,
     modelRouting,
     summaryService,

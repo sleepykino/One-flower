@@ -9,7 +9,8 @@ import type { AppSettingsService } from '../../src/services/settings/AppSettings
 
 function createService(
   settings: Record<string, string | null> = {},
-  fs: { listDir?: ReturnType<typeof vi.fn>; deletePath?: ReturnType<typeof vi.fn> } = {}
+  fs: { listDir?: ReturnType<typeof vi.fn>; deletePath?: ReturnType<typeof vi.fn> } = {},
+  books: Array<{ id: string; title: string }> = []
 ) {
   const appSettings = {
     get: vi.fn(async (key: string): Promise<string | null> => settings[key] ?? null),
@@ -21,17 +22,18 @@ function createService(
     storage: { appDataDir: vi.fn(async () => 'C:/Users/x/AppData/OneFlower') },
     fs: { ensureDir: vi.fn(async () => undefined), listDir, deletePath }
   } as unknown as NativeBridge;
+  const bookService = { list: vi.fn(async (): Promise<unknown[]> => books) };
   const svc = new AutoBackupService(
     bridge as never,
     appSettings,
     {} as never,
-    {} as never,
+    bookService as never,
     {
       list: () => [],
       register: vi.fn()
     } as never
   );
-  return { svc, appSettings, listDir, deletePath };
+  return { svc, appSettings, listDir, deletePath, bookService };
 }
 
 describe('sanitizeFileName（备份文件名）', () => {
@@ -179,5 +181,63 @@ describe('AutoBackupService.listBookBackups / purgeBookBackups（P6 补充：联
     const { svc } = createService({ 'backup.auto.dir': 'D:/my-backups' }, { listDir });
     await svc.listBookBackups(BOOK);
     expect(String(listDir.mock.calls[0][0])).toBe('D:/my-backups');
+  });
+});
+
+describe('AutoBackupService.cleanInvalidBackups（清理无效备份）', () => {
+  // 现存书只含《武侠:传奇/卷一》，其 sanitize 前缀为 '武侠_传奇_卷一_'
+  const BOOKS = [{ id: 'book1234567890', title: '武侠:传奇/卷一' }];
+
+  const ENTRIES: DirEntry[] = [
+    { name: '武侠_传奇_卷一_20260826-100000.zip', isDir: false }, // 现存书 -> 有效，保留
+    { name: '旧书名_20260701-080000.zip', isDir: false }, // 改名前遗留 -> 无效，删除
+    { name: '已删除书_20260601-080000.zip', isDir: false }, // 已删除书遗留 -> 无效，删除
+    { name: '武侠_传奇_卷一_20260826-110000.zip.txt', isDir: false }, // 非 zip 后缀，忽略
+    { name: '武侠_传奇_卷一_20260826-090000', isDir: false }, // 无 .zip 后缀，忽略
+    { name: '旧书名_20260702-080000.zip', isDir: true } // 目录，忽略
+  ];
+
+  it('仅删除不对应现存书的 zip，名字典序保留有效备份', async () => {
+    const listDir = vi.fn(async (): Promise<DirEntry[]> => ENTRIES);
+    const deletePath = vi.fn(async (p: string): Promise<void> => undefined);
+    const { svc } = createService({}, { listDir, deletePath }, BOOKS);
+    const r = await svc.cleanInvalidBackups();
+    expect(r.deleted).toBe(2);
+    expect(r.names).toEqual(['旧书名_20260701-080000.zip', '已删除书_20260601-080000.zip']);
+    expect(deletePath.mock.calls.map((c) => String(c[0]))).toEqual([
+      'C:/Users/x/AppData/OneFlower/backups/旧书名_20260701-080000.zip',
+      'C:/Users/x/AppData/OneFlower/backups/已删除书_20260601-080000.zip'
+    ]);
+  });
+
+  it('全部有效时无删除', async () => {
+    const listDir = vi.fn(async (): Promise<DirEntry[]> => [
+      { name: '武侠_传奇_卷一_20260826-100000.zip', isDir: false }
+    ]);
+    const deletePath = vi.fn(async (): Promise<void> => undefined);
+    const { svc } = createService({}, { listDir, deletePath }, BOOKS);
+    const r = await svc.cleanInvalidBackups();
+    expect(r.deleted).toBe(0);
+    expect(deletePath).not.toHaveBeenCalled();
+  });
+
+  it('备份目录不存在时返回 0 不抛错', async () => {
+    const listDir = vi.fn(async (): Promise<DirEntry[]> => {
+      throw new Error('no such dir');
+    });
+    const { svc } = createService({}, { listDir }, BOOKS);
+    expect(await svc.cleanInvalidBackups()).toEqual({ deleted: 0, names: [] });
+  });
+
+  it('单个文件删除失败跳过，只计成功数', async () => {
+    const listDir = vi.fn(async (): Promise<DirEntry[]> => ENTRIES);
+    const deletePath = vi.fn(async (p: string): Promise<void> => {
+      if (String(p).includes('已删除书')) throw new Error('被占用');
+    });
+    const { svc } = createService({}, { listDir, deletePath }, BOOKS);
+    const r = await svc.cleanInvalidBackups();
+    expect(r.deleted).toBe(1);
+    expect(r.names).toEqual(['旧书名_20260701-080000.zip']);
+    expect(deletePath).toHaveBeenCalledTimes(2);
   });
 });

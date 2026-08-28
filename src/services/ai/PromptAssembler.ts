@@ -38,6 +38,8 @@ export interface PromptContext {
   forcedRefs?: ForcedReference[];
   /** M5: 当前应执行的节拍（定向续写） */
   currentBeat?: ChapterBeat;
+  /** 批次11-6：角色卡注入 token 预算覆盖（默认 this.budget.characters；长文模式放大承载全书角色） */
+  characterBudget?: number;
   /** M6: 时代感基线（check 模式注入：非豁免设定事实 + 推导链） */
   settingBaseline?: {
     facts: Array<{ domain: string; fact: string; basis: string }>;
@@ -164,7 +166,8 @@ export class PromptAssembler {
         return `### 角色：${c.name}${c.tags.length ? `（标签：${c.tags.join('、')}）` : ''}\n${details}`;
       });
       let charsAll = charTexts.join('\n\n');
-      charsAll = truncateToTokenBudget(charsAll, this.budget.characters).text;
+      // 批次11-6：角色卡预算可被调用方覆盖（长文模式放大），默认取本装配器预算
+      charsAll = truncateToTokenBudget(charsAll, ctx.characterBudget ?? this.budget.characters).text;
       userParts.push(`【角色设定】\n${charsAll}`);
     }
 
@@ -301,7 +304,7 @@ export class PromptAssembler {
     const chars = ctx.characters
       .map((c) => JSON.stringify(c.data))
       .join('\n');
-    const charsFit = truncateToTokenBudget(chars, this.budget.characters);
+    const charsFit = truncateToTokenBudget(chars, ctx.characterBudget ?? this.budget.characters);
     out.push({
       part: 'characters',
       tokens: countTokens(charsFit.text),

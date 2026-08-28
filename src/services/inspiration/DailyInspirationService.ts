@@ -9,6 +9,7 @@ import type { NativeBridge } from '../../native/NativeBridge';
 import type { Database } from '../../db/Database';
 import type { WriteQueue } from '../../db/WriteQueue';
 import type { LLMProvider, ChatMessage } from '../ai/providers/LLMProvider';
+import type { GenerationContextService } from '../ai/GenerationContext';
 import { resolveProviderForFeature, resolveModelNameForFeature } from '../ai/providerResolver';
 import type { AppSettingsService } from '../settings/AppSettingsService';
 import type { CardType, InspirationCard } from './types';
@@ -80,19 +81,23 @@ export class DailyInspirationService {
   private wq: WriteQueue;
   private providerFactory: (configId: string) => Promise<LLMProvider>;
   private settings: AppSettingsService;
+  /** 批次11-4：不经 orchestrator 的调用统一补充全局提示词 + 文风 Skill */
+  private generation: GenerationContextService;
 
   constructor(
     bridge: NativeBridge,
     db: Database,
     wq: WriteQueue,
     providerFactory: (configId: string) => Promise<LLMProvider>,
-    settings: AppSettingsService
+    settings: AppSettingsService,
+    generation: GenerationContextService
   ) {
     this.bridge = bridge;
     this.db = db;
     this.wq = wq;
     this.providerFactory = providerFactory;
     this.settings = settings;
+    this.generation = generation;
   }
 
   /**
@@ -167,8 +172,10 @@ export class DailyInspirationService {
 
     const provider = await resolveProviderForFeature(this.bridge, '', 'card-gen', this.providerFactory);
     const model = await resolveModelNameForFeature(this.bridge, '', 'card-gen');
+    // 批次11-4：全局灵感入口无书上下文，注入作者全局要求（Skill 自然为空）
+    const extras = await this.generation.systemExtras('', 'continue');
     const messages: ChatMessage[] = [
-      { role: 'system', content: CARD_SYSTEM_PROMPT },
+      { role: 'system', content: [CARD_SYSTEM_PROMPT, ...extras].join('\n\n') },
       { role: 'user', content: lines.join('\n') }
     ];
     const res = await provider.chat(messages, {

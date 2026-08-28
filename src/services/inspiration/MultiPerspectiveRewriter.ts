@@ -10,7 +10,7 @@ import type { Database } from '../../db/Database';
 import type { WriteQueue } from '../../db/WriteQueue';
 import type { LLMProvider, ChatMessage, ChatChunk } from '../ai/providers/LLMProvider';
 import { resolveProviderForFeature, resolveModelNameForFeature } from '../ai/providerResolver';
-import type { SkillLoader } from '../skill/SkillLoader';
+import type { GenerationContextService } from '../ai/GenerationContext';
 import { rowToCharacter } from '../character/CharacterService';
 import type { PerspectiveRewriteParams, AvailablePerspective } from './types';
 
@@ -46,20 +46,21 @@ export class MultiPerspectiveRewriter {
   private db: Database;
   private wq: WriteQueue;
   private providerFactory: (configId: string) => Promise<LLMProvider>;
-  private skillLoader: SkillLoader;
+  /** 批次11-4：不经 orchestrator 的调用统一补充全局提示词 + 文风 Skill */
+  private generation: GenerationContextService;
 
   constructor(
     bridge: NativeBridge,
     db: Database,
     wq: WriteQueue,
     providerFactory: (configId: string) => Promise<LLMProvider>,
-    skillLoader: SkillLoader
+    generation: GenerationContextService
   ) {
     this.bridge = bridge;
     this.db = db;
     this.wq = wq;
     this.providerFactory = providerFactory;
-    this.skillLoader = skillLoader;
+    this.generation = generation;
   }
 
   /** 列出可用视角：本书全部角色卡 + 固定非角色视角（不做章节角色出现分析，简化） */
@@ -111,14 +112,9 @@ export class MultiPerspectiveRewriter {
         : `${params.perspective}：以该视角叙述，信息可见范围与人称随之调整。`;
     }
 
-    // 文风 Skill（rewrite 模式启用项）
-    const skills = await this.skillLoader.getEnabledForMode(params.bookId, 'rewrite');
-
-    const systemParts = [SYSTEM_BASE, `【目标视角】\n${perspectiveInstruction}`];
-    if (skills.length > 0) {
-      const skillTexts = skills.map((s) => `【文风：${s.name}】\n${s.body}`);
-      systemParts.push(`以下为必须遵守的文风指令：\n${skillTexts.join('\n\n')}`);
-    }
+    // 批次11-4：统一补充「作者全局要求 + 文风 Skill」（rewrite 模式，替代原有手写 Skill 拼接）
+    const extras = await this.generation.systemExtras(params.bookId, 'rewrite');
+    const systemParts = [SYSTEM_BASE, `【目标视角】\n${perspectiveInstruction}`, ...extras];
 
     const userParts = [`【待改写的选中文本】\n${params.selectedText}`];
     if (params.tone?.trim()) {

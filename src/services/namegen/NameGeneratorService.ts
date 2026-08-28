@@ -11,6 +11,7 @@ import type { WriteQueue } from '../../db/WriteQueue';
 import type { LLMProvider, ChatMessage } from '../ai/providers/LLMProvider';
 import { createProvider, isLocalBaseUrl } from '../ai/providers/LLMProvider';
 import { resolveProviderConfigIdForFeature } from '../ai/providerResolver';
+import type { GenerationContextService } from '../ai/GenerationContext';
 import type { NameGenParams, GeneratedName, NameFavorite, NameType, Gender } from './types';
 import { TYPE_LABEL } from './types';
 
@@ -31,11 +32,19 @@ export class NameGeneratorService {
   private bridge: NativeBridge;
   private db: Database;
   private wq: WriteQueue;
+  /** 批次11-4：不经 orchestrator 的调用统一补充全局提示词 + 文风 Skill */
+  private generation: GenerationContextService;
 
-  constructor(bridge: NativeBridge, db: Database, wq: WriteQueue) {
+  constructor(
+    bridge: NativeBridge,
+    db: Database,
+    wq: WriteQueue,
+    generation: GenerationContextService
+  ) {
     this.bridge = bridge;
     this.db = db;
     this.wq = wq;
+    this.generation = generation;
   }
 
   /**
@@ -131,8 +140,10 @@ export class NameGeneratorService {
     if (!configId) throw new Error('未配置任何模型，请先到设置页添加 Provider 配置');
     const { provider, model } = await this.resolveProvider(configId);
 
+    // 批次11-4：不经 orchestrator 的调用统一补充「作者全局要求 + 文风 Skill」
+    const extras = await this.generation.systemExtras(bookId, 'continue');
     const messages: ChatMessage[] = [
-      { role: 'system', content: NAMEGEN_SYSTEM_PROMPT },
+      { role: 'system', content: [NAMEGEN_SYSTEM_PROMPT, ...extras].join('\n\n') },
       { role: 'user', content: this.buildUserPrompt(params) }
     ];
 

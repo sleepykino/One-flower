@@ -28,6 +28,8 @@ export interface LongFormSession {
   hints?: string;
   /** 参与生成的角色卡 id（空 = 生成时默认注入本书全部角色） */
   characterIds?: string[];
+  /** 接缝自检结果（序列化落库 seams 列；status=done 后重启仍可展示遗留接缝问题） */
+  seams?: SeamIssue[];
   createdAt: number;
   updatedAt: number;
 }

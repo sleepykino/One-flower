@@ -120,11 +120,18 @@ export class BookService {
   async purge(id: string): Promise<void> {
     const book = await this.get(id);
     if (!book) return;
-    // 先删 FTS 索引，再删行（级联删除 chapters/characters 等），最后删目录
+    // 先删 FTS 索引，再删行（级联删除 chapters/characters 等），最后删目录。
+    // 批次5建议1：补齐 source_ref/JSON 引用等无 FK 表的显式清理（setting_facts 的推导链由 FK 级联），
+    // 防孤儿数据在 FK 未开启或旧库场景下残留。
     await this.wq.enqueue(() =>
       this.db.transaction(async (tx) => {
         await tx.exec('DELETE FROM chapters_fts WHERE book_id = ?', [id]);
         await tx.exec('DELETE FROM chapter_versions WHERE chapter_id IN (SELECT id FROM chapters WHERE book_id = ?)', [id]);
+        await tx.exec('DELETE FROM setting_inferences WHERE book_id = ?', [id]);
+        await tx.exec('DELETE FROM setting_facts WHERE book_id = ?', [id]);
+        await tx.exec('DELETE FROM relationships WHERE book_id = ?', [id]);
+        await tx.exec('DELETE FROM timeline_events WHERE book_id = ?', [id]);
+        await tx.exec('DELETE FROM worldbook_embeddings WHERE book_id = ?', [id]);
         await tx.exec('DELETE FROM chapters WHERE book_id = ?', [id]);
         await tx.exec('DELETE FROM characters WHERE book_id = ?', [id]);
         await tx.exec('DELETE FROM character_schemas WHERE book_id = ?', [id]);
@@ -143,6 +150,77 @@ export class BookService {
       await this.purge(b.id);
     }
     return deleted.length;
+  }
+
+  /**
+   * 一次性存量清理（批次5建议1）：清除历史遗留的孤儿引用，杜绝「孤儿事实污染一致性基线」。
+   * 仅对 source_ref / JSON 数组 / chapter_id 等无 FK 的引用做兜底：
+   * - setting_facts：source_ref 指向已不存在的 worldbook/character/chapter 时删除（其推导链由 FK 级联）
+   * - timeline_events：character_ids 中已删角色 id → 摘除；chapter_id 指向已删章节 → 置 NULL
+   * - foreshadowings：planted/resolved_chapter_id 指向已删章节 → 置 NULL
+   * 幂等、只碰孤儿、不动正常数据。
+   */
+  async sweepOrphans(): Promise<{ clearedFacts: number; clearedEvents: number; clearedForeshadows: number }> {
+    const out = { clearedFacts: 0, clearedEvents: 0, clearedForeshadows: 0 };
+    await this.wq.enqueue(async () => {
+      await this.db.transaction(async (tx) => {
+        // 1) setting_facts.source_ref 悬空（source 对应表已无该 id）
+        const facts = await tx.query<{ id: string; source: string; source_ref: string }>(
+          `SELECT f.id, f.source, f.source_ref FROM setting_facts f
+           WHERE (f.source = 'worldbook' AND f.source_ref NOT IN (SELECT id FROM worldbook_entries))
+              OR (f.source = 'character' AND f.source_ref NOT IN (SELECT id FROM characters))
+              OR (f.source = 'chapter' AND f.source_ref NOT IN (SELECT id FROM chapters))`
+        );
+        for (const f of facts) await tx.exec('DELETE FROM setting_facts WHERE id = ?', [f.id]);
+        out.clearedFacts = facts.length;
+
+        // 2) timeline_events.character_ids 摘除已删角色 id（事件保留，防误删多角色事件）
+        const allChars = new Set(
+          (await tx.query<{ id: string }>('SELECT id FROM characters')).map((c) => c.id)
+        );
+        const events = await tx.query<{ id: string; character_ids: string }>(
+          `SELECT id, character_ids FROM timeline_events WHERE character_ids IS NOT NULL`
+        );
+        for (const ev of events) {
+          let ids: string[] = [];
+          try {
+            const parsed = JSON.parse(ev.character_ids) as unknown;
+            if (Array.isArray(parsed)) ids = parsed.filter((v) => typeof v === 'string');
+          } catch {
+            continue; // 列损坏跳过
+          }
+          const keep = ids.filter((v) => allChars.has(v));
+          if (keep.length !== ids.length) {
+            await tx.exec('UPDATE timeline_events SET character_ids = ? WHERE id = ?', [
+              JSON.stringify(keep),
+              ev.id
+            ]);
+            out.clearedEvents += 1;
+          }
+        }
+
+        // 3) timeline_events.chapter_id 指向已删章节 → 置 NULL
+        await tx.exec(
+          `UPDATE timeline_events SET chapter_id = NULL WHERE chapter_id IS NOT NULL
+           AND chapter_id NOT IN (SELECT id FROM chapters)`
+        );
+
+        // 4) foreshadowings 章节引用悬空 → 置 NULL
+        const foreshadowUpdates = await tx.query<{ id: string; p: string | null; r: string | null }>(
+          `SELECT id, planted_chapter_id AS p, resolved_chapter_id AS r FROM foreshadowings
+           WHERE (planted_chapter_id IS NOT NULL AND planted_chapter_id NOT IN (SELECT id FROM chapters))
+              OR (resolved_chapter_id IS NOT NULL AND resolved_chapter_id NOT IN (SELECT id FROM chapters))`
+        );
+        for (const fw of foreshadowUpdates) {
+          await tx.exec(
+            'UPDATE foreshadowings SET planted_chapter_id = NULL, resolved_chapter_id = NULL WHERE id = ?',
+            [fw.id]
+          );
+        }
+        out.clearedForeshadows = foreshadowUpdates.length;
+      });
+    });
+    return out;
   }
 
   /** 启动清理：超过保留期的已删书批量 purge，返回清理数；retentionDays<=0 表示永久保留 */

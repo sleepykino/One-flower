@@ -269,6 +269,39 @@ export class AutoBackupService {
     return deleted;
   }
 
+  /**
+   * 清理无效备份：备份目录内所有 .zip，凡文件名前缀（sanitize 标题）不对应任何现存书籍者，
+   * 视为书籍改名/删除后遗留的无效备份，一次性删除。返回 { deleted, names }。
+   * 单个文件删除失败跳过不中断；目录不存在返回 0
+   */
+  async cleanInvalidBackups(): Promise<{ deleted: number; names: string[] }> {
+    const settings = await this.getSettings();
+    const books = await this.bookService.list();
+    // 现存书的合法前缀（与生成时同规则：sanitize 标题 + '_'）
+    const validPrefixes = books.map((b) => `${sanitizeFileName(b.title, b.id.slice(0, 8))}_`);
+    let entries: DirEntry[];
+    try {
+      entries = await this.fs.listDir(settings.dir);
+    } catch {
+      return { deleted: 0, names: [] };
+    }
+    const names: string[] = [];
+    let deleted = 0;
+    for (const e of entries) {
+      if (e.isDir || !e.name.endsWith('.zip')) continue;
+      const isValid = validPrefixes.some((p) => e.name.startsWith(p));
+      if (isValid) continue;
+      try {
+        await this.fs.deletePath(`${settings.dir}/${e.name}`);
+        names.push(e.name);
+        deleted += 1;
+      } catch {
+        // 文件被占用等：跳过
+      }
+    }
+    return { deleted, names };
+  }
+
   /** 默认备份目录（{appDataDir}/backups），带缓存 */
   private async defaultDir(): Promise<string> {
     if (!this.appDataDirCache) {

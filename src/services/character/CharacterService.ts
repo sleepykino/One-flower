@@ -104,8 +104,44 @@ export class CharacterService {
     );
   }
 
+  // 批次5建议1：删除角色时在事务内级联清理关联数据，避免孤儿数据累积、孤儿事实污染一致性基线。
+  // - relationships：虽已由 characters(id) 的 FK ON DELETE CASCADE 兜底，这里显式删一次，防 FK 未开启/旧库残留
+  // - setting_facts(source='character')：source_ref 无 FK，须显式删；其推导链 setting_inferences 由 FK 级联
+  // - timeline_events.character_ids：JSON 数组引用，无 FK，从数组中摘除该角色 id（事件本身保留，防多角色事件误删）
   async remove(id: string): Promise<void> {
-    await this.wq.enqueue(() => this.db.exec('DELETE FROM characters WHERE id = ?', [id]));
+    await this.wq.enqueue(async () => {
+      await this.db.transaction(async (tx) => {
+        await tx.exec('DELETE FROM relationships WHERE from_character_id = ? OR to_character_id = ?', [
+          id,
+          id
+        ]);
+        await tx.exec('DELETE FROM setting_facts WHERE source = ? AND source_ref = ?', [
+          'character',
+          id
+        ]);
+        // 摘除角色 id：先查含该 id 的事件，再逐条把 id 从 character_ids JSON 数组中移除
+        const events = await tx.query<{ id: string; character_ids: string }>(
+          `SELECT id, character_ids FROM timeline_events WHERE character_ids IS NOT NULL AND EXISTS (
+             SELECT 1 FROM json_each(timeline_events.character_ids) WHERE json_each.value = ?
+           )`,
+          [id]
+        );
+        for (const ev of events) {
+          let ids: unknown[] = [];
+          try {
+            const parsed = JSON.parse(ev.character_ids) as unknown;
+            if (Array.isArray(parsed)) ids = parsed.filter((v) => v !== id);
+          } catch {
+            continue; // 列损坏跳过，不阻塞删除
+          }
+          await tx.exec('UPDATE timeline_events SET character_ids = ? WHERE id = ?', [
+            JSON.stringify(ids),
+            ev.id
+          ]);
+        }
+        await tx.exec('DELETE FROM characters WHERE id = ?', [id]);
+      });
+    });
   }
 
   // ============ Schema 模板 ============

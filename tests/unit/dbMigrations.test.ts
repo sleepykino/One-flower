@@ -136,7 +136,7 @@ const EXPECTED_COLUMNS: Record<string, string[]> = {
   chapters: ['summary_generated_at', 'summary_source_words', 'beats'],
   provider_configs: ['is_default'],
   worldbook_entries: ['enabled'],
-  longform_sessions: ['hints', 'character_ids']
+  longform_sessions: ['hints', 'character_ids', 'seams']
 };
 
 /** 各迁移预期 ADD COLUMN 数（验证 extractAddedColumns 解析正确） */
@@ -152,7 +152,8 @@ const EXPECTED_ADD_COLUMN_COUNTS: Record<number, number> = {
   9: 0,
   10: 1,
   11: 3,
-  12: 2
+  12: 2,
+  13: 1
 };
 
 describe('迁移注册一致性', () => {

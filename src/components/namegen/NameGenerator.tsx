@@ -4,7 +4,7 @@
  * - 收藏夹视图：查看与删除已收藏的名字
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getAppContext } from '../../context/app-context';
 import { toast } from '../common/toast';
 import { NameGeneratorService } from '../../services/namegen/NameGeneratorService';
@@ -34,8 +34,8 @@ const favKey = (type: NameType, name: string): string => `${type}:${name}`;
 
 export function NameGenerator({ bookId, onClose }: Props): JSX.Element {
   const service = useMemo(() => {
-    const { bridge, db, wq } = getAppContext();
-    return new NameGeneratorService(bridge, db, wq);
+    const { bridge, db, wq, generationContext } = getAppContext();
+    return new NameGeneratorService(bridge, db, wq, generationContext);
   }, []);
 
   const [view, setView] = useState<'gen' | 'fav'>('gen');
@@ -53,17 +53,17 @@ export function NameGenerator({ bookId, onClose }: Props): JSX.Element {
     [favorites]
   );
 
-  const loadFavorites = async (): Promise<void> => {
+  const loadFavorites = useCallback(async (): Promise<void> => {
     try {
       setFavorites(await service.listFavorites(bookId));
     } catch (e) {
       console.warn('[NameGenerator] 收藏夹加载失败:', e);
     }
-  };
+  }, [service, bookId]);
 
   useEffect(() => {
     void loadFavorites();
-  }, [bookId]);
+  }, [loadFavorites]);
 
   /** 生成名字（loading 态 + 错误弹窗） */
   const handleGenerate = async (): Promise<void> => {

@@ -10,3 +10,4 @@ test-results/*
 .github/workflows/ci.yml
 .github/workflows/release.yml
 .dbginspect
+.zcode/*

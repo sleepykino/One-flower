@@ -7,6 +7,7 @@
 import type { NativeBridge } from '../../native/NativeBridge';
 import type { LLMProvider } from '../ai/providers/LLMProvider';
 import { resolveProviderConfigIdForFeature } from '../ai/providerResolver';
+import type { GenerationContextService } from '../ai/GenerationContext';
 import { parseLooseJson } from '../../utils/looseJson';
 import type { ImageScene } from './types';
 
@@ -44,10 +45,17 @@ export function sceneDescription(scene: ImageScene): string {
 export class ImagePromptService {
   private bridge: NativeBridge;
   private chatProviderFactory: (configId: string) => Promise<LLMProvider>;
+  /** 批次11-4：不经 orchestrator 的调用统一补充全局提示词 + 文风 Skill */
+  private generation: GenerationContextService;
 
-  constructor(bridge: NativeBridge, chatProviderFactory: (configId: string) => Promise<LLMProvider>) {
+  constructor(
+    bridge: NativeBridge,
+    chatProviderFactory: (configId: string) => Promise<LLMProvider>,
+    generation: GenerationContextService
+  ) {
     this.bridge = bridge;
     this.chatProviderFactory = chatProviderFactory;
+    this.generation = generation;
   }
 
   /** 两段式第一步：中文场景 -> 英文图片 prompt（风格/构图/负面词）；sceneTextOverride 覆盖默认场景描述 */
@@ -70,9 +78,11 @@ export class ImagePromptService {
 
     const userParts = [sceneTextOverride?.trim() ? sceneTextOverride.trim() : sceneDescription(scene)];
     if (userHint?.trim()) userParts.push(`补充要求：${userHint.trim()}`);
+    // 批次11-4：不经 orchestrator 的调用统一补充「作者全局要求 + 文风 Skill」
+    const extras = await this.generation.systemExtras(bookId, 'continue');
     const res = await provider.chat(
       [
-        { role: 'system', content: PROMPT_SYSTEM },
+        { role: 'system', content: [PROMPT_SYSTEM, ...extras].join('\n\n') },
         { role: 'user', content: userParts.join('\n') }
       ],
       { model: row.model, temperature: 0.7, maxTokens: 1200 }

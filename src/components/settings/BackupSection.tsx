@@ -113,6 +113,21 @@ export function BackupSection(): JSX.Element {
     toast.success('备份目录已更新');
   };
 
+  /** 一键清理无效备份：删除备份目录中不对应任何现存书籍的遗留 zip（书籍改名/删除后残留） */
+  const cleanInvalidBackups = async (): Promise<void> => {
+    const { autoBackupService } = getAppContext();
+    const confirmed = window.confirm(
+      '将删除备份目录中不对应任何现存书籍的备份文件（书籍改名/删除后遗留的旧备份）。\n此操作不可撤销，是否继续？'
+    );
+    if (!confirmed) return;
+    try {
+      const r = await autoBackupService.cleanInvalidBackups();
+      toast.success(r.deleted > 0 ? `已清除 ${r.deleted} 个无效备份` : '没有需要清除的无效备份');
+    } catch (e) {
+      toast.error(`清除无效备份失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
   /** P6：立即备份（任务中心托管，进度见底部任务面板） */
   const runBackupNow = async (): Promise<void> => {
     const { autoBackupService } = getAppContext();
@@ -254,6 +269,13 @@ export function BackupSection(): JSX.Element {
                 onClick={() => void runBackupNow()}
               >
                 立即备份
+              </button>
+              <button
+                type="button"
+                className="shrink-0 rounded border border-ink-200 px-3 py-1.5 text-sm hover:bg-ink-100"
+                onClick={() => void cleanInvalidBackups()}
+              >
+                清除无效备份
               </button>
               <span className="min-w-0 flex-1 truncate text-xs text-ink-400">
                 {lastRunAt != null ? `最近一次：${new Date(lastRunAt).toLocaleString()}` : '尚未执行过'}

@@ -10,6 +10,7 @@ import type { Database } from '../../db/Database';
 import type { WriteQueue } from '../../db/WriteQueue';
 import type { LLMProvider, ChatMessage, ChatChunk } from '../ai/providers/LLMProvider';
 import { resolveProviderForFeature, resolveModelNameForFeature } from '../ai/providerResolver';
+import type { GenerationContextService } from '../ai/GenerationContext';
 import type { CharacterService } from '../character/CharacterService';
 import type {
   InterviewAngle,
@@ -37,19 +38,23 @@ export class CharacterInterviewService {
   private wq: WriteQueue;
   private providerFactory: (configId: string) => Promise<LLMProvider>;
   private characterService: CharacterService;
+  /** 批次11-4：不经 orchestrator 的调用统一补充全局提示词 + 文风 Skill */
+  private generation: GenerationContextService;
 
   constructor(
     bridge: NativeBridge,
     db: Database,
     wq: WriteQueue,
     providerFactory: (configId: string) => Promise<LLMProvider>,
-    characterService: CharacterService
+    characterService: CharacterService,
+    generation: GenerationContextService
   ) {
     this.bridge = bridge;
     this.db = db;
     this.wq = wq;
     this.providerFactory = providerFactory;
     this.characterService = characterService;
+    this.generation = generation;
   }
 
   /** 开始采访会话 */
@@ -127,8 +132,14 @@ export class CharacterInterviewService {
       role: m.role === 'interviewer' ? 'user' : 'assistant',
       content: m.content
     }));
+    // 批次11-4：对白生成统一补充「作者全局要求 + 文风 Skill」（dialogue 模式）
+    const extras = await this.generation.systemExtras(session.bookId, 'dialogue');
+    const systemContent = [
+      await this.buildSystemPrompt(session, character.data, character.name),
+      ...extras
+    ].join('\n\n');
     const messages: ChatMessage[] = [
-      { role: 'system', content: await this.buildSystemPrompt(session, character.data, character.name) },
+      { role: 'system', content: systemContent },
       ...historyMessages
     ];
 

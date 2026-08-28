@@ -11,7 +11,7 @@ import type {
   ProviderConfig
 } from './LLMProvider';
 import { countTokens } from '../../../utils/tokens';
-import { sseLines, tauriFetch } from './sse';
+import { sseLines, tauriFetch, withNetworkTimeout } from './sse';
 
 interface GeminiResponse {
   candidates?: Array<{
@@ -58,61 +58,79 @@ export class GoogleProvider implements LLMProvider {
   }
 
   async chat(messages: ChatMessage[], options: ChatOptions): Promise<ChatResponse> {
-    const res = await tauriFetch(
-      `${this.baseUrl}/v1beta/models/${options.model}:generateContent`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': this.apiKey
-        },
-        body: JSON.stringify(this.buildBody(messages)),
-        signal: options.signal
+    const nt = withNetworkTimeout('Google', options.signal);
+    try {
+      const res = await tauriFetch(
+        `${this.baseUrl}/v1beta/models/${options.model}:generateContent`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': this.apiKey
+          },
+          body: JSON.stringify(this.buildBody(messages)),
+          signal: nt.fetchSignal
+        }
+      );
+      nt.markFirstByte();
+      if (!res.ok) {
+        throw new Error(`Google 接口错误 ${res.status}: ${await res.text()}`);
       }
-    );
-    if (!res.ok) {
-      throw new Error(`Google 接口错误 ${res.status}: ${await res.text()}`);
+      const data = (await res.json()) as GeminiResponse;
+      return {
+        content:
+          data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '',
+        usage: {
+          promptTokens: data.usageMetadata?.promptTokenCount ?? 0,
+          completionTokens: data.usageMetadata?.candidatesTokenCount ?? 0
+        }
+      };
+    } catch (e) {
+      nt.rethrowTimeout();
+      throw e;
+    } finally {
+      nt.dispose();
     }
-    const data = (await res.json()) as GeminiResponse;
-    return {
-      content:
-        data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '',
-      usage: {
-        promptTokens: data.usageMetadata?.promptTokenCount ?? 0,
-        completionTokens: data.usageMetadata?.candidatesTokenCount ?? 0
-      }
-    };
   }
 
   async *stream(messages: ChatMessage[], options: ChatOptions): AsyncIterable<ChatChunk> {
-    const res = await tauriFetch(
-      `${this.baseUrl}/v1beta/models/${options.model}:streamGenerateContent?alt=sse`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': this.apiKey
-        },
-        body: JSON.stringify(this.buildBody(messages)),
-        signal: options.signal
-      }
-    );
-    if (!res.ok) {
-      throw new Error(`Google 接口错误 ${res.status}: ${await res.text()}`);
-    }
-    for await (const data of sseLines(res, options.signal)) {
-      try {
-        const json = JSON.parse(data) as GeminiResponse;
-        const delta =
-          json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
-        if (delta) {
-          yield { delta, done: false };
+    const nt = withNetworkTimeout('Google', options.signal);
+    try {
+      const res = await tauriFetch(
+        `${this.baseUrl}/v1beta/models/${options.model}:streamGenerateContent?alt=sse`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': this.apiKey
+          },
+          body: JSON.stringify(this.buildBody(messages)),
+          signal: nt.fetchSignal
         }
-      } catch {
-        // 忽略无法解析的行
+      );
+      nt.markFirstByte();
+      if (!res.ok) {
+        throw new Error(`Google 接口错误 ${res.status}: ${await res.text()}`);
       }
+      for await (const data of sseLines(res, nt.readSignal)) {
+        try {
+          const json = JSON.parse(data) as GeminiResponse;
+          const delta =
+            json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
+          if (delta) {
+            yield { delta, done: false };
+          }
+        } catch {
+          // 忽略无法解析的行
+        }
+      }
+      yield { delta: '', done: true };
+    } catch (e) {
+      nt.rethrowTimeout();
+      throw e;
+    } finally {
+      nt.dispose();
     }
-    yield { delta: '', done: true };
   }
 
   countTokens(text: string): number {
@@ -121,32 +139,42 @@ export class GoogleProvider implements LLMProvider {
 
   /** Gemini :batchEmbedContents（text-embedding-004 等） */
   async embed(texts: string[], model: string): Promise<number[][]> {
-    const res = await tauriFetch(
-      `${this.baseUrl}/v1beta/models/${model}:batchEmbedContents`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': this.apiKey
-        },
-        body: JSON.stringify({
-          requests: texts.map((t) => ({
-            model: `models/${model}`,
-            content: { parts: [{ text: t }] }
-          }))
-        })
+    const nt = withNetworkTimeout('Google Embedding');
+    try {
+      const res = await tauriFetch(
+        `${this.baseUrl}/v1beta/models/${model}:batchEmbedContents`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': this.apiKey
+          },
+          body: JSON.stringify({
+            requests: texts.map((t) => ({
+              model: `models/${model}`,
+              content: { parts: [{ text: t }] }
+            }))
+          }),
+          signal: nt.fetchSignal
+        }
+      );
+      nt.markFirstByte();
+      if (!res.ok) {
+        throw new Error(`Google Embedding 接口错误 ${res.status}: ${await res.text()}`);
       }
-    );
-    if (!res.ok) {
-      throw new Error(`Google Embedding 接口错误 ${res.status}: ${await res.text()}`);
+      const data = (await res.json()) as {
+        embeddings?: Array<{ values?: number[] }>;
+      };
+      const out = (data.embeddings ?? []).map((e) => e.values ?? []);
+      if (out.length !== texts.length || out.some((v) => v.length === 0)) {
+        throw new Error('Embedding 返回数量或维度异常');
+      }
+      return out;
+    } catch (e) {
+      nt.rethrowTimeout();
+      throw e;
+    } finally {
+      nt.dispose();
     }
-    const data = (await res.json()) as {
-      embeddings?: Array<{ values?: number[] }>;
-    };
-    const out = (data.embeddings ?? []).map((e) => e.values ?? []);
-    if (out.length !== texts.length || out.some((v) => v.length === 0)) {
-      throw new Error('Embedding 返回数量或维度异常');
-    }
-    return out;
   }
 }

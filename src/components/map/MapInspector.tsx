@@ -775,7 +775,7 @@ export function MapInspector(props: MapInspectorProps): JSX.Element {
         </label>
       </Section>
       <div className="mt-auto rounded bg-ink-50 p-2 text-xs leading-5 text-ink-400">
-        快捷键：Ctrl+Z 撤销 / Ctrl+Y 重做 / Ctrl+D 复制 / Ctrl+C·V 复制粘贴 / Del 删除 / B 笔刷 / E 橡皮 / Esc 停止
+        快捷键：Ctrl+S 保存 / Ctrl+Z 撤销 / Ctrl+Y 重做 / Ctrl+D 复制 / Ctrl+C·V 复制粘贴 / Del 删除 / B 笔刷 / E 橡皮 / Esc 停止
       </div>
     </aside>
   );

@@ -142,7 +142,18 @@ export function WorldbookPanel({ bookId }: { bookId: string }): JSX.Element {
         // 单章读取失败不阻塞删除主流程
       }
     }
-    await wq.enqueue(() => db.exec('DELETE FROM worldbook_entries WHERE id = ?', [id]));
+    // 批次5建议1：世界书删除在事务内级联清理 setting_facts(source='worldbook')（source_ref 无 FK，
+    // 须显式删，防孤儿事实污染一致性基线；其推导链 setting_inferences 由 FK 级联）。
+    // worldbook_embeddings 由 entry_id FK 级联，另显式 removeEmbedding 兜底。
+    await wq.enqueue(() =>
+      db.transaction(async (tx) => {
+        await tx.exec('DELETE FROM setting_facts WHERE source = ? AND source_ref = ?', [
+          'worldbook',
+          id
+        ]);
+        await tx.exec('DELETE FROM worldbook_entries WHERE id = ?', [id]);
+      })
+    );
     await ragService.removeEmbedding(id).catch(() => undefined);
     await load();
     window.dispatchEvent(new Event('novel-mentions-refresh'));

@@ -89,6 +89,12 @@ export function Home(): JSX.Element {
         const { bookService, appSettings } = getAppContext();
         const v = await appSettings.get('trash.retentionDays');
         await bookService.cleanupExpired(v != null ? Number(v) : 30);
+        // 批次5建议1：一次性存量孤儿清理（幂等、只碰孤儿，杜绝孤儿事实污染一致性基线）
+        try {
+          await bookService.sweepOrphans();
+        } catch {
+          // 存量清理失败不影响启动；逐删除点级联清理已保证新增不产生孤儿
+        }
       })().catch(() => undefined);
     }, 5000);
     return () => window.clearTimeout(timer);

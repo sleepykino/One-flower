@@ -65,17 +65,29 @@ export function LongFormPanel({ bookId }: { bookId: string }): JSX.Element {
     setSelectedCharIds((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   };
 
-  // 挂载：检测本书进行中的长文会话（恢复入口）
+  // 挂载：检测本书进行中的长文会话（恢复入口）；无对应任务的僵尸会话自动置为暂停（可恢复/丢弃）。
+  // 若无进行中会话，则若有遗留 done 会话且保留了接缝问题，恢复展示接缝审阅（重启后仍可查看）
   const checkActive = useCallback((): void => {
-    void getAppContext()
-      .longformService.findActive(bookId)
-      .then((s) => {
-        if (s) {
-          setSession(s);
-          setBeats(s.beats);
-          setStep('running');
+    void (async () => {
+      const active = await getAppContext().longformService.findActive(bookId);
+      if (active) {
+        const res = await getAppContext().longformService.healZombie(active);
+        if (res.wasHealed) {
+          toast.info('检测到此前的长文生成已中断（应用重启/进程退出），已自动置为暂停，可恢复或丢弃');
         }
-      });
+        setSession(res.session);
+        setBeats(res.session.beats);
+        setStep('running');
+        return;
+      }
+      const done = await getAppContext().longformService.findDoneWithSeams(bookId);
+      if (done && (done.seams?.length ?? 0) > 0) {
+        setSession(done);
+        setBeats(done.beats);
+        setIssues(done.seams ?? []);
+        setStep('seam');
+      }
+    })();
   }, [bookId]);
 
   useEffect(() => {
@@ -93,12 +105,12 @@ export function LongFormPanel({ bookId }: { bookId: string }): JSX.Element {
     const timer = window.setInterval(() => {
       void getAppContext()
         .longformService.getSession(session.id)
-        .then((s) => {
+        .then(async (s) => {
           if (!s) return;
           setSession(s);
           setBeats(s.beats);
           if (s.status === 'done') {
-            setIssues(getAppContext().longformService.getSeamIssues(s.id));
+            setIssues(await getAppContext().longformService.getSeamIssues(s.id));
             setRunningBeat(-1);
             setStep('seam');
           }

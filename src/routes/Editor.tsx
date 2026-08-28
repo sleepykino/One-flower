@@ -171,7 +171,8 @@ export function Editor(): JSX.Element {
     setLfActive(null);
     void getAppContext()
       .longformService.findActive(bookId)
-      .then(setLfActive)
+      .then((s) => (s ? getAppContext().longformService.healZombie(s) : null))
+      .then((res) => setLfActive(res ? res.session : null))
       .catch(() => undefined);
   }, [bookId]);
 

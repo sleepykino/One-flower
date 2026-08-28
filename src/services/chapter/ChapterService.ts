@@ -10,6 +10,10 @@ import type { Chapter, ChapterStatus, ProseMirrorDoc } from '../../types';
 import { emptyDoc, docToPlainText, countWords } from '../../utils/pmdoc';
 import type { GlobalSearch } from '../search/GlobalSearch';
 import { rowToBook } from '../book/BookService';
+import { toast } from '../../components/common/toast';
+
+/** 已备份过损坏正文的文件路径（避免每次读取重复备份与重复告警） */
+const backedUpCorruptPaths = new Set<string>();
 
 export interface ChapterInput {
   title: string;
@@ -123,7 +127,7 @@ export class ChapterService {
     );
   }
 
-  /** 删除章节（含全部子孙章节），同步删 FTS 与版本记录 */
+  /** 删除章节（含全部子孙章节），同步删 FTS 与版本记录；批次5建议1：事务内级联清理关联数据防孤儿 */
   async remove(id: string): Promise<void> {
     const all = await this.collectDescendants(id);
     for (const chapterId of all) {
@@ -132,6 +136,23 @@ export class ChapterService {
         this.db.transaction(async (tx) => {
           await tx.exec('DELETE FROM chapters_fts WHERE chapter_id = ?', [chapterId]);
           await tx.exec('DELETE FROM chapter_versions WHERE chapter_id = ?', [chapterId]);
+          // 批次5建议1：孤儿事实污染一致性基线——删除从本章抽取的设定事实（其推导链由 FK 级联）
+          await tx.exec('DELETE FROM setting_facts WHERE source = ? AND source_ref = ?', [
+            'chapter',
+            chapterId
+          ]);
+          // 伏笔/时间线是书级条目，仅摘除对已删章节的悬挂引用（保留条目本身，防丢剧情数据）
+          await tx.exec(
+            'UPDATE foreshadowings SET planted_chapter_id = NULL WHERE planted_chapter_id = ?',
+            [chapterId]
+          );
+          await tx.exec(
+            'UPDATE foreshadowings SET resolved_chapter_id = NULL WHERE resolved_chapter_id = ?',
+            [chapterId]
+          );
+          await tx.exec('UPDATE timeline_events SET chapter_id = NULL WHERE chapter_id = ?', [
+            chapterId
+          ]);
           await tx.exec('DELETE FROM chapters WHERE id = ?', [chapterId]);
         })
       );
@@ -162,13 +183,36 @@ export class ChapterService {
     const ch = await this.get(chapterId);
     if (!ch) throw new Error('章节不存在');
     const path = ch.contentPath ?? (await this.contentPath(ch));
+    let raw: string;
     try {
-      const raw = await this.bridge.fs.readFile(path);
-      const parsed = JSON.parse(raw) as ProseMirrorDoc;
-      if (parsed?.type === 'doc') return parsed;
-      return emptyDoc();
+      raw = await this.bridge.fs.readFile(path);
     } catch {
       return emptyDoc();
+    }
+    try {
+      const parsed = JSON.parse(raw) as ProseMirrorDoc;
+      if (parsed?.type === 'doc') return parsed;
+    } catch {
+      // 非 JSON 正文，落入下方损坏处理
+    }
+    // 正文损坏：备份原文件防被后续保存覆盖，并告警一次后返回空文档
+    await this.backupCorrupt(path);
+    return emptyDoc();
+  }
+
+  /** 正文损坏时备份原文件为 `.corrupt-<ts>` 并弹出一次告警 */
+  private async backupCorrupt(path: string): Promise<void> {
+    if (backedUpCorruptPaths.has(path)) return;
+    backedUpCorruptPaths.add(path);
+    const backupPath = `${path}.corrupt-${Date.now()}`;
+    try {
+      await (this.bridge.fs as unknown as { copyFile?: (s: string, d: string) => Promise<void> }).copyFile?.(
+        path,
+        backupPath
+      );
+      toast.error(`章节正文文件损坏，已备份为 ${backupPath}，请从历史版本恢复，避免直接保存覆盖丢失内容。`);
+    } catch {
+      toast.error('章节正文文件损坏，且无法自动备份，请及时从历史版本恢复。');
     }
   }
 

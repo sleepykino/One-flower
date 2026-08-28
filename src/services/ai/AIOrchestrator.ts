@@ -174,6 +174,27 @@ export class AIOrchestrator {
     return this.providerFactory(configId);
   }
 
+  /**
+   * 批次11-6：角色卡按「当前章出场频率」降序排序（出场次数多者优先）。
+   * 使超预算截断时当前章关键角色不被截掉；同频保持原有顺序（稳定排序）。仅作用于注入排序，不改选中集合。
+   */
+  private sortCharactersByRelevance(chars: Character[], currentContent: string): Character[] {
+    if (chars.length <= 1 || !currentContent) return chars;
+    const freq = new Map<string, number>();
+    for (const c of chars) {
+      const name = c.name?.trim();
+      if (!name) continue;
+      let n = 0;
+      let idx = currentContent.indexOf(name);
+      while (idx !== -1) {
+        n++;
+        idx = currentContent.indexOf(name, idx + name.length);
+      }
+      freq.set(name, n);
+    }
+    return [...chars].sort((a, b) => (freq.get(b.name ?? '') ?? 0) - (freq.get(a.name ?? '') ?? 0));
+  }
+
   /** 按 ID 加载角色卡 */
   private async loadCharacters(ids: string[]): Promise<Character[]> {
     if (ids.length === 0) return [];
@@ -375,7 +396,11 @@ export class AIOrchestrator {
   async *continueWriting(params: ContinueParams): AsyncIterable<ChatChunk> {
     const provider = await this.resolveProvider(params.bookId, 'continue');
     const skills = await this.skillLoader.getEnabledForMode(params.bookId, 'continue');
-    const characters = await this.loadCharacters(params.selectedCharacterIds);
+    // 批次11-6：按当前章出场频率排序角色卡，使超预算截断保留当前章关键角色
+    const characters = this.sortCharactersByRelevance(
+      await this.loadCharacters(params.selectedCharacterIds),
+      params.currentContent
+    );
     // P1：摘要链 + 最近 2 章原文（失败回退滑动窗口）
     const { summaryChain, recentChapters } = await this.fetchRecentContext(
       params.bookId,
@@ -401,6 +426,8 @@ export class AIOrchestrator {
         content: params.currentContent
       }
     };
+    // 批次11-6：长文模式放大角色卡预算（承载全书角色）
+    if (params.characterBudget) ctx.characterBudget = params.characterBudget;
     if (params.beat) ctx.currentBeat = params.beat;
     await this.applyCtxExtras(ctx, params.bookId, params.aiReferences);
     const model = await this.modelOf(params.bookId, 'continue');

@@ -10,6 +10,9 @@ import type { ProseMirrorDoc } from '../../types';
 import { applyOps, diffJson, diffLines, type DiffOp, type VersionPayload } from '../../utils/diff';
 import { countWords, docToPlainText } from '../../utils/pmdoc';
 
+/** 批次2建议3：自动保存版本每满 N 次触发一次 GC（防抖：次数即节流，避免写放大） */
+const AUTO_GC_EVERY_SAVES = 50;
+
 export interface ChapterVersionMeta {
   id: string;
   chapterId: string;
@@ -27,6 +30,10 @@ export class ChapterVersionStore {
   private bridge: NativeBridge;
   private db: Database;
   private wq: WriteQueue;
+  /** 批次2建议3：每章落版本计数（用于自动触发 GC，防抖由次数承担） */
+  private saveCounts = new Map<string, number>();
+  /** 批次2建议2：每章最新已存版本的文档缓存（避免每次保存重放全量 diff 链） */
+  private latestDocCache = new Map<string, ProseMirrorDoc>();
 
   constructor(bridge: NativeBridge, db: Database, wq: WriteQueue) {
     this.bridge = bridge;
@@ -53,6 +60,15 @@ export class ChapterVersionStore {
         [id, chapterId, JSON.stringify(payload), wordCount, Date.now()]
       )
     );
+    // 更新每章最新文档缓存（存克隆，避免与调用方后续变更互相污染）
+    this.latestDocCache.set(chapterId, structuredClone(doc));
+
+    // 批次2建议3：每满 N 次保存静默触发一次 gc（保留最近 50 版 + 每日 1 版，写放大上限=每 N 次 1 轮 delete）
+    const count = (this.saveCounts.get(chapterId) ?? 0) + 1;
+    this.saveCounts.set(chapterId, count);
+    if (count % AUTO_GC_EVERY_SAVES === 0) {
+      void this.gc(chapterId).catch((e) => console.warn('[VersionStore] 自动清理旧版本失败:', e));
+    }
   }
 
   /** 列出某章节的所有版本（按时间倒序） */
@@ -103,8 +119,11 @@ export class ChapterVersionStore {
     return doc as ProseMirrorDoc;
   }
 
-  /** 章节最新已存版本对应的文档（无版本时返回 null） */
+  /** 章节最新已存版本对应的文档（无版本时返回 null）；带内存缓存，取 prevDoc 为 O(1) */
   private async getLatestDoc(chapterId: string): Promise<ProseMirrorDoc | null> {
+    const cached = this.latestDocCache.get(chapterId);
+    if (cached) return structuredClone(cached);
+
     const rows = await this.getVersionsAsc(chapterId);
     if (rows.length === 0) return null;
     let doc: unknown = null;
@@ -116,7 +135,11 @@ export class ChapterVersionStore {
         doc = applyOps(doc, (payload.ops ?? []) as DiffOp[]);
       }
     }
-    return (doc as ProseMirrorDoc) ?? null;
+    if (doc === null) return null;
+    const latest = doc as ProseMirrorDoc;
+    // 命中冷路径后填充缓存，后续保存直接 O(1)
+    this.latestDocCache.set(chapterId, structuredClone(latest));
+    return structuredClone(latest);
   }
 
   /** 对比两个版本（段落级 diff 视图） */
@@ -167,6 +190,8 @@ export class ChapterVersionStore {
         );
       })
     );
+    // 回退后最新文档变为被恢复的版本，同步更新缓存（避免后续保存基于过期 prevDoc 出 diff）
+    this.latestDocCache.set(String(chapterRow.id), structuredClone(doc));
     return doc;
   }
 

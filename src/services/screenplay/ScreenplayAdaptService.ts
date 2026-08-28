@@ -6,6 +6,7 @@
 
 import type { NativeBridge } from '../../native/NativeBridge';
 import type { LLMProvider } from '../ai/providers/LLMProvider';
+import type { GenerationContextService } from '../ai/GenerationContext';
 import {
   resolveModelNameForFeature,
   resolveProviderForFeature
@@ -71,6 +72,8 @@ export class ScreenplayAdaptService {
   private screenplays: ScreenplayService;
   private tasks: TaskCenterService;
   private directives: ProjectDirectiveService;
+  /** 批次11-4：不经 orchestrator 的调用统一补充全局提示词 + 文风 Skill */
+  private generation: GenerationContextService;
   private taskIds = new Map<string, string>();
 
   constructor(
@@ -78,13 +81,15 @@ export class ScreenplayAdaptService {
     providerFactory: (configId: string) => Promise<LLMProvider>,
     screenplays: ScreenplayService,
     tasks: TaskCenterService,
-    directives: ProjectDirectiveService
+    directives: ProjectDirectiveService,
+    generation: GenerationContextService
   ) {
     this.bridge = bridge;
     this.providerFactory = providerFactory;
     this.screenplays = screenplays;
     this.tasks = tasks;
     this.directives = directives;
+    this.generation = generation;
   }
 
   // ---------------- 阶段一：大纲 ----------------
@@ -132,12 +137,16 @@ export class ScreenplayAdaptService {
       `【任务】改编为 ${params.episodeCount} 集剧集大纲，每集约 ${scenesPer} 场（可上下浮动 1-2 场）。`
     ].join('\n');
 
+    // 批次11-4：统一补充作者全局要求 + 文风 Skill（剧本大纲与小说文风保持感知）
+    const extras = await this.generation.systemExtras(params.bookId, 'continue');
+    const systemContent = [OUTLINE_SYSTEM, ...extras].join('\n\n');
+
     let lastErr = '';
     for (let attempt = 0; attempt < 2; attempt++) {
       if (params.signal?.aborted) throw new DOMException('已取消', 'AbortError');
       const res = await provider.chat(
         [
-          { role: 'system', content: OUTLINE_SYSTEM },
+          { role: 'system', content: systemContent },
           { role: 'user', content: user }
         ],
         { model, temperature: 0.6, maxTokens: 4096, signal: params.signal }
@@ -262,19 +271,32 @@ export class ScreenplayAdaptService {
     const appearing = chars.filter((c) => hay.includes(c.name));
     const cast = (appearing.length > 0 ? appearing : chars.slice(0, 3)).slice(0, 6);
 
+    // 批次11-3：按场景关键词（地点 + 概要 + 出场角色名）检索注入相关世界书条目，与大纲阶段（draftOutline）装配对齐
+    const keywords = [scene.location, scene.synopsis, ...cast.map((c) => c.name)].filter(
+      (k): k is string => Boolean(k?.trim())
+    );
+    const worldbook = await this.loadSceneWorldbook(bookId, keywords);
+
     const material: string[] = [];
     material.push(`【本集】第 ${ep.number} 集${ep.title ? `：${ep.title}` : ''}${ep.logline ? `（${ep.logline}）` : ''}`);
     material.push('【本场大纲】', `${scene.interior}.${scene.location} ${scene.timeOfDay} —— ${scene.synopsis}`);
     if (excerpt) material.push('【溯源章节节选】', excerpt);
     if (cast.length > 0) material.push('【出场角色】', cast.map((c) => `- ${c.name}：${cardBrief(c)}`).join('\n'));
+    if (worldbook.length > 0) {
+      material.push('【相关世界书】', worldbook.map((w) => `- ${w.title}: ${w.content}`).join('\n'));
+    }
     if (agents) material.push('【本书创作总纲（最高优先级）】', agents);
+
+    // 批次11-4：统一补充作者全局要求 + 文风 Skill（对白文风与小说保持一致）
+    const extras = await this.generation.systemExtras(bookId, 'dialogue');
+    const systemContent = [SCENE_SYSTEM, ...extras].join('\n\n');
 
     let lastErr = '';
     for (let attempt = 0; attempt < 2; attempt++) {
       if (signal?.aborted) throw new DOMException('已取消', 'AbortError');
       const res = await provider.chat(
         [
-          { role: 'system', content: SCENE_SYSTEM },
+          { role: 'system', content: systemContent },
           { role: 'user', content: material.join('\n\n') }
         ],
         { model, temperature: 0.8, maxTokens: 4096, signal }
@@ -336,6 +358,29 @@ export class ScreenplayAdaptService {
       }
       return { name: String(r.name), data };
     });
+  }
+
+  /**
+   * 批次11-3：逐场相关世界书检索。按场景关键词（地点/概要/出场角色名）命中标题或内容，
+   * 无命中则回退最近的若干条目（与大纲阶段 draftOutline 的「世界书要点」取材对齐）；
+   * 受限注入（最多 5 条，内容截断 300 字），避免无关条目稀释对白设定。
+   */
+  private async loadSceneWorldbook(bookId: string, keywords: string[]): Promise<Array<{ title: string; content: string }>> {
+    try {
+      const rows = await this.bridge.db.query<{ title: string; content: string }>(
+        'SELECT title, content FROM worldbook_entries WHERE book_id = ? AND enabled = 1 ORDER BY updated_at DESC LIMIT 40',
+        [bookId]
+      );
+      if (rows.length === 0) return [];
+      const picked =
+        keywords.length > 0
+          ? rows.filter((w) => keywords.some((k) => w.title.includes(k) || w.content.includes(k)))
+          : [];
+      const selected = picked.length > 0 ? picked : rows.slice(0, 5);
+      return selected.slice(0, 5).map((w) => ({ title: w.title, content: w.content.slice(0, 300) }));
+    } catch {
+      return [];
+    }
   }
 }
 

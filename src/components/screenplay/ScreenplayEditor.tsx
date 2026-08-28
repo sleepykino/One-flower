@@ -44,6 +44,8 @@ export function ScreenplayEditor({ screenplay, onChanged, onUpdated, onJumpChapt
   /** 撤销动作闭包里读取最新草稿用 */
   const draftRef = useRef<Scene | null>(null);
   draftRef.current = draft;
+  /** 当前编辑场最近一次落库/加载的 JSON 快照：防抖落盘前用于校验目标场未被外部改动 */
+  const sceneBaseRef = useRef<string | null>(null);
 
   /** 撤销条自动消失 */
   useEffect(() => {
@@ -64,6 +66,7 @@ export function ScreenplayEditor({ screenplay, onChanged, onUpdated, onJumpChapt
     const target = selected?.sc ?? null;
     if (!dirtyRef.current || !target || target.id !== draft?.id) {
       setDraft(target ? { ...target, shots: target.shots.map((s) => ({ ...s })) } : null);
+      sceneBaseRef.current = target ? JSON.stringify(target) : null;
       dirtyRef.current = false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -74,12 +77,20 @@ export function ScreenplayEditor({ screenplay, onChanged, onUpdated, onJumpChapt
     dirtyRef.current = true;
     setDraft(next);
     if (timerRef.current) window.clearTimeout(timerRef.current);
+    const base = sceneBaseRef.current;
     timerRef.current = window.setTimeout(() => {
       dirtyRef.current = false;
       void getAppContext()
-        .screenplayService.saveScene(screenplay.id, selected!.ep.id, next)
+        .screenplayService.saveScene(screenplay.id, next, base)
         .then((sp) => {
-          if (sp) onUpdated(sp);
+          if (!sp) {
+            console.warn('[Screenplay] 场保存被跳过：目标场不存在或已被外部改动');
+            return;
+          }
+          // 落库成功：更新基线快照，供下次防抖校验「目标场未变」
+          const saved = sp.data.episodes.flatMap((e) => e.scenes).find((s) => s.id === next.id);
+          if (saved) sceneBaseRef.current = JSON.stringify(saved);
+          onUpdated(sp);
         })
         .catch((e) => console.warn('[Screenplay] 场保存失败:', e));
     }, 500);
