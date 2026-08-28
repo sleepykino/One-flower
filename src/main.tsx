@@ -40,4 +40,15 @@ async function bootstrap(): Promise<void> {
   );
 }
 
+// 文件拖放兜底：dragDropEnabled=false 后 OS 文件拖放以 HTML5 事件进入页面，
+// 未接管拖放入口的页面（设置/灵感库/回收站等）默认行为是 WebView 导航到被拖文件，
+// 全局 preventDefault 使其成为无操作；具体入口（书架文档导入/正文插图）在各自
+// 目标元素上先行处理，不受影响（preventDefault 幂等）。
+window.addEventListener('dragover', (e) => {
+  if (e.dataTransfer?.types.includes('Files')) e.preventDefault();
+});
+window.addEventListener('drop', (e) => {
+  if (e.dataTransfer?.types.includes('Files')) e.preventDefault();
+});
+
 void bootstrap();

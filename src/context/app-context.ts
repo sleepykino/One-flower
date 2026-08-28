@@ -20,6 +20,7 @@ import { TxtExporter } from '../services/export/TxtExporter';
 import { EpubExporter } from '../services/export/EpubExporter';
 import { DocxExporter } from '../services/export/DocxExporter';
 import { ImportService } from '../services/import/ImportService';
+import { DocImportService } from '../services/import/DocImportService';
 import { PromptAssembler } from '../services/ai/PromptAssembler';
 import { AIOrchestrator } from '../services/ai/AIOrchestrator';
 import { GlobalPromptService } from '../services/ai/GlobalPromptService';
@@ -66,6 +67,8 @@ export interface AppContext {
   skillLoader: SkillLoader;
   exportService: ExportService;
   importService: ImportService;
+  /** TXT / Markdown 文档导入（书架按钮 + 拖入书架） */
+  docImportService: DocImportService;
   promptAssembler: PromptAssembler;
   orchestrator: AIOrchestrator;
   /** P2.1-M1：自定义全局提示词 */
@@ -180,6 +183,7 @@ export async function initApp(): Promise<AppContext> {
     docxExporter
   );
   const importService = new ImportService(tauriBridge, db, wq);
+  const docImportService = new DocImportService(tauriBridge, bookService, chapterService);
 
   const promptAssembler = new PromptAssembler();
 
@@ -299,6 +303,7 @@ export async function initApp(): Promise<AppContext> {
     skillLoader,
     exportService,
     importService,
+    docImportService,
     promptAssembler,
     orchestrator,
     globalPrompts,

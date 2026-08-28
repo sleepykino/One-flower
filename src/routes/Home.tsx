@@ -1,21 +1,23 @@
 /**
- * Home 页：书籍列表 + 新建 / 编辑 / 删除（回收站）/ 打开 + 备份导入
+ * Home 页：书籍列表 + 新建 / 编辑 / 删除（回收站）/ 打开 + 导入（文档 / 备份合并菜单）
  * P6 M3：工具条（搜索/类型筛选/排序）+ 书卡统计 + ⋮ 菜单（编辑/置顶/导出备份/删除）+ 手动拖拽排序
  * P6 M1：删除改为软删除（移入回收站）；挂载时延迟静默清理过期回收站
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { Pin } from 'lucide-react';
+import { Pin, FileUp } from 'lucide-react';
 import { useBookStore } from '../store/bookStore';
 import { getAppContext } from '../context/app-context';
 import { confirmDialog } from '../native/dialog';
 import { toast } from '../components/common/toast';
+import { docTitleFromFileName } from '../services/import/DocImportService';
 import { UpdateDialog } from '../components/update/UpdateDialog';
 import { HomeSidebar } from '../components/home/HomeSidebar';
 import { ImagePicker } from '../components/image/ImagePicker';
 import { BookshelfToolbar, persistSortMode, readSortMode } from '../components/home/BookshelfToolbar';
+import { ImportMenu } from '../components/home/ImportMenu';
 import { BookCardMenu } from '../components/home/BookCardMenu';
 import { EditBookDialog } from '../components/home/EditBookDialog';
 import { formatWordCount } from '../components/home/TrashList';
@@ -53,6 +55,8 @@ export function Home(): JSX.Element {
   const [genre, setGenre] = useState('');
   const [author, setAuthor] = useState('');
   const [message, setMessage] = useState('');
+  // 文档拖入书架（TXT / Markdown 导入）高亮态
+  const [docDragOver, setDocDragOver] = useState(false);
   // 客户端更新：自动检查（静默失败不打扰）
   const [update, setUpdate] = useState<{ info: UpdateInfo; current: string } | null>(null);
   // P6 M3：工具条状态
@@ -185,6 +189,52 @@ export function Home(): JSX.Element {
       await loadBooks();
     } catch (e) {
       setMessage(`导入失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  /** 导入 TXT / Markdown 文档为新书籍（按章节标题自动切分，书名取文件名） */
+  const importDocument = async (): Promise<void> => {
+    const path = await open({
+      multiple: false,
+      filters: [{ name: '文本文档', extensions: ['txt', 'md', 'markdown'] }]
+    });
+    if (typeof path !== 'string') return;
+    setMessage('导入中…');
+    try {
+      const r = await getAppContext().docImportService.importFromFile(path);
+      setMessage(`导入成功：《${r.title}》${r.chapterCount} 章${r.volumeCount ? `（${r.volumeCount} 卷）` : ''}`);
+      await loadBooks();
+    } catch (e) {
+      setMessage(`导入失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  /** 拖入 .txt/.md 文件导入（与按钮同链路）；非文档拖放不拦截 */
+  const isDocFile = (name: string): boolean => /\.(txt|md|markdown)$/i.test(name);
+
+  const handleDocDrop = async (e: DragEvent<HTMLDivElement>): Promise<void> => {
+    if (!e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+    setDocDragOver(false);
+    const files = Array.from(e.dataTransfer.files).filter((f) => isDocFile(f.name));
+    if (!files.length) {
+      setMessage('仅支持导入 .txt / .md 文档');
+      return;
+    }
+    for (const f of files) {
+      setMessage(`导入中：${f.name}…`);
+      try {
+        const content = await f.text();
+        const r = await getAppContext().docImportService.importFromContent(
+          content,
+          docTitleFromFileName(f.name),
+          /\.(md|markdown)$/i.test(f.name)
+        );
+        setMessage(`导入成功：《${r.title}》${r.chapterCount} 章${r.volumeCount ? `（${r.volumeCount} 卷）` : ''}`);
+        await loadBooks();
+      } catch (err) {
+        setMessage(`导入失败（${f.name}）：${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   };
 
@@ -339,20 +389,34 @@ export function Home(): JSX.Element {
   return (
     <div className="flex h-full">
       <HomeSidebar />
-      <div className="min-w-0 flex-1 overflow-y-auto">
+      <div
+        className="relative min-w-0 flex-1 overflow-y-auto"
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes('Files')) return;
+          e.preventDefault();
+          setDocDragOver(true);
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDocDragOver(false);
+        }}
+        onDrop={(e) => void handleDocDrop(e)}
+      >
+        {docDragOver && (
+          <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-white/70 p-6">
+            <div className="flex w-full max-w-sm flex-col items-center gap-1.5 rounded-2xl border-2 border-dashed border-violet-400 bg-violet-50/95 px-8 py-10 text-center shadow-xl">
+              <FileUp size={30} className="mb-1 text-violet-600" />
+              <div className="text-sm font-semibold text-violet-700">松开以导入文档</div>
+              <div className="text-xs text-violet-500">支持 TXT / Markdown · 自动按章节标题切分卷章</div>
+            </div>
+          </div>
+        )}
         <header className="mx-auto flex max-w-5xl items-center justify-between px-6 py-6">
           <div>
             <h1 className="text-2xl font-bold">我的书架</h1>
             <p className="text-sm text-ink-500">本地优先 · 多模式 AI · Skill 文风 · 一致性检查</p>
           </div>
           <div className="flex gap-2">
-            <button
-              type="button"
-              className="rounded border border-ink-200 px-3 py-1.5 text-sm hover:bg-ink-100"
-              onClick={() => void importBackup()}
-            >
-              导入备份
-            </button>
+            <ImportMenu onImportDoc={() => void importDocument()} onImportBackup={() => void importBackup()} />
             <button
               type="button"
               className="rounded bg-violet-600 px-3 py-1.5 text-sm text-white hover:bg-violet-700"
