@@ -438,8 +438,8 @@ export class ExportService {
       onProgress?.(chapters.length + j, chapters.length + images.length);
     }
 
-    // v3：项目级指令文件（storageDir 根，缺失跳过）
-    for (const name of ['agents.md', 'hook.md']) {
+    // v3：项目级指令文件 + 全书大纲（storageDir 根，缺失跳过；outline.md 为 G1 兼容扩展）
+    for (const name of ['agents.md', 'hook.md', 'outline.md']) {
       try {
         const text = await this.bridge.fs.readFile(`${storageDir}/${name}`);
         if (text.trim() !== '') zip.addText(`directives/${name}`, text);

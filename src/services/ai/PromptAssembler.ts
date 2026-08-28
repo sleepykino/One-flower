@@ -34,6 +34,8 @@ export interface PromptContext {
   globalPrompts?: string[];
   /** 项目级 agents.md 全文（本书全局指令书，优先级高于 globalPrompts 与 Skill） */
   projectDirective?: string;
+  /** G1：全书大纲有效正文（作者规划的故事走向，前瞻约束；四模式与长文节拍规划注入） */
+  bookOutline?: string;
   /** M2: 强制引用（不受检索相似度影响） */
   forcedRefs?: ForcedReference[];
   /** M5: 当前应执行的节拍（定向续写） */
@@ -59,6 +61,7 @@ export interface TokenBudget {
   userInstruction: number; // ~1000
   globalPrompts: number; // ~600（P2.1-M1，作者全局要求）
   projectDirective: number; // ~1500（项目级 agents.md 指令书）
+  bookOutline: number; // ~800（G1，全书大纲前瞻约束）
   forcedRefs: number; // ~1500（P2.1-M2，作者指定引用）
   reserved: number; // 生成预留 ~8000
 }
@@ -75,6 +78,7 @@ export const DEFAULT_TOKEN_BUDGET: TokenBudget = {
   userInstruction: 1000,
   globalPrompts: 600,
   projectDirective: 1500,
+  bookOutline: 800,
   forcedRefs: 1500,
   reserved: 8000
 };
@@ -178,6 +182,13 @@ export class PromptAssembler {
         .join('\n');
       userParts.push(
         `【世界书设定】\n${truncateToTokenBudget(wbAll, this.budget.worldbook).text}`
+      );
+    }
+
+    // ---- user：全书大纲（G1：前瞻约束——本章在全书计划中的定位，剧情不跑偏）----
+    if (ctx.bookOutline && ctx.bookOutline.trim() !== '') {
+      userParts.push(
+        `【全书大纲（作者规划的故事走向，续写须与本章在大纲中的定位保持一致，不得提前展开后续剧情）】\n${truncateToTokenBudget(ctx.bookOutline, this.budget.bookOutline).text}`
       );
     }
 
@@ -287,6 +298,8 @@ export class PromptAssembler {
     const out: TokenBreakdown[] = [];
     const pdFit = truncateToTokenBudget(ctx.projectDirective ?? '', this.budget.projectDirective);
     out.push({ part: 'projectDirective', tokens: countTokens(pdFit.text), truncated: pdFit.truncated });
+    const boFit = truncateToTokenBudget(ctx.bookOutline ?? '', this.budget.bookOutline);
+    out.push({ part: 'bookOutline', tokens: countTokens(boFit.text), truncated: boFit.truncated });
     const gpAll = (ctx.globalPrompts ?? []).join('\n');
     const gpFit = truncateToTokenBudget(gpAll, this.budget.globalPrompts);
     out.push({ part: 'globalPrompts', tokens: countTokens(gpFit.text), truncated: gpFit.truncated });

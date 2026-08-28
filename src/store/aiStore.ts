@@ -1,4 +1,4 @@
-/** AI 交互状态：流式输出、中断、三选项 */
+/** AI 交互状态：流式输出、中断、三选项、多候选（G3） */
 
 import { create } from 'zustand';
 import type { AIMode } from '../services/skill/types';
@@ -18,6 +18,10 @@ interface AIStore {
   error: string | null;
   report: ConsistencyReport | null;
   typoReport: TypoReport | null; // 错字检查结果
+  /** G3：多候选。candidateTotal=1 为单候选（现状）；>1 时 candidates 按序累积 */
+  candidateTotal: number;
+  candidates: string[];
+  activeCandidate: number; // 流式中=正在生成的第几条；deciding 多候选=临时节点当前展示的下标
 
   setMode: (mode: AIMode) => void;
   startStream: () => AbortController;
@@ -25,9 +29,15 @@ interface AIStore {
   appendText: (delta: string) => void;
   /** 整体替换本次累计文本（hook.md 后处理替换用） */
   setText: (text: string) => void;
+  /** G3：开始一次多候选生成（重置候选集合） */
+  beginCandidates: (total: number) => void;
+  /** G3：当前 generatedText 完成一条候选，入列并指向它 */
+  pushCandidate: () => void;
+  /** G3：切换临时节点展示的候选（多候选挑选） */
+  setActiveCandidate: (index: number) => void;
   reset: () => void;
   setReport: (report: ConsistencyReport | null) => void;
-  setTypoReport: (report: TypoReport | null) => void;
+  setTypoReport: (typoReport: TypoReport | null) => void;
   setChecking: (checking: boolean) => void;
 }
 
@@ -39,6 +49,9 @@ export const useAIStore = create<AIStore>((set) => ({
   error: null,
   report: null,
   typoReport: null,
+  candidateTotal: 1,
+  candidates: [],
+  activeCandidate: 0,
 
   setMode: (mode) => set({ mode }),
 
@@ -61,7 +74,26 @@ export const useAIStore = create<AIStore>((set) => ({
 
   setText: (text) => set({ generatedText: text }),
 
-  reset: () => set({ phase: 'idle', abortController: null, generatedText: '', error: null }),
+  beginCandidates: (total) => set({ candidateTotal: total, candidates: [], activeCandidate: 0 }),
+
+  pushCandidate: () =>
+    set((s) => {
+      const candidates = [...s.candidates, s.generatedText];
+      return { candidates, activeCandidate: candidates.length - 1 };
+    }),
+
+  setActiveCandidate: (index) => set({ activeCandidate: index }),
+
+  reset: () =>
+    set({
+      phase: 'idle',
+      abortController: null,
+      generatedText: '',
+      error: null,
+      candidateTotal: 1,
+      candidates: [],
+      activeCandidate: 0
+    }),
 
   setReport: (report) => set({ report }),
   setTypoReport: (typoReport) => set({ typoReport }),

@@ -11,6 +11,8 @@ import type { LLMProvider, ChatChunk, ChatMessage } from './providers/LLMProvide
 import { createProvider } from './providers/LLMProvider';
 import type { GlobalPromptService } from './GlobalPromptService';
 import type { ProjectDirectiveService } from './ProjectDirectiveService';
+import type { BookOutlineService } from '../outline/BookOutlineService';
+import { createRecordingProvider, getSharedUsageService } from '../usage/UsageService';
 import type { FeatureKey } from './modelRouting';
 import { resolveProviderConfigIdForFeature } from './providerResolver';
 import type { SummaryService } from '../summary/SummaryService';
@@ -62,6 +64,8 @@ export class AIOrchestrator {
   private globalPromptService?: GlobalPromptService;
   /** 项目级 agents.md 指令书（app-context 装配 setter 注入） */
   private projectDirectiveService?: ProjectDirectiveService;
+  /** G1：全书大纲服务（app-context 装配 setter 注入，前瞻约束注入四模式） */
+  private bookOutlineService?: BookOutlineService;
 
   constructor(
     providerFactory: (configId: string) => Promise<LLMProvider>,
@@ -85,6 +89,11 @@ export class AIOrchestrator {
   /** 项目级指令服务装配（agents.md 注入 system 段最高优先级） */
   setProjectDirectiveService(pd: ProjectDirectiveService): void {
     this.projectDirectiveService = pd;
+  }
+
+  /** G1：全书大纲服务装配（outline.md 注入 user 段前瞻约束） */
+  setBookOutlineService(svc: BookOutlineService): void {
+    this.bookOutlineService = svc;
   }
 
   /** ContextPanel 用：取最近一次调用的上下文快照 */
@@ -171,7 +180,10 @@ export class AIOrchestrator {
   private async resolveProvider(bookId: string, feature: FeatureKey): Promise<LLMProvider> {
     const configId = await resolveProviderConfigIdForFeature(this.bridge, bookId, feature);
     if (!configId) throw new Error('未配置任何模型，请先到设置页添加 Provider 配置');
-    return this.providerFactory(configId);
+    const raw = await this.providerFactory(configId);
+    // G4：四模式 + 错字检查统一记账（fire-and-forget，不影响生成主路径）
+    const usage = getSharedUsageService();
+    return usage ? createRecordingProvider(raw, { bookId, feature, configId }, usage) : raw;
   }
 
   /**
@@ -251,6 +263,13 @@ export class AIOrchestrator {
         ctx.projectDirective = await this.projectDirectiveService.agentsText(bookId);
       } catch (e) {
         console.warn('[AI] 读取本书 agents.md 失败，已跳过:', e);
+      }
+    }
+    if (this.bookOutlineService) {
+      try {
+        ctx.bookOutline = await this.bookOutlineService.outlineText(bookId);
+      } catch (e) {
+        console.warn('[AI] 读取本书大纲失败，已跳过:', e);
       }
     }
     if (this.globalPromptService) {

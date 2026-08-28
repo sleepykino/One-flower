@@ -17,6 +17,7 @@ import wbEnabledSql from './migrations/010_worldbook_enabled.sql?raw';
 import p6Sql from './migrations/011_p6_bookshelf.sql?raw';
 import lfEnhSql from './migrations/012_longform_hints.sql?raw';
 import lfSeamsSql from './migrations/013_longform_seams.sql?raw';
+import aiUsageSql from './migrations/014_ai_usage.sql?raw';
 
 interface Migration {
   version: number;
@@ -36,7 +37,8 @@ export const MIGRATIONS: Migration[] = [
   { version: 10, sql: wbEnabledSql },
   { version: 11, sql: p6Sql },
   { version: 12, sql: lfEnhSql },
-  { version: 13, sql: lfSeamsSql }
+  { version: 13, sql: lfSeamsSql },
+  { version: 14, sql: aiUsageSql }
 ];
 
 /**

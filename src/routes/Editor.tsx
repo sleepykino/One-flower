@@ -31,6 +31,7 @@ import { useEditorStore } from '../store/editorStore';
 import { getEffectiveShortcuts, matchesShortcut } from '../utils/keymap';
 import { NovelEditor } from '../components/editor/NovelEditor';
 import { FocusMode } from '../components/editor/FocusMode';
+import { OutlineModal } from '../components/editor/OutlineModal';
 import { ChapterTree } from '../components/chapter-tree/ChapterTree';
 import { AIPanel } from '../components/ai/AIPanel';
 import { ContextPanel } from '../components/ai/ContextPanel';
@@ -158,6 +159,8 @@ export function Editor(): JSX.Element {
   const [mapOpen, setMapOpen] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [namegenOpen, setNamegenOpen] = useState(false);
+  // G1：全书大纲编辑弹窗
+  const [outlineOpen, setOutlineOpen] = useState(false);
   // P5：剧本工作台 overlay（对齐 mapOpen 先例）
   const [screenplayOpen, setScreenplayOpen] = useState(false);
   const [screenplayInitial, setScreenplayInitial] = useState<{ id?: string; wizard?: boolean }>({});
@@ -310,7 +313,15 @@ export function Editor(): JSX.Element {
           {currentChapter ? `${currentChapter.title} · ${liveWordCount ?? currentChapter.wordCount} 字` : '未选择章节'}
         </div>
         <div className="ml-auto flex items-center gap-2 text-xs">
-          {/* P2 工具组：专注 / 地图 / 时间线 / 命名 */}
+          {/* P2 工具组：专注 / 大纲 / 地图 / 时间线 / 命名 */}
+          <button
+            type="button"
+            className="rounded border border-ink-200 px-2 py-1 text-ink-500 hover:bg-ink-100"
+            title="全书大纲（注入 AI 生成的前瞻约束）"
+            onClick={() => setOutlineOpen(true)}
+          >
+            大纲
+          </button>
           <button
             type="button"
             className={`rounded border px-2 py-1 hover:bg-ink-100 ${
@@ -560,6 +571,7 @@ export function Editor(): JSX.Element {
         </ErrorBoundary>
       )}
       {timelineOpen && <TimelineView bookId={bookId} onClose={() => setTimelineOpen(false)} />}
+      {outlineOpen && <OutlineModal bookId={bookId} onClose={() => setOutlineOpen(false)} />}
       {namegenOpen && <NameGenerator bookId={bookId} onClose={() => setNamegenOpen(false)} />}
       {screenplayOpen && (
         <ErrorBoundary title="剧本工作台出错了" onClose={() => setScreenplayOpen(false)}>

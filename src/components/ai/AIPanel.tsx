@@ -11,6 +11,7 @@ import { useEditorStore } from '../../store/editorStore';
 import { useAIStore } from '../../store/aiStore';
 import type { AIMode } from '../../services/skill/types';
 import type { ChapterBeat } from '../../services/chapter/ChapterService';
+import type { AiReference } from '../../services/ai/types';
 import type { Character } from '../../types';
 import { ConsistencyReportView } from './ConsistencyReport';
 import { TypoReportView } from './TypoReportView';
@@ -34,6 +35,10 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
   const error = useAIStore((s) => s.error);
   const report = useAIStore((s) => s.report);
   const typoReport = useAIStore((s) => s.typoReport);
+  // G3：多候选（候选总数 / 已完成集合 / 临时节点当前展示下标）
+  const candidates = useAIStore((s) => s.candidates);
+  const activeCandidate = useAIStore((s) => s.activeCandidate);
+  const candidateTotal = useAIStore((s) => s.candidateTotal);
   const chapters = useEditorStore((s) => s.chapters);
   const currentChapterId = useEditorStore((s) => s.currentChapterId);
   const selectedText = useEditorStore((s) => s.selectedText);
@@ -54,6 +59,8 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
   // 生成参数：单次回复 token 上限（约等于中文字数）与采样温度
   const [maxTokens, setMaxTokens] = useState(2048);
   const [temperature, setTemperature] = useState('0.8');
+  // G3：候选数（续写 / 改写；1 = 单候选与现状一致，>1 逐条生成后挑选）
+  const [candidateCount, setCandidateCount] = useState(1);
   const tempValue = (): number | undefined => {
     const t = parseFloat(temperature);
     return Number.isFinite(t) && t >= 0 && t <= 2 ? t : undefined;
@@ -161,24 +168,18 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
     })().catch(() => null);
   };
 
-  /** 统一流式执行器：临时节点承载输出；hook block 命中时带反馈自动重试一次 */
-  const runStream = async (
+  /**
+   * 生成一条候选：临时节点承载输出；hook block 命中时带反馈自动重试一次。
+   * 不落 store 终态（phase 由调用方统一 settle），返回文本与中断/错误标记。
+   */
+  const generateOne = async (
     kind: 'continue' | 'rewrite' | 'dialogue',
-    range: { from: number; to: number } | null
-  ): Promise<void> => {
+    range: { from: number; to: number } | null,
+    aiReferences: AiReference[]
+  ): Promise<{ text: string; aborted: boolean; error?: string }> => {
     const { orchestrator, multiPerspectiveRewriter } = getAppContext();
-    const api = useEditorStore.getState().editorApi;
-    if (!api || !currentChapterId) {
-      void toast.info('请先选择要编辑的章节');
-      return;
-    }
+    const api = useEditorStore.getState().editorApi!;
     const controller = useAIStore.getState().startStream();
-    setHookHits(null);
-    setHookRetried(null);
-
-    // P2.1-M2：透传当前文档引用标记（orchestrator 注入 forcedRefs 全文）
-    const aiReferences = api.getAiReferences();
-
     try {
       const recent = await gatherRecent();
       const makeIterable = (feedback?: string): AsyncIterable<{ delta: string; done: boolean }> => {
@@ -186,7 +187,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
           const req = [continueReq.trim(), feedback].filter(Boolean).join('\n') || undefined;
           return orchestrator.continueWriting({
             bookId,
-            chapterId: currentChapterId,
+            chapterId: currentChapterId!,
             currentContent: api.getPlainText(),
             recentChapters: recent,
             selectedCharacterIds: selectedCharIds,
@@ -204,7 +205,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
           if (perspective) {
             return multiPerspectiveRewriter.rewrite({
               bookId,
-              chapterId: currentChapterId,
+              chapterId: currentChapterId!,
               selectedText,
               perspective: perspective.label,
               characterId: perspective.characterId,
@@ -216,7 +217,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
           }
           return orchestrator.rewrite({
             bookId,
-            chapterId: currentChapterId,
+            chapterId: currentChapterId!,
             selectedText: selectedText,
             instruction: [instruction.trim(), feedback].filter(Boolean).join('\n'),
             recentChapters: recent,
@@ -228,7 +229,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
         }
         return orchestrator.generateDialogue({
           bookId,
-          chapterId: currentChapterId,
+          chapterId: currentChapterId!,
           scene,
           characterIds: selectedCharIds,
           recentChapters: recent,
@@ -261,19 +262,63 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
         break;
       }
       api.finishAITemp();
-      useAIStore.getState().finishStream('done');
+      return { text: useAIStore.getState().generatedText, aborted: false };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       const aborted = controller.signal.aborted || msg.includes('Abort');
       if (aborted) {
-        // 中断：保留临时节点，交由三选项处理
+        // 中断：保留临时节点半截内容（多候选时作为一条候选进入挑选）
         api.finishAITemp();
-        useAIStore.getState().finishStream('aborted');
-      } else {
-        api.discardAITemp();
-        useAIStore.getState().finishStream('error', msg);
+        return { text: useAIStore.getState().generatedText, aborted: true };
       }
+      api.discardAITemp();
+      return { text: '', aborted: false, error: msg };
     }
+  };
+
+  /** 统一流式执行器：候选数 n=1 与现状完全一致；n>1 逐条顺序生成后进入多候选挑选 */
+  const runStream = async (
+    kind: 'continue' | 'rewrite' | 'dialogue',
+    range: { from: number; to: number } | null,
+    candidateCount = 1
+  ): Promise<void> => {
+    const api = useEditorStore.getState().editorApi;
+    if (!api || !currentChapterId) {
+      void toast.info('请先选择要编辑的章节');
+      return;
+    }
+    setHookHits(null);
+    setHookRetried(null);
+
+    // P2.1-M2：透传当前文档引用标记（orchestrator 注入 forcedRefs 全文）
+    const aiReferences = api.getAiReferences();
+
+    if (candidateCount <= 1) {
+      // 清残留候选态：多候选挑选中途放弃（未点保留/丢弃）时 candidates 会残留，
+      // 不清会导致下一次单候选生成完成后误弹旧候选的挑选界面
+      useAIStore.getState().beginCandidates(1);
+      const r = await generateOne(kind, range, aiReferences);
+      if (r.error) useAIStore.getState().finishStream('error', r.error);
+      else useAIStore.getState().finishStream(r.aborted ? 'aborted' : 'done');
+      return;
+    }
+
+    // G3 多候选：每条独立过 hook 校验与中断处置；完成后临时节点停留在最后一条，进入挑选
+    useAIStore.getState().beginCandidates(candidateCount);
+    for (let i = 0; i < candidateCount; i++) {
+      useAIStore.getState().setActiveCandidate(i);
+      if (i > 0) api.discardAITemp();
+      const r = await generateOne(kind, range, aiReferences);
+      if (r.error) {
+        // 单条失败：已有可用候选则以现有候选进入挑选，否则回到单发错误态
+        if (useAIStore.getState().candidates.length > 0) break;
+        useAIStore.getState().finishStream('error', r.error);
+        return;
+      }
+      if (r.text.trim() !== '' || r.aborted) useAIStore.getState().pushCandidate();
+      if (r.aborted) break; // 用户停止：以已完成候选进入挑选
+    }
+    useAIStore.getState().finishStream('done');
   };
 
   const stop = (): void => {
@@ -494,13 +539,20 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
               temperature={temperature}
               setTemperature={setTemperature}
             />
+            <CandidatePicker value={candidateCount} onChange={setCandidateCount} disabled={streaming} />
             <button
               type="button"
               disabled={streaming || !currentChapterId}
               className="mt-3 w-full rounded bg-violet-600 py-1.5 text-sm text-white hover:bg-violet-700 disabled:opacity-40"
-              onClick={() => void runStream('continue', null)}
+              onClick={() => void runStream('continue', null, candidateCount)}
             >
-              {streaming ? '生成中…' : '开始续写'}
+              {streaming
+                ? candidateTotal > 1
+                  ? `生成候选 ${Math.min(activeCandidate + 1, candidateTotal)}/${candidateTotal}…`
+                  : '生成中…'
+                : candidateCount > 1
+                  ? `开始续写（${candidateCount} 条候选）`
+                  : '开始续写'}
             </button>
           </div>
         )}
@@ -545,6 +597,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
               temperature={temperature}
               setTemperature={setTemperature}
             />
+            <CandidatePicker value={candidateCount} onChange={setCandidateCount} disabled={streaming} />
             <button
               type="button"
               disabled={streaming || !selectedText || (!instruction.trim() && !perspectiveId)}
@@ -552,10 +605,18 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
               onClick={() => {
                 const api = useEditorStore.getState().editorApi;
                 const range = api?.getSelectionRange() ?? null;
-                void runStream('rewrite', range);
+                void runStream('rewrite', range, candidateCount);
               }}
             >
-              {streaming ? '生成中…' : perspectiveId ? `从${perspectiveId}重写` : '开始改写'}
+              {streaming
+                ? candidateTotal > 1
+                  ? `生成候选 ${Math.min(activeCandidate + 1, candidateTotal)}/${candidateTotal}…`
+                  : '生成中…'
+                : perspectiveId
+                  ? `从${perspectiveId}重写`
+                  : candidateCount > 1
+                    ? `开始改写（${candidateCount} 条候选）`
+                    : '开始改写'}
             </button>
           </div>
         )}
@@ -686,7 +747,60 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
               停止
             </button>
           )}
-          {deciding && (
+          {deciding && candidates.length > 1 ? (
+            <>
+              {/* G3：多候选挑选——点击切换临时节点预览，采纳/全部丢弃 */}
+              <div className="mb-1 text-xs text-ink-500">
+                已生成 {candidates.length} 条候选，点击切换预览：
+              </div>
+              <div className="mb-1.5 flex gap-1">
+                {candidates.map((c, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    className={`flex-1 rounded border py-1 text-xs ${
+                      i === activeCandidate
+                        ? 'border-violet-400 bg-violet-50 font-medium text-violet-700'
+                        : 'border-ink-200 text-ink-500 hover:bg-ink-100'
+                    }`}
+                    onClick={() => {
+                      useAIStore.getState().setActiveCandidate(i);
+                      const api = useEditorStore.getState().editorApi;
+                      if (!api) return;
+                      // 整体替换临时节点内容（setAITempText 会重置为流式态，需重新标记完成）
+                      api.setAITempText(c);
+                      api.finishAITemp();
+                    }}
+                  >
+                    候选 {i + 1}
+                    <span className="ml-0.5 text-[10px] text-ink-400">{c.length}字</span>
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-1">
+                <button
+                  type="button"
+                  className="flex-1 rounded bg-emerald-600 py-1 text-xs text-white hover:bg-emerald-700"
+                  onClick={() => {
+                    useEditorStore.getState().editorApi?.acceptAITemp();
+                    useAIStore.getState().reset();
+                  }}
+                >
+                  保留此候选
+                </button>
+                <button
+                  type="button"
+                  className="flex-1 rounded bg-red-500 py-1 text-xs text-white hover:bg-red-600"
+                  onClick={() => {
+                    useEditorStore.getState().editorApi?.discardAITemp();
+                    useAIStore.getState().reset();
+                  }}
+                >
+                  全部丢弃
+                </button>
+              </div>
+            </>
+          ) : deciding ? (
             <>
               <div className="mb-1 text-xs text-ink-500">
                 已生成 {useAIStore.getState().generatedText.length} 字，请选择：
@@ -721,7 +835,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
                 </button>
               </div>
             </>
-          )}
+          ) : null}
         </div>
       )}
       {/* 本书指令编辑弹窗（关闭时刷新生效状态提示） */}
@@ -734,6 +848,36 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
           }}
         />
       )}
+    </div>
+  );
+}
+
+/** G3：候选数选择（1 = 单候选与现状一致；>1 逐条生成后挑选，耗时与消耗按倍数增加） */
+function CandidatePicker({
+  value,
+  onChange,
+  disabled
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  disabled: boolean;
+}): JSX.Element {
+  return (
+    <div className="mt-2 flex items-center gap-2">
+      <span className="text-xs text-ink-500">候选数</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        disabled={disabled}
+        className="rounded border border-ink-200 bg-white px-1.5 py-0.5 text-xs outline-none focus:border-violet-400 disabled:opacity-50"
+      >
+        {[1, 2, 3].map((n) => (
+          <option key={n} value={n}>
+            {n === 1 ? '1（单候选）' : `${n} 条`}
+          </option>
+        ))}
+      </select>
+      {value > 1 && <span className="text-[11px] text-amber-600">生成 {value} 次，挑选后只保留一条</span>}
     </div>
   );
 }

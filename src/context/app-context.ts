@@ -21,6 +21,8 @@ import { EpubExporter } from '../services/export/EpubExporter';
 import { DocxExporter } from '../services/export/DocxExporter';
 import { ImportService } from '../services/import/ImportService';
 import { DocImportService } from '../services/import/DocImportService';
+import { BookOutlineService } from '../services/outline/BookOutlineService';
+import { UsageService, setSharedUsageService } from '../services/usage/UsageService';
 import { PromptAssembler } from '../services/ai/PromptAssembler';
 import { AIOrchestrator } from '../services/ai/AIOrchestrator';
 import { GlobalPromptService } from '../services/ai/GlobalPromptService';
@@ -69,6 +71,10 @@ export interface AppContext {
   importService: ImportService;
   /** TXT / Markdown 文档导入（书架按钮 + 拖入书架） */
   docImportService: DocImportService;
+  /** G1：全书大纲（storage_dir/outline.md，编辑器「大纲」弹窗编辑，注入 AI 生成） */
+  outlineService: BookOutlineService;
+  /** G4：AI 用量流水与累计统计（对话类 LLM 调用记账；设置页「用量统计」读取） */
+  usageService: UsageService;
   promptAssembler: PromptAssembler;
   orchestrator: AIOrchestrator;
   /** P2.1-M1：自定义全局提示词 */
@@ -184,6 +190,7 @@ export async function initApp(): Promise<AppContext> {
   );
   const importService = new ImportService(tauriBridge, db, wq);
   const docImportService = new DocImportService(tauriBridge, bookService, chapterService);
+  const outlineService = new BookOutlineService(tauriBridge);
 
   const promptAssembler = new PromptAssembler();
 
@@ -214,6 +221,9 @@ export async function initApp(): Promise<AppContext> {
 
   const summaryService = new SummaryService(tauriBridge, db, wq, providerFactory, chapterService);
   const appSettings = new AppSettingsService(db, wq);
+  // G4：用量记账（providerResolver / Orchestrator 经共享单例取用，须在首个生成前装配）
+  const usageService = new UsageService(tauriBridge, db, wq, appSettings);
+  setSharedUsageService(usageService);
   const ragService = new WorldbookRAGService(tauriBridge, db, wq, providerFactory, appSettings);
   // P2：全量 RAG / 地图 / 时间线 / Skill 包
   const fullRagService = new FullRAGService(tauriBridge, db, wq, providerFactory, appSettings);
@@ -234,6 +244,8 @@ export async function initApp(): Promise<AppContext> {
   // P2.1-M1：全局提示词（四模式统一注入 system 段，优先级高于 Skill）
   const globalPrompts = new GlobalPromptService(appSettings);
   orchestrator.setGlobalPromptService(globalPrompts);
+  // G1：全书大纲注入四模式（user 段前瞻约束）；长文节拍规划在 longformService 构造后接线
+  orchestrator.setBookOutlineService(outlineService);
   // 项目级 agents.md / hook.md（storage_dir 文件）
   const projectDirectives = new ProjectDirectiveService(tauriBridge);
   orchestrator.setProjectDirectiveService(projectDirectives);
@@ -261,6 +273,7 @@ export async function initApp(): Promise<AppContext> {
     chapterService,
     generationContext
   );
+  longformService.setBookOutlineService(outlineService);
 
   // 客户端更新（方案 A：GitHub latest release 检查，浏览器打开下载页）
   const updateService = new UpdateService(appSettings);
@@ -304,6 +317,8 @@ export async function initApp(): Promise<AppContext> {
     exportService,
     importService,
     docImportService,
+    outlineService,
+    usageService,
     promptAssembler,
     orchestrator,
     globalPrompts,
@@ -339,6 +354,8 @@ export async function initApp(): Promise<AppContext> {
 
   // P6：自动备份调度器启动（服务层挂载，StrictMode 安全；15s 首检 + 每小时重检，全程静默）
   autoBackupService.start();
+  // G4：用量保留期清理调度（15s 首检 + 每 6 小时重检，保留期 0 = 永久时跳过）
+  usageService.startScheduler();
 
   return ctx;
 }

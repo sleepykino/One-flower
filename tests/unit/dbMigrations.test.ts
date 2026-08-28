@@ -153,7 +153,8 @@ const EXPECTED_ADD_COLUMN_COUNTS: Record<number, number> = {
   10: 1,
   11: 3,
   12: 2,
-  13: 1
+  13: 1,
+  14: 0
 };
 
 describe('迁移注册一致性', () => {

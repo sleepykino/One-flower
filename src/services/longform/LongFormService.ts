@@ -11,6 +11,7 @@ import type { GenerationContextService } from '../ai/GenerationContext';
 import type { AiReference } from '../ai/types';
 import type { TaskCenterService } from '../task/TaskCenterService';
 import type { ChapterService } from '../chapter/ChapterService';
+import type { BookOutlineService } from '../outline/BookOutlineService';
 import { resolveProviderForFeature, resolveModelNameForFeature } from '../ai/providerResolver';
 import type { LLMProvider } from '../ai/providers/LLMProvider';
 import type { LongFormBeat, LongFormRunHooks, LongFormSession, SeamIssue } from './types';
@@ -54,6 +55,8 @@ export class LongFormService {
   private chapters: ChapterService;
   /** 批次11-4：不经 orchestrator 的调用统一补充全局提示词 + 文风 Skill */
   private generation: GenerationContextService;
+  /** G1：全书大纲服务（app-context 装配 setter 注入；节拍规划注入前瞻约束） */
+  private bookOutlineService?: BookOutlineService;
   /** 会话 -> 任务 id（pause 经任务取消触发 abort） */
   private taskIds = new Map<string, string>();
   /** 会话 -> 接缝自检结果（内存态，UI 读取展示） */
@@ -76,6 +79,11 @@ export class LongFormService {
     this.tasks = tasks;
     this.chapters = chapters;
     this.generation = generation;
+  }
+
+  /** G1：全书大纲服务装配（draftBeats 注入【全书大纲】段） */
+  setBookOutlineService(svc: BookOutlineService): void {
+    this.bookOutlineService = svc;
   }
 
   // ---------------- 步骤 1：节拍表初稿 ----------------
@@ -110,6 +118,15 @@ export class LongFormService {
     }));
 
     const material: string[] = [];
+    // G1：全书大纲前瞻约束——节拍须落在全书计划中本章对应的阶段区间内
+    if (this.bookOutlineService) {
+      try {
+        const bookOutline = await this.bookOutlineService.outlineText(params.bookId);
+        if (bookOutline) material.push('【全书大纲（全书计划，本章节拍须与对应阶段定位一致）】', bookOutline);
+      } catch (e) {
+        console.warn('[LongForm] 读取本书大纲失败，已跳过:', e);
+      }
+    }
     // 批次11-1：注入角色卡概要，让节拍规划师知晓出场角色与弧光（与后续生成循环装配对齐）
     const characters = await this.loadCharacterSummaries(params.bookId);
     if (characters) material.push('【本书角色卡概要】', characters);

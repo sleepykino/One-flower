@@ -16,6 +16,7 @@ import {
   DatabaseBackup,
   Settings2,
   Keyboard,
+  Gauge,
   type LucideIcon
 } from 'lucide-react';
 import { ModelsSection } from '../components/settings/ModelsSection';
@@ -27,10 +28,12 @@ import { DataSection } from '../components/settings/DataSection';
 import { GeneralSection } from '../components/settings/GeneralSection';
 import { DirectivesGuideSection } from '../components/settings/DirectivesGuideSection';
 import { ShortcutsSection } from '../components/settings/ShortcutsSection';
+import { UsageSection } from '../components/settings/UsageSection';
 
 type SectionKey =
   | 'models'
   | 'routing'
+  | 'usage'
   | 'prompts'
   | 'directives'
   | 'appearance'
@@ -50,7 +53,8 @@ const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
     label: '模型与服务',
     items: [
       { key: 'models', label: '模型接入', icon: Plug },
-      { key: 'routing', label: '模型分工', icon: Route }
+      { key: 'routing', label: '模型分工', icon: Route },
+      { key: 'usage', label: '用量统计', icon: Gauge }
     ]
   },
   {
@@ -83,6 +87,7 @@ const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
 const SECTION_TITLES: Record<SectionKey, string> = {
   models: '模型接入',
   routing: 'AI 模型分工',
+  usage: '用量统计',
   prompts: '全局提示词',
   directives: '指令说明',
   appearance: '编辑器外观',
@@ -142,6 +147,7 @@ export function Settings(): JSX.Element {
           <h1 className="mb-4 text-lg font-bold">{SECTION_TITLES[section]}</h1>
           {section === 'models' && <ModelsSection />}
           {section === 'routing' && <FeatureModelsSection />}
+          {section === 'usage' && <UsageSection />}
           {section === 'prompts' && <GlobalPromptsSection />}
           {section === 'directives' && <DirectivesGuideSection onGoSection={(s) => setSection(s)} />}
           {section === 'appearance' && <AppearanceSection />}

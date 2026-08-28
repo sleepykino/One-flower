@@ -9,6 +9,7 @@
 import type { NativeBridge } from '../../native/NativeBridge';
 import type { LLMProvider } from './providers/LLMProvider';
 import type { FeatureKey } from './modelRouting';
+import { createRecordingProvider, getSharedUsageService } from '../usage/UsageService';
 
 /**
  * 默认配置的 configId（模型分工未指定时的全局默认：优先被标记为默认的配置，无标记回退第一组）
@@ -106,7 +107,8 @@ export async function resolveModelNameForFeature(
   return row.model;
 }
 
-/** 按功能点解析 Provider 实例（所有 AI 功能点统一入口） */
+/** 按功能点解析 Provider 实例（所有 AI 功能点统一入口）；
+ *  G4：对话类功能在返回前包一层用量记账装饰器（嵌入不入账），记账 fire-and-forget */
 export async function resolveProviderForFeature(
   bridge: NativeBridge,
   bookId: string,
@@ -115,5 +117,8 @@ export async function resolveProviderForFeature(
 ): Promise<LLMProvider> {
   const configId = await resolveProviderConfigIdForFeature(bridge, bookId, feature);
   if (!configId) throw new Error('未配置任何模型，请先到设置页「模型接入」添加 Provider 配置');
-  return factory(configId);
+  const raw = await factory(configId);
+  const usage = getSharedUsageService();
+  if (!usage || feature === 'embedding') return raw;
+  return createRecordingProvider(raw, { bookId, feature, configId }, usage);
 }

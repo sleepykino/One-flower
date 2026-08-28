@@ -550,11 +550,13 @@ export class ImportService {
       });
     }
 
-    // v3：项目级指令文件恢复（zip directives/ -> 新书 storageDir 根）
+    // v3：项目级指令文件 + 全书大纲恢复（zip directives/ -> 新书 storageDir 根；outline.md 缺省兼容旧备份）
     const agentsRaw = files.get('directives/agents.md');
     const hookRaw = files.get('directives/hook.md');
+    const outlineRaw = files.get('directives/outline.md');
     if (agentsRaw) await this.bridge.fs.writeFile(`${storageDir}/agents.md`, this.decode(agentsRaw));
     if (hookRaw) await this.bridge.fs.writeFile(`${storageDir}/hook.md`, this.decode(hookRaw));
+    if (outlineRaw) await this.bridge.fs.writeFile(`${storageDir}/outline.md`, this.decode(outlineRaw));
 
     await this.wq.enqueue(() =>
       this.db.transaction(async (tx) => {
