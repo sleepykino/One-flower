@@ -17,6 +17,7 @@ import { ConsistencyReportView } from './ConsistencyReport';
 import { TypoReportView } from './TypoReportView';
 import { LongFormPanel } from './LongFormPanel';
 import { DirectiveModal } from './DirectiveModal';
+import { TourHintButton } from '../onboarding/TourHintButton';
 import { applyHookRules } from '../../services/ai/ProjectDirectiveService';
 import type { HookHit, HookRule } from '../../services/ai/ProjectDirectiveService';
 import type { AvailablePerspective } from '../../services/inspiration/types';
@@ -434,7 +435,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
   return (
     <div className="flex h-full flex-col">
       {/* 模式 tab（四模式 + 长文） */}
-      <div className="flex border-b border-ink-200">
+      <div className="flex border-b border-ink-200" data-tour="ai-modes">
         {MODES.map((m) => (
           <button
             key={m.key}
@@ -465,11 +466,15 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
         >
           长文
         </button>
+        <TourHintButton tourId="ai-panel" className="mt-2" />
       </div>
 
       {/* 本书指令入口（agents.md 全局指令 + hook.md 输出规则）+ 生效状态提示（窄栏单行） */}
       {!longform && (
-        <div className="flex shrink-0 items-center justify-between whitespace-nowrap border-b border-ink-100 px-3 py-1.5">
+        <div
+          className="flex shrink-0 items-center justify-between whitespace-nowrap border-b border-ink-100 px-3 py-1.5"
+          data-tour="ai-directives"
+        >
           <button
             type="button"
             title="agents.md 全局指令 · hook.md 输出规则"
@@ -506,7 +511,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
       <div className="flex-1 overflow-y-auto">
         {/* 续写 */}
         {mode === 'continue' && (
-          <div className="p-3">
+          <div className="p-3" data-tour="ai-continue-params">
             <div className="mb-2 text-xs text-ink-500">
               当前：{currentChapter?.title ?? '未选择章节'} · 前情自动取最近 3 章
             </div>
@@ -726,6 +731,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
         {mode === 'continue' && !streaming && !deciding && (
           <button
             type="button"
+            data-tour="ai-longform-entry"
             className="m-3 mt-0 rounded border border-violet-200 bg-violet-50/50 py-1.5 text-center text-xs text-violet-700 hover:bg-violet-100"
             onClick={() => setLongform(true)}
           >
@@ -863,7 +869,7 @@ function CandidatePicker({
   disabled: boolean;
 }): JSX.Element {
   return (
-    <div className="mt-2 flex items-center gap-2">
+    <div className="mt-2 flex items-center gap-2" data-tour="ai-candidates">
       <span className="text-xs text-ink-500">候选数</span>
       <select
         value={value}

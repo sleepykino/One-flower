@@ -213,6 +213,23 @@ export function Editor(): JSX.Element {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // P7.1：引导指令接线（openEditorTab 切 rail tab / openOverlay 开剧本工作台），极薄事件响应
+  useEffect(() => {
+    const onOpenTab = (e: Event): void => setTab((e as CustomEvent<string>).detail as RightTab);
+    const onOpenOverlay = (e: Event): void => {
+      if ((e as CustomEvent<string>).detail === 'screenplay') {
+        setScreenplayInitial({});
+        setScreenplayOpen(true);
+      }
+    };
+    window.addEventListener('onboarding-open-editor-tab', onOpenTab);
+    window.addEventListener('onboarding-open-overlay', onOpenOverlay);
+    return () => {
+      window.removeEventListener('onboarding-open-editor-tab', onOpenTab);
+      window.removeEventListener('onboarding-open-overlay', onOpenOverlay);
+    };
+  }, []);
+
   /** AI 生成地图：解析书籍绑定的 provider，chat 生成 { nodes, connections } JSON 字符串 */
   const aiGenerateMap = useCallback(
     async (prompt: string): Promise<string> => {
@@ -312,7 +329,7 @@ export function Editor(): JSX.Element {
         <div className="text-xs tabular-nums text-ink-400" title="实时字数（保存后与落盘值同步）">
           {currentChapter ? `${currentChapter.title} · ${liveWordCount ?? currentChapter.wordCount} 字` : '未选择章节'}
         </div>
-        <div className="ml-auto flex items-center gap-2 text-xs">
+        <div className="ml-auto flex items-center gap-2 text-xs" data-tour="editor-topbar-focus">
           {/* P2 工具组：专注 / 大纲 / 地图 / 时间线 / 命名 */}
           <button
             type="button"
@@ -431,7 +448,10 @@ export function Editor(): JSX.Element {
 
       {/* P2.1-M7：长文会话恢复横幅 */}
       {lfActive && lfActive.beats.length > 0 && (
-        <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-xs text-amber-800">
+        <div
+          data-tour="longform-recovery"
+          className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-xs text-amber-800"
+        >
           <span>
             检测到未完成的长文生成（第{' '}
             {Math.min(lfActive.currentBeatIndex + 1, lfActive.beats.length)}/{lfActive.beats.length}{' '}
@@ -463,6 +483,7 @@ export function Editor(): JSX.Element {
       {/* 三栏布局 */}
       <div className="flex min-h-0 flex-1">
         <aside
+          data-tour="editor-chapter-tree"
           className={`shrink-0 overflow-hidden border-r border-ink-200 bg-ink-50 transition-[width] duration-200 ${
             leftOpen ? 'w-64' : 'w-0 border-r-0'
           }`}
@@ -472,7 +493,7 @@ export function Editor(): JSX.Element {
           </div>
         </aside>
 
-        <main className="min-w-0 flex-1">
+        <main className="min-w-0 flex-1" data-tour="editor-canvas">
           {currentChapterId ? (
             <FocusMode active={focusOn} onExit={() => setFocusOn(false)}>
               <NovelEditor bookId={bookId} />

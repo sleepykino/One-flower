@@ -9,7 +9,12 @@ export const APP_URL = process.env.TAURI_APP_URL ?? 'http://localhost:5173';
  * tauriPage fixture：连接运行中的 Tauri 应用并返回其主页面。
  * - 每条用例独立建立/断开 CDP 会话，互不残留
  * - 未启动 tauri dev 时给出明确报错
+ * - P7.1：整个进程内仅首次连接时带 ?onboarding=off 重载一次，隔离引导自动触发
+ *   （e2e 与真实应用共享数据目录，不预置/不污染引导状态；会话级模块标志保证
+ *   SPA 跳转丢失参数后依旧关闭自动触发，不影响任何 phase spec 的既有行为）
  */
+let onboardingIsolated = false;
+
 export const test = base.extend<{ tauriPage: Page }>({
   tauriPage: [
     async ({ }, use) => {
@@ -26,7 +31,10 @@ export const test = base.extend<{ tauriPage: Page }>({
         let page = context.pages().find((p) => p.url().startsWith(APP_URL));
         if (!page) {
           page = await context.newPage();
-          await page.goto(APP_URL + '/');
+        }
+        if (!onboardingIsolated && !page.url().includes('onboarding=')) {
+          onboardingIsolated = true;
+          await page.goto(APP_URL + '/?onboarding=off');
         }
         await use(page);
       } finally {

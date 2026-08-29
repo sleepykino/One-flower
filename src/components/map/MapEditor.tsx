@@ -1956,7 +1956,10 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
             </div>
 
             {/* 素材库（P4.1） */}
-            <div className="mt-3 flex items-center justify-between border-t border-ink-200 px-3 pb-1 pt-2.5">
+            <div
+              className="mt-3 flex items-center justify-between border-t border-ink-200 px-3 pb-1 pt-2.5"
+              data-tour="map-assets"
+            >
               <span className="text-sm font-medium">素材库</span>
               {placeIcon?.startsWith('asset:') && (
                 <button type="button" className="text-xs text-violet-600 hover:underline" onClick={() => setPlaceIcon(null)}>

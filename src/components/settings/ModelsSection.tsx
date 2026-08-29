@@ -173,7 +173,7 @@ export function ModelsSection(): JSX.Element {
       <p className="mb-2 text-xs text-ink-400">
         选择常用供应商，预填地址与推荐模型，只需粘贴 API Key 即可完成接入。
       </p>
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-3 gap-2" data-tour="settings-provider-add">
         {PROVIDER_PRESETS.map((p) => {
           const added = presetAdded(p);
           return (
@@ -337,7 +337,9 @@ export function ModelsSection(): JSX.Element {
       )}
 
       {/* 已添加配置列表 */}
-      <h2 className="mb-2 mt-5 font-medium">已添加配置（{configs.length}）</h2>
+      <h2 className="mb-2 mt-5 font-medium" data-tour="settings-provider-default">
+        已添加配置（{configs.length}）
+      </h2>
       {configs.length === 0 && !editing && (
         <div className="rounded border border-dashed border-ink-200 p-6 text-center text-sm text-ink-400">
           暂无配置。AI 功能需要至少一组 Provider 配置，可从上方快捷接入开始。

@@ -5,6 +5,7 @@ import { Settings } from './routes/Settings';
 import { Inspiration } from './routes/Inspiration';
 import { Trash } from './routes/Trash';
 import { ToastHost } from './components/common/toast';
+import { TourHost } from './components/onboarding/TourHost';
 
 export default function App(): JSX.Element {
   return (
@@ -18,6 +19,8 @@ export default function App(): JSX.Element {
       </Routes>
       {/* 全局轻量通知（toast.* 的宿主） */}
       <ToastHost />
+      {/* P7.1 使用引导宿主（渲染 null：dev reset / editor-basics 触发 / 完成提示） */}
+      <TourHost />
     </BrowserRouter>
   );
 }

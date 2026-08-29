@@ -225,7 +225,7 @@ export function ScreenplayWorkbench({ bookId, initialScreenplayId, initialWizard
           </div>
           <div className="flex items-center gap-1.5">
             {/* 视图切换 */}
-            <div className="flex rounded border border-ink-200 bg-ink-50 p-0.5 text-xs">
+            <div className="flex rounded border border-ink-200 bg-ink-50 p-0.5 text-xs" data-tour="screenplay-tabs">
               <button
                 type="button"
                 className={`rounded px-2.5 py-1 ${view === 'edit' ? 'bg-white font-medium text-violet-700 shadow-sm' : 'text-ink-500'}`}
@@ -235,6 +235,7 @@ export function ScreenplayWorkbench({ bookId, initialScreenplayId, initialWizard
               </button>
               <button
                 type="button"
+                data-tour="screenplay-storyboard"
                 className={`rounded px-2.5 py-1 ${view === 'board' ? 'bg-white font-medium text-violet-700 shadow-sm' : 'text-ink-500'}`}
                 onClick={() => setView('board')}
               >
@@ -243,6 +244,7 @@ export function ScreenplayWorkbench({ bookId, initialScreenplayId, initialWizard
             </div>
             <button
               type="button"
+              data-tour="screenplay-export"
               className="rounded border border-ink-200 px-2 py-1 text-sm hover:bg-ink-100"
               onClick={exportFountain}
               disabled={!screenplay}

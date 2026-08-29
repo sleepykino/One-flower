@@ -9,6 +9,7 @@ import { getAppContext } from '../../context/app-context';
 import { confirmDialog } from '../../native/dialog';
 import { toast } from '../common/toast';
 import { useEditorStore } from '../../store/editorStore';
+import { TourHintButton } from '../onboarding/TourHintButton';
 import type { LongFormBeat, LongFormSession, SeamIssue } from '../../services/longform/types';
 
 type Step = 'draft' | 'confirm' | 'running' | 'seam';
@@ -271,7 +272,7 @@ export function LongFormPanel({ bookId }: { bookId: string }): JSX.Element {
   return (
     <div className="flex h-full flex-col text-sm">
       {/* 步骤条 */}
-      <div className="flex items-center gap-1 border-b border-ink-200 px-3 py-2 text-[10px]">
+      <div className="flex items-center gap-1 border-b border-ink-200 px-3 py-2 text-[10px]" data-tour="longform-steps">
         {[
           { key: 'draft', label: '① 节拍表' },
           { key: 'confirm', label: '② 成本确认' },
@@ -299,6 +300,7 @@ export function LongFormPanel({ bookId }: { bookId: string }): JSX.Element {
         <span className="ml-auto max-w-[110px] truncate text-ink-400" title={chapterTitle}>
           {chapterTitle}
         </span>
+        <TourHintButton tourId="longform" />
       </div>
 
       <div className="flex-1 overflow-y-auto p-3">
@@ -310,7 +312,7 @@ export function LongFormPanel({ bookId }: { bookId: string }): JSX.Element {
 
         {/* ① 节拍表 */}
         {step === 'draft' && (
-          <div>
+          <div data-tour="longform-draft">
             <div className="grid grid-cols-2 gap-2 text-xs">
               <label className="flex items-center gap-1">
                 拍数
@@ -453,6 +455,7 @@ export function LongFormPanel({ bookId }: { bookId: string }): JSX.Element {
 
             <button
               type="button"
+              data-tour="longform-run"
               disabled={beats.filter((b) => b.text.trim()).length === 0}
               className="mt-3 w-full rounded bg-ink-900 py-1.5 text-sm text-white hover:bg-ink-800 disabled:opacity-40"
               onClick={() => setStep('confirm')}

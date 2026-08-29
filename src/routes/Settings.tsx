@@ -17,6 +17,7 @@ import {
   Settings2,
   Keyboard,
   Gauge,
+  GraduationCap,
   type LucideIcon
 } from 'lucide-react';
 import { ModelsSection } from '../components/settings/ModelsSection';
@@ -29,6 +30,7 @@ import { GeneralSection } from '../components/settings/GeneralSection';
 import { DirectivesGuideSection } from '../components/settings/DirectivesGuideSection';
 import { ShortcutsSection } from '../components/settings/ShortcutsSection';
 import { UsageSection } from '../components/settings/UsageSection';
+import { OnboardingSection } from '../components/settings/OnboardingSection';
 
 type SectionKey =
   | 'models'
@@ -40,6 +42,7 @@ type SectionKey =
   | 'backup'
   | 'data'
   | 'shortcuts'
+  | 'onboarding'
   | 'general';
 
 interface NavItem {
@@ -79,6 +82,7 @@ const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
     label: '通用',
     items: [
       { key: 'shortcuts', label: '快捷键', icon: Keyboard },
+      { key: 'onboarding', label: '使用引导', icon: GraduationCap },
       { key: 'general', label: '更新与关于', icon: Settings2 }
     ]
   }
@@ -94,6 +98,7 @@ const SECTION_TITLES: Record<SectionKey, string> = {
   backup: '备份与恢复',
   data: '数据管理',
   shortcuts: '快捷键',
+  onboarding: '使用引导',
   general: '更新与关于'
 };
 
@@ -154,6 +159,7 @@ export function Settings(): JSX.Element {
           {section === 'backup' && <BackupSection />}
           {section === 'data' && <DataSection />}
           {section === 'shortcuts' && <ShortcutsSection />}
+          {section === 'onboarding' && <OnboardingSection />}
           {section === 'general' && <GeneralSection />}
         </div>
       </main>

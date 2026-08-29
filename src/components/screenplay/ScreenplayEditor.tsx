@@ -249,7 +249,7 @@ export function ScreenplayEditor({ screenplay, onChanged, onUpdated, onJumpChapt
   const pendingScenes = stats.scenes - stats.doneScenes;
 
   return (
-    <div className="relative flex min-h-0 flex-1">
+    <div className="relative flex min-h-0 flex-1" data-tour="screenplay-editor">
       {/* 撤销条（删除镜头/对白/场后短暂显示） */}
       {undoAction && (
         <div className="absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 rounded border border-ink-200 bg-white px-3 py-1.5 text-xs shadow-lg">

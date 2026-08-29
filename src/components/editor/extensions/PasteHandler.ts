@@ -1,5 +1,6 @@
 /**
- * 粘贴清洗：粘贴内容强制转为纯文本，经 ProseMirror Schema 重新解析，
+ * 粘贴清洗：默认关闭（保留外部富文本格式）；设置页「编辑器」开启后，
+ * 粘贴内容强制转为纯文本，经 ProseMirror Schema 重新解析，
  * 去除外部富文本格式（字体/颜色/字号等污染）
  * 保留换行：按行拆分为多个段落，避免粘贴整章内容时丢失换行
  *
@@ -15,6 +16,27 @@ import { sniffImageMime } from '../../../utils/imageMeta';
 export interface PasteHandlerOptions {
   /** 当前书籍 id（图片入库归属） */
   getBookId: () => string;
+}
+
+/** 粘贴清洗开关（app_settings 持久化 + 模块级缓存，供同步的 handlePaste 读取） */
+export const PASTE_CLEAN_KEY = 'editor.pasteCleaning';
+let pasteCleaningEnabled = false;
+
+export function isPasteCleaningEnabled(): boolean {
+  return pasteCleaningEnabled;
+}
+
+export function setPasteCleaningEnabled(v: boolean): void {
+  pasteCleaningEnabled = v;
+}
+
+/** 从 app_settings 载入粘贴清洗开关（编辑器 / 设置页挂载时调用） */
+export async function loadPasteCleaningSetting(): Promise<void> {
+  try {
+    pasteCleaningEnabled = (await getAppContext().appSettings.get(PASTE_CLEAN_KEY)) === 'true';
+  } catch {
+    pasteCleaningEnabled = false;
+  }
 }
 
 export function createPasteHandler(options: PasteHandlerOptions) {
@@ -73,6 +95,9 @@ export function createPasteHandler(options: PasteHandlerOptions) {
                 void insertImageFiles(view, files, view.state.selection.to);
                 return true;
               }
+
+              // 粘贴清洗关闭（默认）：不拦截，交给 ProseMirror 默认处理，保留外部富文本格式
+              if (!isPasteCleaningEnabled()) return false;
 
               event.preventDefault();
               const text =

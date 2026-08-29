@@ -22,6 +22,8 @@ import { BookCardMenu } from '../components/home/BookCardMenu';
 import { EditBookDialog } from '../components/home/EditBookDialog';
 import { formatWordCount } from '../components/home/TrashList';
 import { resolveAssetUrl } from '../utils/assetUrl';
+import { isAutoTriggerOff } from '../services/onboarding/OnboardingService';
+import { createTourHostCallbacks, getOnboardingService } from '../components/onboarding/tourRuntime';
 import type { ImageAsset } from '../services/image/types';
 import type { UpdateInfo } from '../services/update/UpdateService';
 import type { Book, BookSortMode } from '../types';
@@ -126,6 +128,24 @@ export function Home(): JSX.Element {
       cancelled = true;
       window.clearTimeout(timer);
     };
+  }, []);
+
+  // P7.1：首启主线引导（延迟 600ms；StrictMode 双挂载由 service in-flight 防护；
+  // e2e 可用 ?onboarding=off / reset 关闭自动触发，对齐上方延迟静默先例）
+  useEffect(() => {
+    if (isAutoTriggerOff) return;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const svc = getOnboardingService();
+        if (!(await svc.shouldAutoShow())) return;
+        const done = await svc.getCompleted();
+        if (!done['welcome']) {
+          void svc.startTour('welcome', createTourHostCallbacks((to) => navigate(to)));
+        }
+      })().catch(() => undefined);
+    }, 600);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- navigate 由 useNavigate 提供且稳定
   }, []);
 
   // P6 M3：搜索防抖 200ms
@@ -419,6 +439,7 @@ export function Home(): JSX.Element {
             <ImportMenu onImportDoc={() => void importDocument()} onImportBackup={() => void importBackup()} />
             <button
               type="button"
+              data-tour="home-new-book"
               className="rounded bg-violet-600 px-3 py-1.5 text-sm text-white hover:bg-violet-700"
               onClick={() => setCreating(true)}
             >
@@ -445,7 +466,10 @@ export function Home(): JSX.Element {
           )}
 
           {books.length === 0 && !creating && (
-            <div className="rounded-lg border-2 border-dashed border-ink-200 p-16 text-center text-ink-400">
+            <div
+              data-tour="home-book-grid"
+              className="rounded-lg border-2 border-dashed border-ink-200 p-16 text-center text-ink-400"
+            >
               还没有书籍。点击「新建书籍」开始创作。
             </div>
           )}
@@ -456,13 +480,17 @@ export function Home(): JSX.Element {
             </div>
           )}
 
-          <div className={`grid grid-cols-2 gap-4 md:grid-cols-3 ${dragId ? 'select-none' : ''}`}>
-            {visibleBooks.map((b) => {
+          <div
+            data-tour="home-book-grid"
+            className={`grid grid-cols-2 gap-4 md:grid-cols-3 ${dragId ? 'select-none' : ''}`}
+          >
+            {visibleBooks.map((b, i) => {
               const draggable = dragEnabled && !b.pinned;
               return (
                 <BookCard
                   key={b.id}
                   book={b}
+                  dataTour={i === 0 ? 'home-first-book' : undefined}
                   onOpen={() => handleOpen(b)}
                   onEdit={() => setEditingBook(b)}
                   onTogglePin={() => void togglePin(b)}
@@ -542,7 +570,8 @@ function BookCard({
   onDelete,
   onCardPointerDown,
   isDragging,
-  isDragOver
+  isDragOver,
+  dataTour
 }: {
   book: Book;
   onOpen: () => void;
@@ -553,6 +582,8 @@ function BookCard({
   onCardPointerDown?: (e: React.PointerEvent<HTMLDivElement>) => void;
   isDragging: boolean;
   isDragOver: boolean;
+  /** P7.1：首书卡引导锚点（仅首张卡传值） */
+  dataTour?: string;
 }): JSX.Element {
   const loadBooks = useBookStore((s) => s.loadBooks);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -572,6 +603,7 @@ function BookCard({
   return (
     <div
       data-book-id={book.id}
+      data-tour={dataTour}
       className={`group cursor-pointer rounded-lg border bg-white p-4 transition hover:border-violet-400 hover:shadow ${
         isDragOver ? 'border-violet-500 ring-2 ring-violet-300' : 'border-ink-200'
       } ${isDragging ? 'opacity-40' : ''} ${grabClass}`}

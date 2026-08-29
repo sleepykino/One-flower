@@ -4,6 +4,7 @@
  */
 
 import type { NovelMap } from '../../services/map/types';
+import { TourHintButton } from '../onboarding/TourHintButton';
 
 interface MapToolbarProps {
   maps: NovelMap[];
@@ -37,7 +38,7 @@ interface MapToolbarProps {
 export function MapToolbar(props: MapToolbarProps): JSX.Element {
   const { currentMap } = props;
   return (
-    <div className="flex items-center justify-between gap-2 border-b border-ink-200 px-4 py-1.5">
+    <div className="flex items-center justify-between gap-2 border-b border-ink-200 px-4 py-1.5" data-tour="map-toolbar">
       <div className="flex min-w-0 items-center gap-2">
         <span className="shrink-0 text-sm font-semibold">地图编辑</span>
         {/* 地图切换下拉（左栏列表之外的显式入口） */}
@@ -118,6 +119,7 @@ export function MapToolbar(props: MapToolbarProps): JSX.Element {
         </div>
         <button
           type="button"
+          data-tour="map-auto-layout"
           className="rounded border border-ink-200 px-2 py-1 text-sm hover:bg-ink-100 disabled:opacity-40"
           disabled={!currentMap}
           title="力导向自动排布地点节点（可撤销）"
@@ -127,6 +129,7 @@ export function MapToolbar(props: MapToolbarProps): JSX.Element {
         </button>
         <button
           type="button"
+          data-tour="map-terrain-gen"
           className={`rounded border px-2 py-1 text-sm ${
             props.genOpen ? 'border-emerald-300 text-emerald-700' : 'border-ink-200 hover:bg-ink-100'
           }`}
@@ -149,6 +152,7 @@ export function MapToolbar(props: MapToolbarProps): JSX.Element {
         )}
         <button
           type="button"
+          data-tour="map-export"
           className="rounded border border-ink-200 px-2 py-1 text-sm hover:bg-ink-100"
           onClick={props.onExportPng}
           title={`导出为 PNG 图片（${props.exportScale}x${props.exportTransparent ? '，透明背景' : ''}）`}
@@ -178,6 +182,7 @@ export function MapToolbar(props: MapToolbarProps): JSX.Element {
         >
           ×
         </button>
+        <TourHintButton tourId="map-editor" />
       </div>
     </div>
   );

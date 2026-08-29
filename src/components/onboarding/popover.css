@@ -1,0 +1,86 @@
+/**
+ * P7.1 driver.js 主题：对接 ink / violet 设计语言（白底 / ink 边框 / violet-600 主按钮）
+ * 覆盖默认样式；作用域限定 .onboarding-popover（popoverClass），不影响其他用途
+ * ink-200 #d9d4ca · ink-400 #a39a88 · ink-600 #6d655a · ink-800 #38342f · ink-900 #23211e
+ * violet-600 #7c3aed · violet-700 #6d28d9
+ */
+
+.onboarding-popover {
+  max-width: 320px;
+  border: 1px solid #d9d4ca;
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(35, 33, 30, 0.2);
+  color: #38342f;
+  font-size: 13px;
+}
+
+.onboarding-popover .driver-popover-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #23211e;
+}
+
+.onboarding-popover .driver-popover-description {
+  font-size: 13px;
+  line-height: 1.65;
+  color: #6d655a;
+  margin-top: 5px;
+}
+
+.onboarding-popover .driver-popover-close-btn {
+  color: #a39a88;
+  font-size: 16px;
+}
+
+.onboarding-popover .driver-popover-close-btn:hover,
+.onboarding-popover .driver-popover-close-btn:focus {
+  color: #38342f;
+}
+
+.onboarding-popover .driver-popover-progress-text {
+  font-size: 12px;
+  color: #a39a88;
+}
+
+.onboarding-popover .driver-popover-footer {
+  margin-top: 14px;
+}
+
+.onboarding-popover .driver-popover-footer-btn {
+  border: 1px solid #d9d4ca;
+  border-radius: 6px;
+  background-color: #fff;
+  color: #524c44;
+  font-size: 12px;
+  padding: 4px 12px;
+}
+
+.onboarding-popover .driver-popover-footer-btn:hover,
+.onboarding-popover .driver-popover-footer-btn:focus {
+  background-color: #edeae4;
+}
+
+/* 主按钮（下一步 / 完成）用 violet 实底 */
+.onboarding-popover .driver-popover-next-btn,
+.onboarding-popover .driver-popover-done-btn {
+  border-color: #7c3aed;
+  background-color: #7c3aed;
+  color: #fff;
+}
+
+.onboarding-popover .driver-popover-next-btn:hover,
+.onboarding-popover .driver-popover-next-btn:focus,
+.onboarding-popover .driver-popover-done-btn:hover,
+.onboarding-popover .driver-popover-done-btn:focus {
+  background-color: #6d28d9;
+}
+
+.onboarding-popover .driver-popover-arrow {
+  border-color: #fff;
+}
+
+/* 高亮元素轻描边（叠加 stage 挖空，便于聚焦） */
+.driver-active-element {
+  outline: 2px solid #a78bfa;
+  outline-offset: 2px;
+}

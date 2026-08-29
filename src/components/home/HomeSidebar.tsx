@@ -4,7 +4,7 @@
  * 支持收起/展开（默认收起），状态持久化到 localStorage
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { BookOpen, Lightbulb, Settings, Trash2, PanelLeftClose, PanelLeftOpen, type LucideIcon } from 'lucide-react';
 
@@ -41,8 +41,16 @@ export function HomeSidebar(): JSX.Element {
     }
   };
 
+  // P7.1：引导步骤请求展开侧边栏（localStorage 已由 TourHost 置 '0'，这里同步 UI 态）
+  useEffect(() => {
+    const expand = (): void => setCollapsed(false);
+    window.addEventListener('onboarding-expand-sidebar', expand);
+    return () => window.removeEventListener('onboarding-expand-sidebar', expand);
+  }, []);
+
   return (
     <aside
+      data-tour="home-sidebar"
       className={`flex shrink-0 flex-col border-r border-ink-200 bg-ink-50 transition-[width] duration-200 ${
         collapsed ? 'w-14' : 'w-52'
       }`}

@@ -15,11 +15,19 @@ import {
   saveFontFamily,
   saveLineHeight
 } from '../../utils/editorAppearance';
+import { getAppContext } from '../../context/app-context';
+import {
+  PASTE_CLEAN_KEY,
+  isPasteCleaningEnabled,
+  loadPasteCleaningSetting,
+  setPasteCleaningEnabled
+} from '../editor/extensions/PasteHandler';
 
 export function AppearanceSection(): JSX.Element {
   const [fontSize, setFontSize] = useState<number>(loadFontSize);
   const [fontFamily, setFontFamily] = useState<string>(loadFontFamily);
   const [lineHeight, setLineHeight] = useState<number>(loadLineHeight);
+  const [pasteClean, setPasteClean] = useState(false);
 
   useEffect(() => {
     const sync = (): void => {
@@ -30,6 +38,20 @@ export function AppearanceSection(): JSX.Element {
     window.addEventListener('editor-appearance-change', sync);
     return () => window.removeEventListener('editor-appearance-change', sync);
   }, []);
+
+  // 粘贴清洗开关：载入持久化值并同步模块缓存
+  useEffect(() => {
+    void (async () => {
+      await loadPasteCleaningSetting();
+      setPasteClean(isPasteCleaningEnabled());
+    })();
+  }, []);
+
+  const changePasteClean = (v: boolean): void => {
+    setPasteClean(v);
+    setPasteCleaningEnabled(v);
+    void getAppContext().appSettings.set(PASTE_CLEAN_KEY, v ? 'true' : 'false');
+  };
 
   const changeFontSize = (v: number): void => {
     setFontSize(v);
@@ -125,6 +147,23 @@ export function AppearanceSection(): JSX.Element {
             灯下提笔，一花一世界。The quick brown fox jumps over the lazy dog.
           </div>
         </div>
+      </div>
+
+      {/* 粘贴 */}
+      <h2 className="mb-1 mt-6 font-medium">粘贴</h2>
+      <p className="mb-3 text-xs text-ink-400">控制从外部复制文本到编辑器时的粘贴方式。</p>
+      <div className="rounded border border-ink-100 bg-white px-3 py-3">
+        <label className="flex cursor-pointer items-center gap-2">
+          <input
+            type="checkbox"
+            checked={pasteClean}
+            onChange={(e) => changePasteClean(e.target.checked)}
+          />
+          <span className="text-sm">粘贴清洗（转为纯文本）</span>
+        </label>
+        <p className="mt-1 text-xs text-ink-400">
+          默认关闭：粘贴保留外部富文本格式（加粗 / 斜体 / 颜色等）。开启后按清洗规则剥离格式，按行拆分为段落。
+        </p>
       </div>
     </div>
   );

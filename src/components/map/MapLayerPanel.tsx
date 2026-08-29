@@ -20,7 +20,12 @@ interface MapLayerPanelProps {
 export function MapLayerPanel(props: MapLayerPanelProps): JSX.Element {
   return (
     <>
-      <div className="mt-auto border-t border-ink-200 px-3 pb-1 pt-2.5 text-sm font-medium">图层</div>
+      <div
+        className="mt-auto border-t border-ink-200 px-3 pb-1 pt-2.5 text-sm font-medium"
+        data-tour="map-layers"
+      >
+        图层
+      </div>
       <div className="px-2 pb-2">
         <div className="mb-1 flex items-center justify-between text-xs text-ink-500">
           <span>瓦片图层（{props.tileLayers.length}）</span>

@@ -18,7 +18,7 @@ import { ChapterRef } from './nodes/ChapterRef';
 import { Dialogue } from './nodes/Dialogue';
 import { createImageNode } from './nodes/ImageNode';
 import { AITemporaryNode } from './extensions/AITemporaryNode';
-import { createPasteHandler } from './extensions/PasteHandler';
+import { createPasteHandler, loadPasteCleaningSetting } from './extensions/PasteHandler';
 import { ImageGenDialog } from '../image/ImageGenDialog';
 import { useEditorStore, type EditorApi } from '../../store/editorStore';
 import { getAppContext } from '../../context/app-context';
@@ -236,6 +236,11 @@ export function NovelEditor({ bookId }: { bookId: string }) {
     };
     window.addEventListener('editor-appearance-change', sync);
     return () => window.removeEventListener('editor-appearance-change', sync);
+  }, []);
+
+  // 粘贴清洗开关：编辑器挂载时载入设置（默认关闭 = 保留外部富文本格式）
+  useEffect(() => {
+    void loadPasteCleaningSetting();
   }, []);
 
   const changeFontSize = (v: number): void => {

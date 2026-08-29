@@ -8,6 +8,7 @@ import { getAppContext } from '../../context/app-context';
 import { confirmDialog } from '../../native/dialog';
 import { toast } from '../common/toast';
 import { useTaskStore } from '../../store/taskStore';
+import { TourHintButton } from '../onboarding/TourHintButton';
 import { screenplayStats, type Screenplay, type ScreenplayStatus } from '../../services/screenplay/types';
 
 const STATUS_LABEL: Record<ScreenplayStatus, { label: string; cls: string }> = {
@@ -110,10 +111,10 @@ export function ScreenplayPanel({ bookId, onOpen }: Props): JSX.Element {
   };
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col" data-tour="screenplay-panel">
       <div className="flex items-center justify-between border-b border-ink-100 px-3 py-2">
         <span className="text-sm font-medium">剧本</span>
-        <div className="flex gap-1">
+        <div className="flex items-center gap-1">
           <button
             type="button"
             className="rounded border border-violet-200 px-1.5 py-0.5 text-[11px] text-violet-600 hover:bg-violet-50"
@@ -128,6 +129,7 @@ export function ScreenplayPanel({ bookId, onOpen }: Props): JSX.Element {
           >
             + 新建
           </button>
+          <TourHintButton tourId="screenplay" />
         </div>
       </div>
 

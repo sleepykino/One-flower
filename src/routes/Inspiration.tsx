@@ -9,6 +9,7 @@ import { HomeSidebar } from '../components/home/HomeSidebar';
 import { DailyCardSection } from '../components/inspiration/DailyCardSection';
 import { StorySeedGenerator } from '../components/inspiration/StorySeedGenerator';
 import { InspirationLibrary } from '../components/inspiration/InspirationLibrary';
+import { TourHintButton } from '../components/onboarding/TourHintButton';
 
 export function Inspiration(): JSX.Element {
   return (
@@ -16,15 +17,25 @@ export function Inspiration(): JSX.Element {
       <HomeSidebar />
       <div className="min-w-0 flex-1 overflow-y-auto">
         <main className="mx-auto max-w-4xl space-y-4 px-6 py-6">
-          <div>
-            <h1 className="mb-1 text-2xl font-bold">灵感库</h1>
-            <p className="text-sm text-ink-500">
-              故事种子、每日灵感、角色采访与剧情推演 -- 激发灵感而非替代创作
-            </p>
+          <div className="flex items-start justify-between">
+            <div>
+              <h1 className="mb-1 text-2xl font-bold">灵感库</h1>
+              <p className="text-sm text-ink-500">
+                故事种子、每日灵感、角色采访与剧情推演 -- 激发灵感而非替代创作
+              </p>
+            </div>
+            <TourHintButton tourId="inspiration" className="mt-2" />
           </div>
-          <DailyCardSection />
-          <StorySeedGenerator />
-          <InspirationLibrary />
+          {/* P7.1：M4 灵感库引导锚点（包裹层仅承载 data-tour，不改各区块布局） */}
+          <div data-tour="inspiration-daily">
+            <DailyCardSection />
+          </div>
+          <div data-tour="inspiration-seed">
+            <StorySeedGenerator />
+          </div>
+          <div data-tour="inspiration-library">
+            <InspirationLibrary />
+          </div>
         </main>
       </div>
     </div>
