@@ -3,6 +3,7 @@
 export type { AIMode } from '../skill/types';
 
 import type { ProseMirrorDoc } from '../../types';
+import type { ChatMessage } from './providers/LLMProvider';
 import type { ChapterBeat } from '../chapter/ChapterService';
 
 export type { ChapterBeat };
@@ -65,6 +66,8 @@ export interface ContinueParams {
   selectedCharacterIds: string[];
   /** 续写要求（可选），如"主角识破陷阱，引出幕后黑手" */
   requirement?: string;
+  /** P7.3-M1：多轮会话历史（可选；开启多轮会话的续写注入此前的 user/assistant 轮次） */
+  history?: ChatMessage[];
   /** M2: 当前文档的引用标记，orchestrator 解析全文注入 forcedRefs */
   aiReferences?: AiReference[];
   /** M5: 当前应执行的节拍（AIPanel 按 beats 与开关填充） */

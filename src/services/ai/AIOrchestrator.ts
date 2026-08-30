@@ -451,6 +451,8 @@ export class AIOrchestrator {
     // 批次11-6：长文模式放大角色卡预算（承载全书角色）
     if (params.characterBudget) ctx.characterBudget = params.characterBudget;
     if (params.beat) ctx.currentBeat = params.beat;
+    // P7.3-M1：多轮会话历史（可选注入，经 PromptAssembler 追加在 user 消息之后）
+    if (params.history && params.history.length > 0) ctx.history = params.history;
     await this.applyCtxExtras(ctx, params.bookId, params.aiReferences);
     const model = await this.modelOf(params.bookId, 'continue');
     this.recordContext(params.bookId, ctx, model);

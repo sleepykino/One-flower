@@ -12,6 +12,7 @@ import { useAIStore } from '../../store/aiStore';
 import type { AIMode } from '../../services/skill/types';
 import type { ChapterBeat } from '../../services/chapter/ChapterService';
 import type { AiReference } from '../../services/ai/types';
+import type { ChatMessage } from '../../services/ai/providers/LLMProvider';
 import type { Character } from '../../types';
 import { ConsistencyReportView } from './ConsistencyReport';
 import { TypoReportView } from './TypoReportView';
@@ -40,6 +41,8 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
   const candidates = useAIStore((s) => s.candidates);
   const activeCandidate = useAIStore((s) => s.activeCandidate);
   const candidateTotal = useAIStore((s) => s.candidateTotal);
+  // P7.3b：会话块（响应式：决策条与轮次显示）
+  const sessionBlock = useAIStore((s) => s.sessionBlock);
   const chapters = useEditorStore((s) => s.chapters);
   const currentChapterId = useEditorStore((s) => s.currentChapterId);
   const selectedText = useEditorStore((s) => s.selectedText);
@@ -55,6 +58,11 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
   // P2.1-M5：按节拍定向续写（当前章节存在未完成节拍时可选，默认开）
   const [beats, setBeats] = useState<ChapterBeat[]>([]);
   const [beatDirect, setBeatDirect] = useState(true);
+  // P7.3-M1：多轮会话开关（默认关，存量零感知；设置键 ai.session.enabled 持久化）
+  const [sessionEnabled, setSessionEnabled] = useState(false);
+  // P7.3b：对比态（决策条内版本切换，参考 G3 多候选交互；离开决定态自动退出）
+  const [comparing, setComparing] = useState(false);
+  const [comparePreview, setComparePreview] = useState<'prev' | 'current'>('current');
   // P2.1-M7：长文模式视图（第 5 tab；rail 'longform' 入口经 initialTab 打开）
   const [longform, setLongform] = useState(initialTab === 'longform');
   // 生成参数：单次回复 token 上限（约等于中文字数）与采样温度
@@ -126,11 +134,36 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
     return () => window.removeEventListener('novel-beats-refresh', load);
   }, [currentChapterId, bookId]);
 
+  // P7.3-M1：读取多轮会话开关（app_settings 持久化，默认关）
+  useEffect(() => {
+    void getAppContext()
+      .appSettings.get('ai.session.enabled')
+      .then((v) => setSessionEnabled(v === 'true'))
+      .catch(() => setSessionEnabled(false));
+  }, []);
+
   const streaming = phase === 'streaming';
   const deciding = phase === 'deciding';
   const currentChapter = chapters.find((c) => c.id === currentChapterId);
   /** 第一个未完成节拍（定向续写目标） */
   const pendingBeat = beats.find((b) => !b.done && b.text.trim() !== '');
+  /** P7.3b：本章节会话 key 与当前活跃块（章节切换后旧块不归属本章，由 runStream 守卫清账） */
+  const sessionKey = bookId && currentChapterId ? `${bookId}:${currentChapterId}` : null;
+  const curBlock =
+    sessionBlock && sessionKey && sessionBlock.sessionKey === sessionKey ? sessionBlock : null;
+
+  // P7.3b：离开决定态时退出对比态
+  useEffect(() => {
+    if (phase !== 'deciding') setComparing(false);
+  }, [phase]);
+
+  /** P7.3-M1：切换多轮会话开关（持久化到 app_settings） */
+  const toggleSession = (on: boolean): void => {
+    setSessionEnabled(on);
+    void getAppContext()
+      .appSettings.set('ai.session.enabled', on ? 'true' : 'false')
+      .catch(() => undefined);
+  };
 
   /** 收集前情（滑动窗口最近 3 章） */
   const gatherRecent = async () => {
@@ -172,20 +205,39 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
   /**
    * 生成一条候选：临时节点承载输出；hook block 命中时带反馈自动重试一次。
    * 不落 store 终态（phase 由调用方统一 settle），返回文本与中断/错误标记。
+   * P7.3b：会话块续写原地重写同一节点（setAITempText 复用），并按 R2 组装请求历史；
+   * 返回本轮实际使用的要求（reqUsed，completeRound 落史用）。
    */
   const generateOne = async (
     kind: 'continue' | 'rewrite' | 'dialogue',
     range: { from: number; to: number } | null,
-    aiReferences: AiReference[]
-  ): Promise<{ text: string; aborted: boolean; error?: string }> => {
+    aiReferences: AiReference[],
+    useSession: boolean,
+    nodeContent: string
+  ): Promise<{ text: string; aborted: boolean; error?: string; reqUsed?: string }> => {
     const { orchestrator, multiPerspectiveRewriter } = getAppContext();
     const api = useEditorStore.getState().editorApi!;
     const controller = useAIStore.getState().startStream();
+    let reqUsed: string | undefined;
     try {
       const recent = await gatherRecent();
       const makeIterable = (feedback?: string): AsyncIterable<{ delta: string; done: boolean }> => {
         if (kind === 'continue') {
           const req = [continueReq.trim(), feedback].filter(Boolean).join('\n') || undefined;
+          reqUsed = req;
+          // P7.3b R2：请求历史 = 块轨迹 +（末条 assistant ≠ 工作副本时注入节点当前内容）
+          let history: ChatMessage[] | undefined;
+          if (useSession) {
+            const block = useAIStore.getState().sessionBlock;
+            if (block) {
+              const h = [...block.history];
+              const lastAsst = [...h].reverse().find((m) => m.role === 'assistant');
+              if (nodeContent.trim() !== '' && lastAsst?.content !== nodeContent) {
+                h.push({ role: 'assistant', content: nodeContent });
+              }
+              history = h;
+            }
+          }
           return orchestrator.continueWriting({
             bookId,
             chapterId: currentChapterId!,
@@ -193,6 +245,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
             recentChapters: recent,
             selectedCharacterIds: selectedCharIds,
             requirement: req,
+            history,
             aiReferences,
             beat: beatDirect ? pendingBeat : undefined,
             maxTokens: tokenValue(),
@@ -243,7 +296,13 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
 
       let feedback: string | undefined;
       for (let attempt = 0; attempt < 2; attempt++) {
-        api.startAITemp(range ?? undefined);
+        // P7.3b：会话块续写原地重写同一节点（setAITempText 复用既有临时节点；无节点时回退新建）
+        if (useSession) {
+          const reused = api.setAITempText('');
+          if (!reused) api.startAITemp(range ?? undefined);
+        } else {
+          api.startAITemp(range ?? undefined);
+        }
         if (attempt > 0) useAIStore.getState().setText('');
         const iterable = makeIterable(feedback);
         for await (const chunk of iterable) {
@@ -255,7 +314,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
         // hook.md 后处理（block 命中且可重试时带反馈再来一次）
         const blocked = await applyHooks();
         if (blocked && attempt === 0 && kind !== 'dialogue') {
-          api.discardAITemp();
+          if (!useSession) api.discardAITemp(); // 会话块保留节点，重试时原地清空重写
           setHookRetried(blocked);
           feedback = `上一次生成违反了本书规则：${blocked}。请重新生成，严格避免上述问题。`;
           continue;
@@ -263,17 +322,28 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
         break;
       }
       api.finishAITemp();
-      return { text: useAIStore.getState().generatedText, aborted: false };
+      return { text: useAIStore.getState().generatedText, aborted: false, reqUsed };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       const aborted = controller.signal.aborted || msg.includes('Abort');
       if (aborted) {
         // 中断：保留临时节点半截内容（多候选时作为一条候选进入挑选）
         api.finishAITemp();
-        return { text: useAIStore.getState().generatedText, aborted: true };
+        return { text: useAIStore.getState().generatedText, aborted: true, reqUsed };
       }
-      api.discardAITemp();
-      return { text: '', aborted: false, error: msg };
+      // P7.3b：会话块轮次失败——恢复轮前内容（节点与 generatedText 同步回填，保住"上一版"链路）
+      if (useSession) {
+        if (nodeContent.trim() !== '') {
+          api.setAITempText(nodeContent);
+          api.finishAITemp();
+        } else {
+          api.discardAITemp();
+        }
+        useAIStore.getState().setText(nodeContent);
+      } else {
+        api.discardAITemp();
+      }
+      return { text: '', aborted: false, error: msg, reqUsed };
     }
   };
 
@@ -294,13 +364,38 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
     // P2.1-M2：透传当前文档引用标记（orchestrator 注入 forcedRefs 全文）
     const aiReferences = api.getAiReferences();
 
-    if (candidateCount <= 1) {
+    // P7.3b：会话块归属守卫（切换章节后旧块清账）+ 会话判定（块存活期间不受开关影响）
+    const storeBlock = useAIStore.getState().sessionBlock;
+    if (storeBlock && sessionKey && storeBlock.sessionKey !== sessionKey) {
+      useAIStore.getState().endBlock();
+    }
+    const blockActive = !!useAIStore.getState().sessionBlock;
+    const useSession = kind === 'continue' && (sessionEnabled || blockActive);
+    // P7.3b：会话模式固定单候选（多候选挑选与会话块轮次语义冲突，列为后续项）
+    const effCandidates = useSession ? 1 : candidateCount;
+    // 会话续写：在 startStream 清空 generatedText 前捕获节点当前内容（R2 注入与 prevCandidate 判定用）
+    const nodeContent = useAIStore.getState().generatedText;
+    if (useSession && sessionKey) {
+      if (!blockActive) useAIStore.getState().beginBlock(sessionKey);
+      else useAIStore.getState().beginRewriteRound(nodeContent);
+    }
+
+    if (effCandidates <= 1) {
       // 清残留候选态：多候选挑选中途放弃（未点保留/丢弃）时 candidates 会残留，
       // 不清会导致下一次单候选生成完成后误弹旧候选的挑选界面
       useAIStore.getState().beginCandidates(1);
-      const r = await generateOne(kind, range, aiReferences);
-      if (r.error) useAIStore.getState().finishStream('error', r.error);
-      else useAIStore.getState().finishStream(r.aborted ? 'aborted' : 'done');
+      const r = await generateOne(kind, range, aiReferences, useSession, nodeContent);
+      if (r.error) {
+        useAIStore.getState().finishStream('error', r.error);
+        return;
+      }
+      // P7.3b R1：轮完成原子对落史（中断/出错不落，半截内容交决策条处置）
+      if (useSession && !r.aborted) {
+        useAIStore
+          .getState()
+          .completeRound(r.reqUsed?.trim() || '（无特别要求，按前文自然续写）');
+      }
+      useAIStore.getState().finishStream(r.aborted ? 'aborted' : 'done');
       return;
     }
 
@@ -309,7 +404,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
     for (let i = 0; i < candidateCount; i++) {
       useAIStore.getState().setActiveCandidate(i);
       if (i > 0) api.discardAITemp();
-      const r = await generateOne(kind, range, aiReferences);
+      const r = await generateOne(kind, range, aiReferences, useSession, nodeContent);
       if (r.error) {
         // 单条失败：已有可用候选则以现有候选进入挑选，否则回到单发错误态
         if (useAIStore.getState().candidates.length > 0) break;
@@ -328,23 +423,46 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
 
   const onContinue = async (): Promise<void> => {
     // 继续补完（P1-M8）：以已生成半截内容为上文再次调 LLM，结果合并进同一临时节点
+    // P7.3b：会话块内补完——半截内容按 R2 注入请求（末条 assistant ≠ 半截时），正文不再拼接 base
     const { orchestrator } = getAppContext();
     const api = useEditorStore.getState().editorApi;
     if (!api || !currentChapterId) return;
     // 必须在 startStream（会清空 generatedText）之前读取半截内容
     const base = useAIStore.getState().generatedText;
+    const block = useAIStore.getState().sessionBlock;
+    const useSession = !!block && !!sessionKey && block.sessionKey === sessionKey;
     const controller = useAIStore.getState().startStream();
     try {
       const recent = await gatherRecent();
       // 重新登记半截内容：多轮补完时 base 连续，"已生成 N 字"统计不回零
       if (base) useAIStore.getState().appendText(base);
+      let history: ChatMessage[] | undefined;
+      let requirement = continueReq.trim() || undefined;
+      let currentContent = `${api.getPlainText()}${base ? `\n\n${base}` : ''}`;
+      if (useSession && block) {
+        // P7.3b R2：块轨迹 +（末条 assistant ≠ 半截内容时注入工作副本）
+        const h = [...block.history];
+        const lastAsst = [...h].reverse().find((m) => m.role === 'assistant');
+        if (base.trim() !== '' && lastAsst?.content !== base) {
+          h.push({ role: 'assistant', content: base });
+        }
+        history = h;
+        currentContent = api.getPlainText();
+        requirement = [
+          '继续补完：从上次中断处接着写，保持已生成内容为正文，不要重复输出已有内容。',
+          continueReq.trim()
+        ]
+          .filter(Boolean)
+          .join('\n');
+      }
       const iterable = orchestrator.continueWriting({
         bookId,
         chapterId: currentChapterId,
-        currentContent: `${api.getPlainText()}${base ? `\n\n${base}` : ''}`,
+        currentContent,
+        history,
         recentChapters: recent,
         selectedCharacterIds: selectedCharIds,
-        requirement: continueReq.trim() || undefined,
+        requirement,
         maxTokens: tokenValue(),
         temperature: tempValue(),
         signal: controller.signal
@@ -358,12 +476,16 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
       // hook.md 后处理（补完场景只做替换与提醒，不再重试）
       await applyHooks();
       api.finishAITemp();
+      // P7.3b R1：补完完成原子对落史（指令=补完说明，输出=合并后全文）
+      if (useSession) {
+        useAIStore.getState().completeRound(requirement ?? '（继续补完）');
+      }
       useAIStore.getState().finishStream('done');
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       const aborted = controller.signal.aborted || msg.includes('Abort');
       if (aborted) {
-        // 补完途中再次中断：保留合并后的半截内容，回到三选项
+        // 补完途中再次中断：保留合并后的半截内容，回到决策条
         api.finishAITemp();
         useAIStore.getState().finishStream('aborted');
       } else {
@@ -371,6 +493,53 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
         useAIStore.getState().finishStream('error', msg);
       }
     }
+  };
+
+  /** P7.3b：对比态——版本预览切换（参考 G3 多候选：setAITempText 在编辑器直接显示所选版本） */
+  const previewVersion = (v: 'prev' | 'current'): void => {
+    if (!curBlock) return;
+    const api = useEditorStore.getState().editorApi;
+    if (!api) return;
+    const text = v === 'prev' ? (curBlock.prevCandidate ?? '') : useAIStore.getState().generatedText;
+    api.setAITempText(text);
+    api.finishAITemp();
+    setComparePreview(v);
+  };
+
+  /** 对比择优：选上一版 = 回滚本轮轨迹并回填节点（胜者进入下一轮） */
+  const pickPrevVersion = (): void => {
+    const prev = useAIStore.getState().revertToPrevCandidate();
+    const api = useEditorStore.getState().editorApi;
+    if (prev != null && api) {
+      api.setAITempText(prev);
+      api.finishAITemp();
+      useAIStore.getState().setText(prev);
+    }
+    setComparing(false);
+  };
+
+  /** 对比择优：保持当前版 = 关闭对比继续微调 */
+  const keepCurrentVersion = (): void => {
+    const api = useEditorStore.getState().editorApi;
+    if (api) {
+      api.setAITempText(useAIStore.getState().generatedText);
+      api.finishAITemp();
+    }
+    setComparing(false);
+  };
+
+  /** P7.3b：块内采用进正文（正文落位、块清账） */
+  const adoptBlock = (): void => {
+    useEditorStore.getState().editorApi?.acceptAITemp();
+    useAIStore.getState().endBlock();
+    useAIStore.getState().reset();
+  };
+
+  /** P7.3b：丢弃整块（节点移除、轨迹清空） */
+  const discardBlock = (): void => {
+    useEditorStore.getState().editorApi?.discardAITemp();
+    useAIStore.getState().endBlock();
+    useAIStore.getState().reset();
   };
 
   const runCheck = async (): Promise<void> => {
@@ -515,6 +684,19 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
             <div className="mb-2 text-xs text-ink-500">
               当前：{currentChapter?.title ?? '未选择章节'} · 前情自动取最近 3 章
             </div>
+            {/* P7.3b：多轮会话开关（默认关；开启后以会话块迭代候选——微调原地替换、可按需与上一版对比） */}
+            <label
+              className="mb-2 flex items-center gap-2 rounded border border-violet-200 bg-violet-50/50 px-2 py-1.5 text-xs text-violet-800"
+              data-tour="ai-session"
+              title="开启后续写进入会话块：新一轮原地替换当前候选（内存态，重启即失）；可随时与上一版对比择优，采用/丢弃后自动清账"
+            >
+              <input
+                type="checkbox"
+                checked={sessionEnabled}
+                onChange={(e) => toggleSession(e.target.checked)}
+              />
+              <span className="min-w-0 flex-1">多轮会话（生成后可连续微调）</span>
+            </label>
             <CharPicker characters={characters} selected={selectedCharIds} onToggle={toggleChar} />
             {/* P2.1-M5：按节拍定向开关（存在未完成节拍时显示） */}
             {pendingBeat && (
@@ -535,7 +717,11 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
               rows={3}
               value={continueReq}
               onChange={(e) => setContinueReq(e.target.value)}
-              placeholder="续写要求（可选），如：主角识破陷阱，引出幕后黑手"
+              placeholder={
+                curBlock
+                  ? '微调指令（可选），如：再压抑一点、节奏更快；留空则按前文重新生成'
+                  : '续写要求（可选），如：主角识破陷阱，引出幕后黑手'
+              }
               className="mt-2 mb-1 w-full resize-none rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400"
             />
             <GenParams
@@ -544,18 +730,21 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
               temperature={temperature}
               setTemperature={setTemperature}
             />
-            <CandidatePicker value={candidateCount} onChange={setCandidateCount} disabled={streaming} />
+            {/* P7.3b：会话模式固定单候选（多候选挑选与会话块轮次语义冲突，列为后续项） */}
+            {!sessionEnabled && (
+              <CandidatePicker value={candidateCount} onChange={setCandidateCount} disabled={streaming} />
+            )}
             <button
               type="button"
-              disabled={streaming || !currentChapterId}
+              disabled={streaming || !currentChapterId || (deciding && !!curBlock)}
               className="mt-3 w-full rounded bg-violet-600 py-1.5 text-sm text-white hover:bg-violet-700 disabled:opacity-40"
-              onClick={() => void runStream('continue', null, candidateCount)}
+              onClick={() => void runStream('continue', null, sessionEnabled ? 1 : candidateCount)}
             >
               {streaming
                 ? candidateTotal > 1
                   ? `生成候选 ${Math.min(activeCandidate + 1, candidateTotal)}/${candidateTotal}…`
                   : '生成中…'
-                : candidateCount > 1
+                : !sessionEnabled && candidateCount > 1
                   ? `开始续写（${candidateCount} 条候选）`
                   : '开始续写'}
             </button>
@@ -806,6 +995,108 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
                 </button>
               </div>
             </>
+          ) : deciding && curBlock ? (
+            comparing ? (
+              <>
+                {/* P7.3b：对比态——版本切换预览（参考 G3 多候选交互，编辑器直接显示所选版本） */}
+                <div className="mb-1 text-xs text-ink-500">版本对比，点击在编辑器中切换预览：</div>
+                <div className="mb-1.5 flex gap-1">
+                  <button
+                    type="button"
+                    className={`flex-1 rounded border py-1 text-xs ${
+                      comparePreview === 'prev'
+                        ? 'border-violet-400 bg-violet-50 font-medium text-violet-700'
+                        : 'border-ink-200 text-ink-500 hover:bg-ink-100'
+                    }`}
+                    onClick={() => previewVersion('prev')}
+                  >
+                    上一版（第 {Math.max(1, curBlock.round - 1)} 轮）
+                    <span className="ml-0.5 text-[10px] text-ink-400">
+                      {curBlock.prevCandidate?.length ?? 0}字
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`flex-1 rounded border py-1 text-xs ${
+                      comparePreview === 'current'
+                        ? 'border-violet-400 bg-violet-50 font-medium text-violet-700'
+                        : 'border-ink-200 text-ink-500 hover:bg-ink-100'
+                    }`}
+                    onClick={() => previewVersion('current')}
+                  >
+                    当前版（第 {curBlock.round} 轮）
+                    <span className="ml-0.5 text-[10px] text-ink-400">
+                      {useAIStore.getState().generatedText.length}字
+                    </span>
+                  </button>
+                </div>
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    className="flex-1 rounded bg-emerald-600 py-1 text-xs text-white hover:bg-emerald-700"
+                    onClick={pickPrevVersion}
+                  >
+                    用上一版
+                  </button>
+                  <button
+                    type="button"
+                    className="flex-1 rounded bg-violet-600 py-1 text-xs text-white hover:bg-violet-700"
+                    onClick={keepCurrentVersion}
+                  >
+                    保持当前版
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="mb-1 text-xs text-ink-500">
+                  会话块 · 第 {curBlock.round} 轮 · 已生成{' '}
+                  {useAIStore.getState().generatedText.length} 字，请选择：
+                </div>
+                <button
+                  type="button"
+                  className="w-full rounded bg-violet-600 py-1.5 text-xs text-white hover:bg-violet-700"
+                  onClick={() => void runStream('continue', null, 1)}
+                >
+                  微调下一轮
+                </button>
+                {curBlock.prevCandidate != null && (
+                  <button
+                    type="button"
+                    className="mt-1 w-full rounded border border-violet-200 bg-white py-1 text-xs text-violet-700 hover:bg-violet-50"
+                    onClick={() => {
+                      setComparePreview('current');
+                      setComparing(true);
+                    }}
+                  >
+                    与上一版对比
+                  </button>
+                )}
+                <div className="mt-1.5 flex gap-1">
+                  <button
+                    type="button"
+                    className="flex-1 rounded bg-emerald-600 py-1 text-xs text-white hover:bg-emerald-700"
+                    onClick={adoptBlock}
+                  >
+                    采用进正文
+                  </button>
+                  <button
+                    type="button"
+                    className="flex-1 rounded bg-red-500 py-1 text-xs text-white hover:bg-red-600"
+                    onClick={discardBlock}
+                  >
+                    丢弃
+                  </button>
+                  <button
+                    type="button"
+                    className="flex-1 rounded bg-violet-600 py-1 text-xs text-white hover:bg-violet-700"
+                    onClick={() => void onContinue()}
+                  >
+                    继续补完
+                  </button>
+                </div>
+              </>
+            )
           ) : deciding ? (
             <>
               <div className="mb-1 text-xs text-ink-500">
@@ -879,7 +1170,7 @@ function CandidatePicker({
       >
         {[1, 2, 3].map((n) => (
           <option key={n} value={n}>
-            {n === 1 ? '1（单候选）' : `${n} 条`}
+            {n === 1 ? '1 条' : `${n} 条`}
           </option>
         ))}
       </select>

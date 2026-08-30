@@ -414,6 +414,32 @@ export function ContextPanel({ bookId }: { bookId: string }): JSX.Element {
           </Section>
         )}
 
+        {/* P7.3b：会话块轨迹（仅会话续写注入；按消息序列展示） */}
+        <Section
+          title={`会话块轨迹（${ctx.history?.length ?? 0} 条）`}
+          tokens={tokensOf('history')}
+          truncated={truncatedOf('history')}
+        >
+          {(ctx.history ?? []).length === 0 ? (
+            <Empty text="未注入会话轨迹（未开启多轮会话，或当前无进行中的会话块）" />
+          ) : (
+            <ul className="space-y-1">
+              {(ctx.history ?? []).map((m, i) => (
+                <li key={i} className="flex items-start gap-1">
+                  <span
+                    className={`shrink-0 rounded px-1 text-[10px] ${
+                      m.role === 'user' ? 'bg-amber-50 text-amber-600' : 'bg-violet-50 text-violet-600'
+                    }`}
+                  >
+                    {m.role === 'user' ? '要求' : '上轮'}
+                  </span>
+                  <ClampText text={m.content} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
+
         <div className="mt-2 px-1 text-[11px] text-ink-400">
           快照时间：{new Date(snap.at).toLocaleTimeString()} · 生成预留 ~8000 tok 不计入
         </div>

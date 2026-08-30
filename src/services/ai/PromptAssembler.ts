@@ -47,6 +47,10 @@ export interface PromptContext {
     facts: Array<{ domain: string; fact: string; basis: string }>;
     chains: Array<{ premise: string; conclusion: string }>;
   };
+  /** P7.3-Phase 0：多轮会话历史（此前的 user/assistant 轮次；system 不进历史）。追加在 user 消息之后 */
+  history?: ChatMessage[];
+  /** P7.3-Phase 0：历史 token 预算覆盖（默认 budget.history） */
+  historyBudget?: number;
 }
 
 export interface TokenBudget {
@@ -58,6 +62,7 @@ export interface TokenBudget {
   segments: number; // ~1500（P2，远期相关原文片段）
   recentChapters: number; // ~3000（从 6000 缩减，摘要链分担）
   currentChapter: number; // ~3000
+  history: number; // ~3000（P7.3 多轮会话历史，后进优先保留）
   userInstruction: number; // ~1000
   globalPrompts: number; // ~600（P2.1-M1，作者全局要求）
   projectDirective: number; // ~1500（项目级 agents.md 指令书）
@@ -75,6 +80,7 @@ export const DEFAULT_TOKEN_BUDGET: TokenBudget = {
   segments: 1500,
   recentChapters: 3000,
   currentChapter: 3000,
+  history: 3000,
   userInstruction: 1000,
   globalPrompts: 600,
   projectDirective: 1500,
@@ -95,6 +101,30 @@ const MODE_TASK_INSTRUCTION: Record<AIMode, string> = {
   dialogue: '你是一位资深小说作者。请根据场景与参与角色，创作符合人物性格的对白。直接输出对白正文（可含必要的动作/神态描写），不要任何解释。',
   check: '你是一位严谨的小说一致性审校。请对比章节正文与角色卡、世界书设定，找出矛盾之处。仅输出 JSON。'
 };
+
+/**
+ * P7.3-Phase 0：多轮历史后进优先截断——保留最近 N 条、丢弃最旧，保证最后一条历史一定在内
+ * （最后一条自身超预算时截断其内容而不是丢弃）。供 assemble 与 aiStore 会话容器共用。
+ */
+export function truncateHistoryLatestFirst(history: ChatMessage[], budget: number): ChatMessage[] {
+  if (history.length === 0 || budget <= 0) return [];
+  const kept: ChatMessage[] = [];
+  let used = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const tokens = countTokens(history[i].content);
+    if (used + tokens <= budget) {
+      used += tokens;
+      kept.unshift(history[i]);
+      continue;
+    }
+    if (i === history.length - 1) {
+      const fit = truncateToTokenBudget(history[i].content, budget);
+      if (fit.text.trim() !== '') kept.unshift({ ...history[i], content: fit.text });
+    }
+    break;
+  }
+  return kept;
+}
 
 export class PromptAssembler {
   private budget: TokenBudget;
@@ -287,10 +317,21 @@ export class PromptAssembler {
       userParts.push('请开始输出。');
     }
 
-    return [
-      { role: 'system', content: systemParts.join('\n\n') },
-      { role: 'user', content: userParts.join('\n\n') }
-    ];
+    return this.appendHistory(
+      [
+        { role: 'system', content: systemParts.join('\n\n') },
+        { role: 'user', content: userParts.join('\n\n') }
+      ],
+      ctx
+    );
+  }
+
+  /** P7.3-Phase 0：历史轮次追加在 system+user 之后（后进优先截断；不传 history 零变化） */
+  private appendHistory(messages: ChatMessage[], ctx: PromptContext): ChatMessage[] {
+    if (ctx.history && ctx.history.length > 0) {
+      messages.push(...truncateHistoryLatestFirst(ctx.history, ctx.historyBudget ?? this.budget.history));
+    }
+    return messages;
   }
 
   /** 调试用：返回组装后的各部分 token 占用 */
@@ -354,6 +395,16 @@ export class PromptAssembler {
       part: 'currentChapter',
       tokens: countTokens(currentFit.text),
       truncated: currentFit.truncated
+    });
+    // P7.3-Phase 0：多轮历史实际注入的 token（后进优先截断后）
+    const keptHistory = truncateHistoryLatestFirst(
+      ctx.history ?? [],
+      ctx.historyBudget ?? this.budget.history
+    );
+    out.push({
+      part: 'history',
+      tokens: keptHistory.reduce((sum, m) => sum + countTokens(m.content), 0),
+      truncated: keptHistory.length < (ctx.history?.length ?? 0)
     });
     return out;
   }
