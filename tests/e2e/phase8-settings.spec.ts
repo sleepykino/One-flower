@@ -45,7 +45,7 @@ async function deleteBook(page: Page, title: string): Promise<void> {
   // P6：删除入口移入 ⋮ 菜单（软删除移入回收站）
   await card.getByRole('button', { name: '更多操作' }).click();
   await card.getByRole('button', { name: '删除' }).click();
-  await acceptNativeDialog();
+  await acceptNativeDialog(page);
   await expect(card).toHaveCount(0);
 }
 
@@ -210,9 +210,9 @@ test.describe('阶段 8：设置页', () => {
     await expect(addedItem).toHaveCount(1);
     await expect.poll(budgetNumber, { timeout: 5_000 }).toBeGreaterThan(initialBudget);
 
-    // 删除走 confirmDialog 原生确认框（PowerShell AppActivate+ENTER 方案）
+    // 删除走 confirmDialog 软件内确认框（点「确认」按钮）
     await addedItem.getByRole('button', { name: '删除' }).click();
-    await acceptNativeDialog();
+    await acceptNativeDialog(tauriPage);
 
     // 列表恢复初始快照状态，预算回初始值（初始为空时即 0 / 600 token）
     await expect(addedItem).toHaveCount(0);
@@ -273,7 +273,8 @@ test.describe('阶段 8：设置页', () => {
     await expect(sectionMain(tauriPage).getByText(/不覆盖现有书籍/)).toBeVisible();
 
     // 书籍下拉含自建书 + 「导出备份」「选择备份包导入」两按钮在位
-    const bookSelect = sectionMain(tauriPage).getByRole('combobox');
+    // （main 内另有自动备份间隔下拉，故 .first() 限定导出书籍下拉）
+    const bookSelect = sectionMain(tauriPage).getByRole('combobox').first();
     await expect(bookSelect).toBeVisible();
     await expect(bookSelect.locator('option', { hasText: title })).toHaveCount(1, { timeout: 5_000 });
     await expect(sectionMain(tauriPage).getByRole('button', { name: '导出备份' })).toBeVisible();

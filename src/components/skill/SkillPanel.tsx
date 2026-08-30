@@ -4,8 +4,9 @@
 
 import { useEffect, useState } from 'react';
 import type { MouseEvent } from 'react';
-import { open, save } from '@tauri-apps/plugin-dialog';
+import { open } from '@tauri-apps/plugin-dialog';
 import { getAppContext } from '../../context/app-context';
+import { pickSavePath } from '../../native/dialog';
 import type { SkillManifest } from '../../services/skill/types';
 import { SkillPackService } from '../../services/skill/SkillPackService';
 import type { ImportOptions, SkillPreview } from '../../services/skill/SkillPackService';
@@ -123,7 +124,7 @@ export function SkillPanel({ bookId }: { bookId: string }): JSX.Element {
     e.stopPropagation();
     setNotice(null);
     setError(null);
-    const path = await save({ defaultPath: `${name}.zip`, filters: PACK_FILTERS });
+    const path = await pickSavePath({ fileName: `${name}.zip`, filters: PACK_FILTERS });
     if (!path) return;
     try {
       const count = await packService().exportPack(name, path);

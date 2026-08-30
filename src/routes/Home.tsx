@@ -6,11 +6,11 @@
 
 import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { open, save } from '@tauri-apps/plugin-dialog';
+import { open } from '@tauri-apps/plugin-dialog';
 import { Pin, FileUp } from 'lucide-react';
 import { useBookStore } from '../store/bookStore';
 import { getAppContext } from '../context/app-context';
-import { confirmDialog } from '../native/dialog';
+import { confirmDialog, pickSavePath } from '../native/dialog';
 import { toast } from '../components/common/toast';
 import { docTitleFromFileName } from '../services/import/DocImportService';
 import { UpdateDialog } from '../components/update/UpdateDialog';
@@ -281,8 +281,8 @@ export function Home(): JSX.Element {
 
   /** P6 M3：从书架直接导出单书备份（逻辑同设置页 BackupSection） */
   const exportBookBackup = async (book: Book): Promise<void> => {
-    const path = await save({
-      defaultPath: `${book.title}.zip`,
+    const path = await pickSavePath({
+      fileName: `${book.title}.zip`,
       filters: [{ name: '备份包', extensions: ['zip'] }]
     });
     if (!path) return;

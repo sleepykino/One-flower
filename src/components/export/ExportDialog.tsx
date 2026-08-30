@@ -3,8 +3,8 @@
  */
 
 import { useEffect, useState } from 'react';
-import { save } from '@tauri-apps/plugin-dialog';
 import { getAppContext } from '../../context/app-context';
+import { pickSavePath } from '../../native/dialog';
 import type { ExportFormat } from '../../services/export/ExportService';
 import type { Chapter } from '../../types';
 
@@ -41,8 +41,8 @@ export function ExportDialog({ bookId, onClose }: { bookId: string; onClose: () 
                 : 'zip';
       const defaultName =
         scope === 'book' ? `book.${ext}` : `${chapters.find((c) => c.id === chapterId)?.title ?? 'chapter'}.${ext}`;
-      const path = await save({
-        defaultPath: defaultName,
+      const path = await pickSavePath({
+        fileName: defaultName,
         filters: [{ name: FORMAT_LABEL[format], extensions: [ext] }]
       });
       if (!path) return;

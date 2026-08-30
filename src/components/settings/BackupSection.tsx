@@ -5,11 +5,12 @@
  */
 
 import { useEffect, useState } from 'react';
-import { open, save } from '@tauri-apps/plugin-dialog';
+import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { useBookStore } from '../../store/bookStore';
 import { getAppContext } from '../../context/app-context';
 import { toast } from '../common/toast';
+import { confirmDialog, pickSavePath } from '../../native/dialog';
 import type { AutoBackupSettings } from '../../services/backup/AutoBackupService';
 
 /** 备份间隔选项（小时） */
@@ -55,8 +56,8 @@ export function BackupSection(): JSX.Element {
       return;
     }
     const book = books.find((b) => b.id === bookId);
-    const path = await save({
-      defaultPath: `${book?.title ?? 'book'}.zip`,
+    const path = await pickSavePath({
+      fileName: `${book?.title ?? 'book'}.zip`,
       filters: [{ name: '备份包', extensions: ['zip'] }]
     });
     if (!path) return;
@@ -116,7 +117,7 @@ export function BackupSection(): JSX.Element {
   /** 一键清理无效备份：删除备份目录中不对应任何现存书籍的遗留 zip（书籍改名/删除后残留） */
   const cleanInvalidBackups = async (): Promise<void> => {
     const { autoBackupService } = getAppContext();
-    const confirmed = window.confirm(
+    const confirmed = await confirmDialog(
       '将删除备份目录中不对应任何现存书籍的备份文件（书籍改名/删除后遗留的旧备份）。\n此操作不可撤销，是否继续？'
     );
     if (!confirmed) return;

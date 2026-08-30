@@ -132,7 +132,7 @@ const EXPECTED_TABLES = [
 
 /** 各迁移 ADD COLUMN 累计出的关键列（表 -> 列集合） */
 const EXPECTED_COLUMNS: Record<string, string[]> = {
-  books: ['deleted_at', 'pinned', 'sort_order'],
+  books: ['deleted_at', 'pinned', 'sort_order', 'outline_inject_enabled'],
   chapters: ['summary_generated_at', 'summary_source_words', 'beats'],
   provider_configs: ['is_default'],
   worldbook_entries: ['enabled'],
@@ -154,7 +154,9 @@ const EXPECTED_ADD_COLUMN_COUNTS: Record<number, number> = {
   11: 3,
   12: 2,
   13: 1,
-  14: 0
+  14: 0,
+  15: 1,
+  16: 0
 };
 
 describe('迁移注册一致性', () => {

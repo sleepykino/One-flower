@@ -267,7 +267,10 @@ export class AIOrchestrator {
     }
     if (this.bookOutlineService) {
       try {
-        ctx.bookOutline = await this.bookOutlineService.outlineText(bookId);
+        // G1 注入开关：关闭后全书大纲不再注入四模式生成
+        if (await this.bookOutlineService.isInjectionEnabled(bookId)) {
+          ctx.bookOutline = await this.bookOutlineService.outlineText(bookId);
+        }
       } catch (e) {
         console.warn('[AI] 读取本书大纲失败，已跳过:', e);
       }

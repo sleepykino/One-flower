@@ -46,7 +46,7 @@ async function deleteBook(page: Page, title: string): Promise<void> {
   // P6：删除入口移入 ⋮ 菜单（软删除移入回收站）
   await card.getByRole('button', { name: '更多操作' }).click();
   await card.getByRole('button', { name: '删除' }).click();
-  await acceptNativeDialog();
+  await acceptNativeDialog(page);
   await expect(card).toHaveCount(0);
 }
 
@@ -85,10 +85,10 @@ async function openEditorWithSavedText(page: Page): Promise<string> {
   return title;
 }
 
-/** 右侧 rail tab（竖排图标栏按钮的 accessible name 来自 title 属性）。
- *  nav.last() 域限定 + exact 规避「角色」与「角色采访」前缀等重名问题 */
-function railTab(page: Page, name: string) {
-  return page.locator('nav').last().getByRole('button', { name, exact: true });
+/** 右侧 rail tab：按钮 aria-label 为「打开X面板」，用稳定的 data-rail-tab 属性定位。
+ *  key 即 Editor.tsx RIGHT_TAB_GROUPS 中的 tab key（library/history/stats/…） */
+function railTab(page: Page, key: string) {
+  return page.locator(`[data-rail-tab="${key}"]`);
 }
 
 /** 右侧面板容器（DOM 末位 aside，见手工记录沉淀的定位技巧） */
@@ -166,7 +166,7 @@ test.describe('阶段 5：资产与工具', () => {
 
   test('T5.4 写作统计：streak / 今日字数块 / 近 30 天趋势折线', async ({ tauriPage }) => {
     await openEditorWithSavedText(tauriPage);
-    await railTab(tauriPage, '统计').click();
+    await railTab(tauriPage, 'stats').click();
     const panel = rightPanel(tauriPage);
 
     // 面板头 + 今日块：今日字数大数字、连续天数（streak）、今日时长、日更目标进度

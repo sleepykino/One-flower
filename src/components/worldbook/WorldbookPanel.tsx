@@ -4,9 +4,9 @@
  */
 
 import { useEffect, useState } from 'react';
-import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { getAppContext } from '../../context/app-context';
-import { confirmDialog } from '../../native/dialog';
+import { confirmDialog, pickSavePath } from '../../native/dialog';
 import { toast } from '../common/toast';
 import { useEditorStore } from '../../store/editorStore';
 import { removeWorldbookRefs } from '../../utils/pmdoc';
@@ -196,7 +196,8 @@ export function WorldbookPanel({ bookId }: { bookId: string }): JSX.Element {
       return;
     }
     try {
-      const path = await saveDialog({
+      const path = await pickSavePath({
+        fileName: '世界书.json',
         title: '导出世界书',
         filters: [{ name: '世界书', extensions: ['json'] }]
       });

@@ -11,9 +11,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Konva from 'konva';
 import { Stage, Layer, Group, Circle, Rect, Line, Arrow, Text, Image } from 'react-konva';
-import { open, save as saveDialog } from '@tauri-apps/plugin-dialog';
+import { open } from '@tauri-apps/plugin-dialog';
 import { getAppContext } from '../../context/app-context';
-import { confirmDialog } from '../../native/dialog';
+import { confirmDialog, pickSavePath } from '../../native/dialog';
 import { toast } from '../common/toast';
 import { useEditorStore } from '../../store/editorStore';
 import { MapEditorService } from '../../services/map/MapEditorService';
@@ -1266,8 +1266,8 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
       });
       void (async () => {
         const safeName = currentMap.name.replace(/[\\/:*?"<>|]/g, '_');
-        const target = await saveDialog({
-          defaultPath: `${safeName}.png`,
+        const target = await pickSavePath({
+          fileName: `${safeName}.png`,
           filters: [{ name: 'PNG 图片', extensions: ['png'] }]
         });
         if (!target || typeof target !== 'string') return;

@@ -118,11 +118,13 @@ export class LongFormService {
     }));
 
     const material: string[] = [];
-    // G1：全书大纲前瞻约束——节拍须落在全书计划中本章对应的阶段区间内
+    // G1：全书大纲前瞻约束——节拍须落在全书计划中本章对应的阶段区间内（受注入开关控制）
     if (this.bookOutlineService) {
       try {
-        const bookOutline = await this.bookOutlineService.outlineText(params.bookId);
-        if (bookOutline) material.push('【全书大纲（全书计划，本章节拍须与对应阶段定位一致）】', bookOutline);
+        if (await this.bookOutlineService.isInjectionEnabled(params.bookId)) {
+          const bookOutline = await this.bookOutlineService.outlineText(params.bookId);
+          if (bookOutline) material.push('【全书大纲（全书计划，本章节拍须与对应阶段定位一致）】', bookOutline);
+        }
       } catch (e) {
         console.warn('[LongForm] 读取本书大纲失败，已跳过:', e);
       }

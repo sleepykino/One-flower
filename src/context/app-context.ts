@@ -22,6 +22,7 @@ import { DocxExporter } from '../services/export/DocxExporter';
 import { ImportService } from '../services/import/ImportService';
 import { DocImportService } from '../services/import/DocImportService';
 import { BookOutlineService } from '../services/outline/BookOutlineService';
+import { NotesService } from '../services/notes/NotesService';
 import { UsageService, setSharedUsageService } from '../services/usage/UsageService';
 import { PromptAssembler } from '../services/ai/PromptAssembler';
 import { AIOrchestrator } from '../services/ai/AIOrchestrator';
@@ -73,6 +74,8 @@ export interface AppContext {
   docImportService: DocImportService;
   /** G1：全书大纲（storage_dir/outline.md，编辑器「大纲」弹窗编辑，注入 AI 生成） */
   outlineService: BookOutlineService;
+  /** 随手记 / 备忘录（全局跨书：文本速记 + 图片附件 + 链接，编辑器顶栏「随手记」弹窗） */
+  notesService: NotesService;
   /** G4：AI 用量流水与累计统计（对话类 LLM 调用记账；设置页「用量统计」读取） */
   usageService: UsageService;
   promptAssembler: PromptAssembler;
@@ -191,6 +194,7 @@ export async function initApp(): Promise<AppContext> {
   const importService = new ImportService(tauriBridge, db, wq);
   const docImportService = new DocImportService(tauriBridge, bookService, chapterService);
   const outlineService = new BookOutlineService(tauriBridge);
+  const notesService = new NotesService(tauriBridge);
 
   const promptAssembler = new PromptAssembler();
 
@@ -318,6 +322,7 @@ export async function initApp(): Promise<AppContext> {
     importService,
     docImportService,
     outlineService,
+    notesService,
     usageService,
     promptAssembler,
     orchestrator,

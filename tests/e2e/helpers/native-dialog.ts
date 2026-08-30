@@ -1,40 +1,26 @@
-import { exec } from 'node:child_process';
+import type { Page } from '@playwright/test';
 
 /**
- * 原生系统对话框（plugin-dialog ask/confirm）自动化。
+ * 软件内确认弹窗（ConfirmDialogHost）自动化。
  *
- * 背景：CDP 无法操作 OS 级弹窗；覆盖 __TAURI_INTERNALS__.invoke 亦无法拦截
- * （已在阶段 1 手工验证，见 doc/自动化测试记录.md）。
- * 有效方案：PowerShell AppActivate 激活弹窗窗口后发送按键。
+ * P7.2 起确认弹窗由原生 ask 系统消息框改为软件内模态（DOM 级），
+ * 不再依赖 PowerShell AppActivate + SendKeys。
+ * 统一入口语义不变：accept=点「确认」（原生 ask 回车=是）、dismiss=点「取消」（ESC=否）。
  */
-const DIALOG_TITLE = '确认操作';
 
-function sendKeysOnce(title: string, keys: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const script =
-      `$ws = New-Object -ComObject WScript.Shell; ` +
-      `$ok = $ws.AppActivate('${title}'); ` +
-      `Start-Sleep -Milliseconds 300; ` +
-      `if ($ok) { $ws.SendKeys('${keys}') }; ` +
-      `if (-not $ok) { exit 1 }`;
-    exec(script, { shell: 'powershell.exe' }, (err) => resolve(!err));
-  });
+/** 定位软件内确认弹窗（按可选标题文本过滤），等待可见后返回 */
+async function dialog(page: Page, title?: string) {
+  const loc = title ? page.getByRole('dialog').filter({ hasText: title }) : page.getByRole('dialog');
+  await loc.waitFor({ state: 'visible', timeout: 5_000 });
+  return loc;
 }
 
-async function sendKeys(title: string, keys: string, attempts = 10, intervalMs = 250): Promise<void> {
-  for (let i = 0; i < attempts; i++) {
-    if (await sendKeysOnce(title, keys)) return;
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
-  throw new Error(`未能激活原生对话框窗口"${title}"（请确认弹窗已触发、标题一致且无其他窗口抢占焦点）`);
+/** 点确认弹窗的「确认」按钮（等价原生 ask 回车=是） */
+export async function acceptNativeDialog(page: Page, title?: string): Promise<void> {
+  await (await dialog(page, title)).getByRole('button', { name: '确认' }).click();
 }
 
-/** 点击原生确认弹窗的"是/确定"（默认按钮）；title 缺省为通用确认框「确认操作」 */
-export function acceptNativeDialog(title: string = DIALOG_TITLE): Promise<void> {
-  return sendKeys(title, '{ENTER}');
-}
-
-/** 取消原生确认弹窗（ESC 等价于"否/取消"） */
-export function dismissNativeDialog(title: string = DIALOG_TITLE): Promise<void> {
-  return sendKeys(title, '{ESC}');
+/** 点确认弹窗的「取消」按钮（等价原生 ask ESC=否） */
+export async function dismissNativeDialog(page: Page, title?: string): Promise<void> {
+  await (await dialog(page, title)).getByRole('button', { name: '取消' }).click();
 }

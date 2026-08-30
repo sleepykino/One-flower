@@ -18,6 +18,8 @@ import p6Sql from './migrations/011_p6_bookshelf.sql?raw';
 import lfEnhSql from './migrations/012_longform_hints.sql?raw';
 import lfSeamsSql from './migrations/013_longform_seams.sql?raw';
 import aiUsageSql from './migrations/014_ai_usage.sql?raw';
+import outlineInjectSql from './migrations/015_outline_inject.sql?raw';
+import notesSql from './migrations/016_notes.sql?raw';
 
 interface Migration {
   version: number;
@@ -38,7 +40,9 @@ export const MIGRATIONS: Migration[] = [
   { version: 11, sql: p6Sql },
   { version: 12, sql: lfEnhSql },
   { version: 13, sql: lfSeamsSql },
-  { version: 14, sql: aiUsageSql }
+  { version: 14, sql: aiUsageSql },
+  { version: 15, sql: outlineInjectSql },
+  { version: 16, sql: notesSql }
 ];
 
 /**

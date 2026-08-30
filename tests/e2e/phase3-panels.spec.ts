@@ -55,7 +55,7 @@ async function openFreshEditor(page: Page): Promise<string> {
   return title;
 }
 
-/** 删除书籍：hover 卡片显示删除按钮 → 原生确认框 Enter → 卡片消失 */
+/** 删除书籍：hover 卡片显示删除按钮 → 软件内确认框 确认 → 卡片消失 */
 async function deleteBook(page: Page, title: string): Promise<void> {
   await page.goto(APP_URL + '/');
   const card = bookCard(page, title);
@@ -63,7 +63,7 @@ async function deleteBook(page: Page, title: string): Promise<void> {
   // P6：删除入口移入 ⋮ 菜单（软删除移入回收站）
   await card.getByRole('button', { name: '更多操作' }).click();
   await card.getByRole('button', { name: '删除' }).click();
-  await acceptNativeDialog();
+  await acceptNativeDialog(page);
   await expect(card).toHaveCount(0);
 }
 
@@ -92,10 +92,10 @@ function rightPanel(page: Page): Locator {
   return page.getByRole('complementary').last();
 }
 
-/** 右侧竖排 icon rail 按钮（accessible name 来自 title 属性）。
- *  「角色」是「角色采访」的前缀必须 exact；「世界书」「伏笔」经核实 rail 内无重名，统一 exact */
-function railTab(page: Page, name: string): Locator {
-  return page.getByRole('navigation').getByRole('button', { name, exact: true });
+/** 右侧竖排 icon rail 按钮：按钮 aria-label 为「打开X面板」，用稳定的 data-rail-tab 属性定位。
+ *  key 即 Editor.tsx RIGHT_TAB_GROUPS 中的 tab key（ai/skills/context/characters/…） */
+function railTab(page: Page, key: string): Locator {
+  return page.locator(`[data-rail-tab="${key}"]`);
 }
 
 /** 动态表单字段：按 label 标题定位其所在 div.mb-3 内的 input/textarea。
@@ -181,7 +181,7 @@ test.describe('阶段 3：设定类面板', () => {
     await openFreshEditor(tauriPage);
     const panel = rightPanel(tauriPage);
 
-    await railTab(tauriPage, '角色').click();
+    await railTab(tauriPage, 'characters').click();
     await expect(panel.getByText('角色卡（0）')).toBeVisible();
 
     // 新建角色卡：默认模板 6 个输入位（姓名* 为单行 input，外貌/性格/背景/关系为多行 textarea，
@@ -254,9 +254,9 @@ test.describe('阶段 3：设定类面板', () => {
     await panel.getByRole('button', { name: '取消' }).click();
     await expect(panel.getByText('角色卡（1）')).toBeVisible();
 
-    // 删除角色（hover 才显示的文字按钮 + 原生确认框「确认操作」）→ 回空态
+    // 删除角色（hover 才显示的文字按钮 + 软件内确认框「确认操作」）→ 回空态
     await clickHiddenButton(charCard(tauriPage, 'TEST-林晚照'), '删除');
-    await acceptNativeDialog();
+    await acceptNativeDialog(tauriPage);
     await expect(charCard(tauriPage, 'TEST-林晚照')).toHaveCount(0);
     await expect(panel.getByText('角色卡（0）')).toBeVisible();
     await expect(panel.getByText(/暂无角色/)).toBeVisible();
@@ -266,7 +266,7 @@ test.describe('阶段 3：设定类面板', () => {
     await openFreshEditor(tauriPage);
     const panel = rightPanel(tauriPage);
 
-    await railTab(tauriPage, '角色').click();
+    await railTab(tauriPage, 'characters').click();
     await expect(panel.getByText('角色卡（0）')).toBeVisible();
     await createCharacter(tauriPage, 'TEST-林晚照', '冷峻孤高');
     await createCharacter(tauriPage, 'TEST-沈孤舟', '狂放不羁');
@@ -323,7 +323,7 @@ test.describe('阶段 3：设定类面板', () => {
     await expect(overlay).toHaveCount(0);
     for (const name of ['TEST-林晚照', 'TEST-沈孤舟']) {
       await clickHiddenButton(charCard(tauriPage, name), '删除');
-      await acceptNativeDialog();
+      await acceptNativeDialog(tauriPage);
       await expect(charCard(tauriPage, name)).toHaveCount(0);
     }
     await panel.getByRole('button', { name: '关系图' }).click();
@@ -383,9 +383,9 @@ test.describe('阶段 3：设定类面板', () => {
     await pm.press('Control+s');
     await expect.poll(() => saveState(tauriPage), { timeout: 5_000 }).toBe('已保存');
 
-    // 删除条目：hover 才显示的「删除」+ 原生确认框（文案含「正文中的 [[引用]] 将一并移除」）
+    // 删除条目：hover 才显示的「删除」+ 软件内确认框（文案含「正文中的 [[引用]] 将一并移除」）
     await clickHiddenButton(entry, '删除');
-    await acceptNativeDialog();
+    await acceptNativeDialog(tauriPage);
     await expect(panel.getByText('世界书（0）')).toBeVisible();
 
     // 联动清理：正文中指向该条目的引用节点被同步移除（当前章节自动重载，轮询等待完成）
@@ -398,7 +398,7 @@ test.describe('阶段 3：设定类面板', () => {
     await createChapter(tauriPage, '章甲');
     await createChapter(tauriPage, '章乙');
 
-    await railTab(tauriPage, '伏笔').click();
+    await railTab(tauriPage, 'foreshadow').click();
     await expect(panel.getByText('伏笔追踪（0）')).toBeVisible();
     await expect(panel.getByText('暂无伏笔记录。')).toBeVisible();
 

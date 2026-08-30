@@ -59,7 +59,7 @@ async function deleteBook(page: Page, title: string): Promise<void> {
   // P6：删除入口移入 ⋮ 菜单（软删除移入回收站）
   await card.getByRole('button', { name: '更多操作' }).click();
   await card.getByRole('button', { name: '删除' }).click();
-  await acceptNativeDialog();
+  await acceptNativeDialog(page);
   await expect(card).toHaveCount(0);
 }
 
@@ -233,7 +233,10 @@ test.describe('阶段 9：跨模块健壮性', () => {
     // 在 Tauri WebView 上 setViewportSize 走 CDP Emulation.setDeviceMetricsOverride：
     // 覆盖视口宽高 + 设备像素比（DPR 被钉为 1）。恢复宽高无法清除该 override，
     // 残留会导致页面被拉伸（DPR 与 Windows 系统缩放不一致），
-    // 故恢复必须显式调用 Emulation.clearDeviceMetricsOverride 让 WebView 回到原生渲染。
+    // 故恢复必须显式清除 Emulation override 让 WebView 回到原生渲染。
+    // 注意：setViewportSize 的 override 由 Playwright 内部会话下发，另开会话直接
+    // clearDeviceMetricsOverride 实测是 no-op（清不掉、残留拉伸）；必须先在
+    // 本手动会话 set 一次接管仿真槽位，再 clear 才能真正还原原生视口/DPR。
     const cdp = await tauriPage.context().newCDPSession(tauriPage);
     try {
       await tauriPage.setViewportSize({ width: 1100, height: 720 });
@@ -252,10 +255,19 @@ test.describe('阶段 9：跨模块健壮性', () => {
       await expect(tauriPage.getByPlaceholder('章节标题…')).toBeVisible();
       await expect(tauriPage.locator('.ProseMirror')).toBeVisible();
       await expect(
-        tauriPage.getByRole('navigation').getByRole('button', { name: 'AI 助手', exact: true })
+        tauriPage.locator('[data-rail-tab="ai"]')
       ).toBeVisible();
     } finally {
-      // 彻底清除 override，恢复 WebView 原生视口与设备像素比（避免测试后页面残留拉伸）
+      // 同一会话先 set 再 clear：接管仿真槽位后清除，恢复 WebView 原生视口与设备像素比
+      // （避免测试后页面残留拉伸）
+      await cdp
+        .send('Emulation.setDeviceMetricsOverride', {
+          width: 1100,
+          height: 720,
+          deviceScaleFactor: 1,
+          mobile: false
+        })
+        .catch(() => {});
       await cdp.send('Emulation.clearDeviceMetricsOverride').catch(() => {});
     }
   });

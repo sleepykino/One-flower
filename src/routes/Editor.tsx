@@ -4,7 +4,7 @@
  * Ctrl+Shift+F 全局查找
  */
 
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Sparkles,
@@ -25,6 +25,13 @@ import {
   Clock,
   Dices,
   Clapperboard,
+  StickyNote,
+  Focus,
+  ListTree,
+  PanelLeft,
+  PanelRight,
+  Download,
+  Search,
   type LucideIcon
 } from 'lucide-react';
 import { useEditorStore } from '../store/editorStore';
@@ -32,6 +39,7 @@ import { getEffectiveShortcuts, matchesShortcut } from '../utils/keymap';
 import { NovelEditor } from '../components/editor/NovelEditor';
 import { FocusMode } from '../components/editor/FocusMode';
 import { OutlineModal } from '../components/editor/OutlineModal';
+import { NotesModal } from '../components/notes/NotesModal';
 import { ChapterTree } from '../components/chapter-tree/ChapterTree';
 import { AIPanel } from '../components/ai/AIPanel';
 import { ContextPanel } from '../components/ai/ContextPanel';
@@ -43,6 +51,7 @@ import { SkillPanel } from '../components/skill/SkillPanel';
 import { WritingStatsPanel } from '../components/stats/WritingStats';
 import { GlobalSearchModal } from '../components/search/GlobalSearch';
 import { ExportDialog } from '../components/export/ExportDialog';
+import { OverflowMenu, type OverflowItem } from '../components/common/OverflowMenu';
 import { MapEditor } from '../components/map/MapEditor';
 import { TimelineView } from '../components/timeline/TimelineView';
 import { NameGenerator } from '../components/namegen/NameGenerator';
@@ -161,6 +170,8 @@ export function Editor(): JSX.Element {
   const [namegenOpen, setNamegenOpen] = useState(false);
   // G1：全书大纲编辑弹窗
   const [outlineOpen, setOutlineOpen] = useState(false);
+  // 随手记 / 备忘录弹窗（全局）
+  const [notesOpen, setNotesOpen] = useState(false);
   // P5：剧本工作台 overlay（对齐 mapOpen 先例）
   const [screenplayOpen, setScreenplayOpen] = useState(false);
   const [screenplayInitial, setScreenplayInitial] = useState<{ id?: string; wizard?: boolean }>({});
@@ -290,58 +301,65 @@ export function Editor(): JSX.Element {
     }
   };
 
-  return (
-    <div className="flex h-full flex-col">
-      {/* 顶栏 */}
-      <header className="flex items-center gap-3 border-b border-ink-200 bg-white px-4 py-2">
-        <button
-          type="button"
-          className="rounded border border-ink-200 px-2 py-1 text-sm hover:bg-ink-100"
-          onClick={() => navigate('/')}
-        >
-          ← 书架
-        </button>
-        {editingTitle ? (
-          <input
-            autoFocus
-            className="w-56 rounded border border-violet-300 px-2 py-0.5 text-sm font-medium focus:outline-none"
-            value={titleDraft}
-            onChange={(e) => setTitleDraft(e.target.value)}
-            onBlur={() => void saveRename()}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void saveRename();
-              if (e.key === 'Escape') setEditingTitle(false);
-            }}
-          />
-        ) : (
-          <div className="group flex items-center gap-1">
-            <span className="font-medium">{bookTitle}</span>
-            <button
-              type="button"
-              className="rounded p-0.5 text-ink-400 opacity-0 hover:bg-ink-100 hover:text-ink-700 focus:opacity-100 group-hover:opacity-100"
-              title="重命名书籍"
-              onClick={startRename}
-            >
-              <Pencil size={13} />
-            </button>
-          </div>
-        )}
-        <div className="text-xs tabular-nums text-ink-400" title="实时字数（保存后与落盘值同步）">
-          {currentChapter ? `${currentChapter.title} · ${liveWordCount ?? currentChapter.wordCount} 字` : '未选择章节'}
-        </div>
-        <div className="ml-auto flex items-center gap-2 text-xs" data-tour="editor-topbar-focus">
-          {/* P2 工具组：专注 / 大纲 / 地图 / 时间线 / 命名 */}
+  /** ☰ 下拉菜单项的统一样式（与「世界构建」下拉菜单一致） */
+  const MENU_ITEM_CLS =
+    'flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-ink-600 hover:bg-ink-50';
+
+  /** 顶栏右侧工具组：空间不足时按 priority（小者先收）逐个收进 ☰ */
+  const tools = useMemo<OverflowItem[]>(
+    () => [
+      {
+        key: 'notes',
+        group: 'notes',
+        priority: 4,
+        render: () => (
           <button
             type="button"
-            className="rounded border border-ink-200 px-2 py-1 text-ink-500 hover:bg-ink-100"
+            className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded border border-ink-200 px-2 py-1 text-ink-500 hover:bg-ink-100"
+            title="随手记 / 备忘录（全局跨书：速记想法、摘抄片段与图片）"
+            onClick={() => setNotesOpen(true)}
+          >
+            <StickyNote size={13} />
+            随手记
+          </button>
+        ),
+        menuRender: () => (
+          <button type="button" className={MENU_ITEM_CLS} onClick={() => setNotesOpen(true)}>
+            <StickyNote size={14} className="text-violet-500" />
+            随手记
+          </button>
+        )
+      },
+      {
+        key: 'outline',
+        group: 'outline',
+        priority: 3,
+        render: () => (
+          <button
+            type="button"
+            className="shrink-0 whitespace-nowrap rounded border border-ink-200 px-2 py-1 text-ink-500 hover:bg-ink-100"
             title="全书大纲（注入 AI 生成的前瞻约束）"
             onClick={() => setOutlineOpen(true)}
           >
             大纲
           </button>
+        ),
+        menuRender: () => (
+          <button type="button" className={MENU_ITEM_CLS} onClick={() => setOutlineOpen(true)}>
+            <ListTree size={14} className="text-violet-500" />
+            大纲
+            <span className="ml-1 text-[10px] text-ink-400">全书大纲</span>
+          </button>
+        )
+      },
+      {
+        key: 'focus',
+        group: 'focus',
+        priority: 6,
+        render: () => (
           <button
             type="button"
-            className={`rounded border px-2 py-1 hover:bg-ink-100 ${
+            className={`shrink-0 whitespace-nowrap rounded border px-2 py-1 hover:bg-ink-100 ${
               focusOn ? 'border-violet-300 text-violet-700' : 'border-ink-200 text-ink-500'
             }`}
             title="沉浸写作模式（打字机居中，Esc 退出）"
@@ -349,11 +367,24 @@ export function Editor(): JSX.Element {
           >
             专注
           </button>
-          {/* PR-D：世界构建下拉（地图 / 时间线 / 命名生成；为地图重设计预留扩展位） */}
-          <div className="relative">
+        ),
+        menuRender: () => (
+          <button type="button" className={MENU_ITEM_CLS} onClick={() => setFocusOn(true)}>
+            <Focus size={14} className="text-violet-500" />
+            专注
+            <span className="ml-1 text-[10px] text-ink-400">沉浸写作</span>
+          </button>
+        )
+      },
+      {
+        key: 'worldbuild',
+        group: 'worldbuild',
+        priority: 2,
+        render: () => (
+          <div className="relative shrink-0">
             <button
               type="button"
-              className={`flex items-center gap-1 rounded border px-2 py-1 hover:bg-ink-100 ${
+              className={`flex items-center gap-1 whitespace-nowrap rounded border px-2 py-1 hover:bg-ink-100 ${
                 worldBuildOpen || mapOpen || timelineOpen || namegenOpen
                   ? 'border-violet-300 text-violet-700'
                   : 'border-ink-200 text-ink-500'
@@ -413,37 +444,206 @@ export function Editor(): JSX.Element {
               </>
             )}
           </div>
+        ),
+        menuRender: () => (
+          <>
+            <button
+              type="button"
+              className={MENU_ITEM_CLS}
+              onClick={() => {
+                setMapOpen(true);
+              }}
+            >
+              <Map size={14} className="text-violet-500" />
+              地图
+            </button>
+            <button
+              type="button"
+              className={MENU_ITEM_CLS}
+              onClick={() => {
+                setTimelineOpen(true);
+              }}
+            >
+              <Clock size={14} className="text-violet-500" />
+              时间线
+            </button>
+            <button
+              type="button"
+              className={MENU_ITEM_CLS}
+              onClick={() => {
+                setNamegenOpen(true);
+              }}
+            >
+              <Dices size={14} className="text-violet-500" />
+              命名生成
+            </button>
+          </>
+        )
+      },
+      {
+        key: 'toc',
+        group: 'panels',
+        priority: 5,
+        render: () => (
           <button
             type="button"
-            className={`rounded border px-2 py-1 hover:bg-ink-100 ${leftOpen ? 'border-violet-300 text-violet-700' : 'border-ink-200 text-ink-500'}`}
+            aria-label={leftOpen ? '收起章节目录' : '展开章节目录'}
             title={leftOpen ? '收起章节目录' : '展开章节目录'}
             onClick={() => setLeftOpen((v) => !v)}
+            className={`flex shrink-0 items-center justify-center rounded border px-2 py-1 hover:bg-ink-100 ${
+              leftOpen ? 'border-violet-300 text-violet-700' : 'border-ink-200 text-ink-500'
+            }`}
           >
-            {leftOpen ? '◀ 目录' : '▶ 目录'}
+            <PanelLeft size={15} />
           </button>
+        ),
+        menuRender: () => (
+          <button type="button" className={MENU_ITEM_CLS} onClick={() => setLeftOpen((v) => !v)}>
+            <PanelLeft size={14} className="text-violet-500" />
+            {leftOpen ? '收起章节目录' : '展开章节目录'}
+          </button>
+        )
+      },
+      {
+        key: 'panel',
+        group: 'panels',
+        priority: 5,
+        render: () => (
           <button
             type="button"
-            className={`rounded border px-2 py-1 hover:bg-ink-100 ${rightOpen ? 'border-violet-300 text-violet-700' : 'border-ink-200 text-ink-500'}`}
+            aria-label={rightOpen ? '收起功能面板' : '展开功能面板'}
             title={rightOpen ? '收起功能面板' : '展开功能面板'}
             onClick={() => setRightOpen((v) => !v)}
+            className={`flex shrink-0 items-center justify-center rounded border px-2 py-1 hover:bg-ink-100 ${
+              rightOpen ? 'border-violet-300 text-violet-700' : 'border-ink-200 text-ink-500'
+            }`}
           >
-            {rightOpen ? '面板 ▶' : '◀ 面板'}
+            <PanelRight size={15} />
           </button>
+        ),
+        menuRender: () => (
+          <button type="button" className={MENU_ITEM_CLS} onClick={() => setRightOpen((v) => !v)}>
+            <PanelRight size={14} className="text-violet-500" />
+            {rightOpen ? '收起功能面板' : '展开功能面板'}
+          </button>
+        )
+      },
+      {
+        key: 'search',
+        group: 'search',
+        priority: 1,
+        render: () => (
           <button
             type="button"
-            className="rounded border border-ink-200 px-2 py-1 hover:bg-ink-100"
+            className="shrink-0 whitespace-nowrap rounded border border-ink-200 px-2 py-1 hover:bg-ink-100"
             onClick={() => setSearchOpen(true)}
           >
             全局查找 Ctrl+Shift+F
           </button>
+        ),
+        menuRender: () => (
+          <button type="button" className={MENU_ITEM_CLS} onClick={() => setSearchOpen(true)}>
+            <Search size={14} className="text-violet-500" />
+            全局查找
+            <span className="ml-1 text-[10px] text-ink-400">Ctrl+Shift+F</span>
+          </button>
+        )
+      },
+      {
+        key: 'export',
+        group: 'export',
+        priority: 7,
+        render: () => (
           <button
             type="button"
-            className="rounded bg-violet-600 px-2 py-1 text-white hover:bg-violet-700"
+            className="shrink-0 whitespace-nowrap rounded bg-violet-600 px-2 py-1 text-white hover:bg-violet-700"
             onClick={() => setExportOpen(true)}
           >
             导出
           </button>
+        ),
+        menuRender: () => (
+          <button type="button" className={MENU_ITEM_CLS} onClick={() => setExportOpen(true)}>
+            <Download size={14} className="text-violet-500" />
+            导出
+          </button>
+        )
+      }
+    ],
+    [
+      focusOn,
+      worldBuildOpen,
+      mapOpen,
+      timelineOpen,
+      namegenOpen,
+      leftOpen,
+      rightOpen,
+      setNotesOpen,
+      setOutlineOpen,
+      setFocusOn,
+      setWorldBuildOpen,
+      setMapOpen,
+      setTimelineOpen,
+      setNamegenOpen,
+      setLeftOpen,
+      setRightOpen,
+      setSearchOpen,
+      setExportOpen
+    ]
+  );
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* 顶栏 */}
+      <header className="flex items-center gap-3 border-b border-ink-200 bg-white px-4 py-2">
+        <button
+          type="button"
+          className="shrink-0 whitespace-nowrap rounded border border-ink-200 px-2 py-1 text-sm hover:bg-ink-100"
+          onClick={() => navigate('/')}
+        >
+          ← 书架
+        </button>
+        {editingTitle ? (
+          <input
+            autoFocus
+            className="w-56 rounded border border-violet-300 px-2 py-0.5 text-sm font-medium focus:outline-none"
+            value={titleDraft}
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onBlur={() => void saveRename()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void saveRename();
+              if (e.key === 'Escape') setEditingTitle(false);
+            }}
+          />
+        ) : (
+          <div className="group flex min-w-0 items-center gap-1">
+            <span
+              className="min-w-0 max-w-[360px] truncate font-medium"
+              title={bookTitle || undefined}
+            >
+              {bookTitle}
+            </span>
+            <button
+              type="button"
+              className="shrink-0 rounded p-0.5 text-ink-400 opacity-0 hover:bg-ink-100 hover:text-ink-700 focus:opacity-100 group-hover:opacity-100"
+              title="重命名书籍"
+              onClick={startRename}
+            >
+              <Pencil size={13} />
+            </button>
+          </div>
+        )}
+        <div
+          className="shrink-0 whitespace-nowrap text-xs tabular-nums text-ink-400"
+          title="实时字数（保存后与落盘值同步）"
+        >
+          {currentChapter ? `${currentChapter.title} · ${liveWordCount ?? currentChapter.wordCount} 字` : '未选择章节'}
         </div>
+        <OverflowMenu
+          className="text-xs"
+          dataTour="editor-topbar-focus"
+          items={tools}
+        />
       </header>
 
       {/* P2.1-M7：长文会话恢复横幅 */}
@@ -593,6 +793,7 @@ export function Editor(): JSX.Element {
       )}
       {timelineOpen && <TimelineView bookId={bookId} onClose={() => setTimelineOpen(false)} />}
       {outlineOpen && <OutlineModal bookId={bookId} onClose={() => setOutlineOpen(false)} />}
+      {notesOpen && <NotesModal onClose={() => setNotesOpen(false)} />}
       {namegenOpen && <NameGenerator bookId={bookId} onClose={() => setNamegenOpen(false)} />}
       {screenplayOpen && (
         <ErrorBoundary title="剧本工作台出错了" onClose={() => setScreenplayOpen(false)}>

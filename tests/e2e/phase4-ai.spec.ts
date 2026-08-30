@@ -45,7 +45,7 @@ async function deleteBook(page: Page, title: string): Promise<void> {
   // P6：删除入口移入 ⋮ 菜单（软删除移入回收站）
   await card.getByRole('button', { name: '更多操作' }).click();
   await card.getByRole('button', { name: '删除' }).click();
-  await acceptNativeDialog();
+  await acceptNativeDialog(page);
   await expect(card).toHaveCount(0);
 }
 
@@ -84,10 +84,10 @@ async function openEditorWithSavedText(page: Page): Promise<string> {
   return title;
 }
 
-/** 右侧 rail tab（竖排图标栏按钮的 accessible name 来自 title 属性）。
- *  nav.last() 域限定规避「长文」rail tab 与 AI 面板内模式按钮重名 */
-function railTab(page: Page, name: string) {
-  return page.locator('nav').last().getByRole('button', { name, exact: true });
+/** 右侧 rail tab：按钮 aria-label 为「打开X面板」，用稳定的 data-rail-tab 属性定位。
+ *  key 即 Editor.tsx RIGHT_TAB_GROUPS 中的 tab key（ai/longform/skills/…） */
+function railTab(page: Page, key: string) {
+  return page.locator(`[data-rail-tab="${key}"]`);
 }
 
 /** 右侧面板容器（DOM 末位 aside，见手工记录沉淀的定位技巧） */
@@ -120,23 +120,23 @@ test.describe('阶段 4：AI 与灵感面板 UI', () => {
     const panel = rightPanel(tauriPage);
     const probes: Array<[string, () => Promise<void>]> = [
       [
-        'AI 助手',
+        'ai',
         // 非长文视图恒有的「本书指令」入口；模式为全局内存态可能被其他会话残留切换，
         // 故不用「开始续写」做探针
         () => expect(panel.getByRole('button', { name: '本书指令' })).toBeVisible()
       ],
-      ['长文', () => expect(panel.getByText('① 节拍表')).toBeVisible()],
-      ['Skill', () => expect(panel.getByText(/文风 Skill（\d+）/)).toBeVisible()],
-      ['上下文', () => expect(panel.getByText('尚未发起 AI 调用')).toBeVisible()],
-      ['角色', () => expect(panel.getByText(/角色卡（\d+）/)).toBeVisible()],
-      ['世界书', () => expect(panel.getByText(/世界书（\d+）/)).toBeVisible()],
-      ['伏笔', () => expect(panel.getByText(/伏笔追踪（\d+）/)).toBeVisible()],
-      ['角色采访', () => expect(panel.getByText('采访角度')).toBeVisible()],
-      ['如果…会怎样', () => expect(panel.getByText(/给定一个剧情假设/)).toBeVisible()],
-      ['图库', () => expect(panel.getByRole('button', { name: '+ 上传' })).toBeVisible()],
-      ['版本', () => expect(panel.getByText(/版本历史（\d+）/)).toBeVisible()],
-      ['统计', () => expect(panel.getByText('今日字数')).toBeVisible()],
-      ['剧本', () => expect(panel.getByRole('button', { name: '从章节转化' })).toBeVisible()]
+      ['longform', () => expect(panel.getByText('① 节拍表')).toBeVisible()],
+      ['skills', () => expect(panel.getByText(/文风 Skill（\d+）/)).toBeVisible()],
+      ['context', () => expect(panel.getByText('尚未发起 AI 调用')).toBeVisible()],
+      ['characters', () => expect(panel.getByText(/角色卡（\d+）/)).toBeVisible()],
+      ['worldbook', () => expect(panel.getByText(/世界书（\d+）/)).toBeVisible()],
+      ['foreshadow', () => expect(panel.getByText(/伏笔追踪（\d+）/)).toBeVisible()],
+      ['interview', () => expect(panel.getByText('采访角度')).toBeVisible()],
+      ['whatif', () => expect(panel.getByText(/给定一个剧情假设/)).toBeVisible()],
+      ['library', () => expect(panel.getByRole('button', { name: '+ 上传' })).toBeVisible()],
+      ['history', () => expect(panel.getByText(/版本历史（\d+）/)).toBeVisible()],
+      ['stats', () => expect(panel.getByText('今日字数')).toBeVisible()],
+      ['screenplay', () => expect(panel.getByRole('button', { name: '从章节转化' })).toBeVisible()]
     ];
     for (const [tab, probe] of probes) {
       await railTab(tauriPage, tab).click();
@@ -261,7 +261,7 @@ test.describe('阶段 4：AI 与灵感面板 UI', () => {
   test('T4.4 长文向导步骤①节拍表 UI（不触发生成）', async ({ tauriPage }) => {
     await openEditorWithSavedText(tauriPage);
     // rail「长文」经 initialTab 打开 AIPanel 内部长文视图（同一 AIPanel，见手工记录环境备注）
-    await railTab(tauriPage, '长文').click();
+    await railTab(tauriPage, 'longform').click();
     const panel = rightPanel(tauriPage);
 
     // 步骤条四步齐全：①节拍表 → ②成本确认 → ③生成进度 → ④接缝审阅
@@ -292,7 +292,7 @@ test.describe('阶段 4：AI 与灵感面板 UI', () => {
 
   test('T4.5 Skill 文风包列表与勾选持久化（勾选后取消还原）', async ({ tauriPage }) => {
     await openEditorWithSavedText(tauriPage);
-    await railTab(tauriPage, 'Skill').click();
+    await railTab(tauriPage, 'skills').click();
     const panel = rightPanel(tauriPage);
 
     // 列表头（内置包数量）+ Skill 目录说明 + 导入/重新扫描入口
@@ -319,8 +319,8 @@ test.describe('阶段 4：AI 与灵感面板 UI', () => {
     // 取消还原，并再切走切回确认复位（不留勾选脏状态）
     await item.getByRole('checkbox').uncheck();
     await expect(item.getByRole('checkbox')).not.toBeChecked();
-    await railTab(tauriPage, '统计').click();
-    await railTab(tauriPage, 'Skill').click();
+    await railTab(tauriPage, 'stats').click();
+    await railTab(tauriPage, 'skills').click();
     await expect(item.getByRole('checkbox')).not.toBeChecked();
   });
 
@@ -350,7 +350,7 @@ test.describe('阶段 4：AI 与灵感面板 UI', () => {
     await expect(panel.getByRole('button', { name: '开始采访' })).toBeDisabled();
 
     // —— 如果…会怎样 ——
-    await railTab(tauriPage, '如果…会怎样').click();
+    await railTab(tauriPage, 'whatif').click();
     await expect(panel.getByText(/给定一个剧情假设/)).toBeVisible();
     await expect(panel.getByPlaceholder(/假设，如：/)).toBeVisible();
 

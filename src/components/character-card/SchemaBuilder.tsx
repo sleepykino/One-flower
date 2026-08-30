@@ -6,8 +6,9 @@
  */
 
 import { useMemo, useState } from 'react';
-import { open, save } from '@tauri-apps/plugin-dialog';
+import { open } from '@tauri-apps/plugin-dialog';
 import { getAppContext } from '../../context/app-context';
+import { pickSavePath } from '../../native/dialog';
 import { toast } from '../common/toast';
 import type { CharacterSchema } from '../../types';
 import {
@@ -99,7 +100,8 @@ export function SchemaBuilder({
   const exportFile = async (): Promise<void> => {
     setIoBusy(true);
     try {
-      const path = await save({
+      const path = await pickSavePath({
+        fileName: 'schema.json',
         title: '导出 Schema 模板',
         filters: [{ name: 'Schema 模板', extensions: ['json'] }]
       });

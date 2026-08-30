@@ -11,6 +11,11 @@ export default defineConfig({
   timeout: 30_000,
   reporter: [['list']],
   use: {
-    actionTimeout: 10_000
+    actionTimeout: 10_000,
+    // CDP 直连真实 Tauri 窗口时禁用视口模拟：默认 1280×720 会经
+    // Emulation.setDeviceMetricsOverride 把 WebView 视口/DPR 钉住，
+    // 断开后不自动清除，残留导致应用页面被拉伸。设 null 保持原生视口，
+    // 需要缩放的用例（如 T9.5）自行 setViewportSize 并在 finally 清理。
+    viewport: null
   }
 });

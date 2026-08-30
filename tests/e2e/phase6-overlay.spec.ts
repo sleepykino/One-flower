@@ -74,7 +74,7 @@ async function deleteBook(page: Page, title: string): Promise<void> {
   // P6：删除入口移入 ⋮ 菜单（软删除移入回收站）
   await card.getByRole('button', { name: '更多操作' }).click();
   await card.getByRole('button', { name: '删除' }).click();
-  await acceptNativeDialog();
+  await acceptNativeDialog(page);
   await expect(card).toHaveCount(0);
 }
 
@@ -337,7 +337,7 @@ test.describe('阶段 6：Overlay 与导出', () => {
     await openEditorWithChapter(tauriPage);
 
     // rail「剧本」tab → 面板头部入口「从章节转化」（onOpen(undefined, true) 直进向导）
-    await tauriPage.getByRole('navigation').getByRole('button', { name: '剧本', exact: true }).click();
+    await tauriPage.locator('[data-rail-tab="screenplay"]').click();
     await tauriPage.getByRole('button', { name: '从章节转化' }).click();
 
     const wb = fullscreenOverlay(tauriPage, '剧本工作台');

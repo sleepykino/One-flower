@@ -1,6 +1,6 @@
 [package]
 name = "oneflower"
-version = "0.11.7"
+version = "0.11.8"
 description = "One Flower"
 edition = "2021"
 

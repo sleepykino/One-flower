@@ -5,8 +5,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { getAppContext } from '../../context/app-context';
+import { pickSavePath } from '../../native/dialog';
 import { toast } from '../common/toast';
 import { useEditorStore } from '../../store/editorStore';
 import { useTaskStore } from '../../store/taskStore';
@@ -139,8 +139,8 @@ export function ScreenplayWorkbench({ bookId, initialScreenplayId, initialWizard
   const exportFountain = (): void => {
     if (!screenplay) return;
     void (async () => {
-      const target = await saveDialog({
-        defaultPath: `${screenplay.title.replace(/[\\/:*?"<>|]/g, '_')}.fountain`,
+      const target = await pickSavePath({
+        fileName: `${screenplay.title.replace(/[\\/:*?"<>|]/g, '_')}.fountain`,
         filters: [{ name: 'Fountain 剧本', extensions: ['fountain', 'txt'] }]
       });
       if (!target || typeof target !== 'string') return;
@@ -157,8 +157,8 @@ export function ScreenplayWorkbench({ bookId, initialScreenplayId, initialWizard
   const exportStoryboard = (): void => {
     if (!screenplay) return;
     void (async () => {
-      const target = await saveDialog({
-        defaultPath: `${screenplay.title.replace(/[\\/:*?"<>|]/g, '_')}-分镜表.md`,
+      const target = await pickSavePath({
+        fileName: `${screenplay.title.replace(/[\\/:*?"<>|]/g, '_')}-分镜表.md`,
         filters: [{ name: 'Markdown', extensions: ['md'] }]
       });
       if (!target || typeof target !== 'string') return;

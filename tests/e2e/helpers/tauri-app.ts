@@ -27,7 +27,7 @@ export const test = base.extend<{ tauriPage: Page }>({
         );
       }
       try {
-        const context = browser.contexts()[0] ?? (await browser.newContext());
+        const context = browser.contexts()[0] ?? (await browser.newContext({ viewport: null }));
         let page = context.pages().find((p) => p.url().startsWith(APP_URL));
         if (!page) {
           page = await context.newPage();

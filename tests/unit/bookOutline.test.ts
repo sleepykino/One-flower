@@ -28,11 +28,20 @@ describe('effectiveOutline 注入文本解析', () => {
 });
 
 describe('BookOutlineService 读写', () => {
-  function createFixture(existing?: string) {
+  function createFixture(existing?: string, injectEnabled?: number) {
     const writes: Array<{ path: string; content: string }> = [];
+    const execs: Array<{ sql: string; params: unknown[] }> = [];
     const bridge = {
       db: {
-        queryOne: vi.fn(async () => ({ storage_dir: '/books/b1' }))
+        queryOne: vi.fn(async (sql: string) => {
+          if (sql.includes('outline_inject_enabled')) {
+            return injectEnabled === undefined ? null : { outline_inject_enabled: injectEnabled };
+          }
+          return { storage_dir: '/books/b1' };
+        }),
+        exec: vi.fn(async (sql: string, params: unknown[]) => {
+          execs.push({ sql, params });
+        })
       },
       fs: {
         readFile: vi.fn(async (path: string) => {
@@ -47,7 +56,7 @@ describe('BookOutlineService 读写', () => {
         })
       }
     } as unknown as NativeBridge;
-    return { svc: new BookOutlineService(bridge), writes };
+    return { svc: new BookOutlineService(bridge), writes, execs };
   }
 
   it('读取已存在的大纲原文', async () => {
@@ -66,6 +75,22 @@ describe('BookOutlineService 读写', () => {
     const { svc, writes } = createFixture();
     await svc.saveOutline('b1', '# 新大纲');
     expect(writes).toEqual([{ path: '/books/b1/outline.md', content: '# 新大纲' }]);
+  });
+
+  it('注入开关：缺省 / 1 视为开启，0 视为关闭', async () => {
+    expect(await createFixture().svc.isInjectionEnabled('b1')).toBe(true);
+    expect(await createFixture(undefined, 1).svc.isInjectionEnabled('b1')).toBe(true);
+    expect(await createFixture(undefined, 0).svc.isInjectionEnabled('b1')).toBe(false);
+  });
+
+  it('setInjectionEnabled 持久化开关到 books 表', async () => {
+    const { svc, execs } = createFixture();
+    await svc.setInjectionEnabled('b1', false);
+    await svc.setInjectionEnabled('b1', true);
+    expect(execs).toEqual([
+      { sql: 'UPDATE books SET outline_inject_enabled = ? WHERE id = ?', params: [0, 'b1'] },
+      { sql: 'UPDATE books SET outline_inject_enabled = ? WHERE id = ?', params: [1, 'b1'] }
+    ]);
   });
 });
 

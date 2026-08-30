@@ -171,8 +171,8 @@ export class ImportService {
     // 逐章写入：章节行 + 正文文件 + FTS 索引
     const stmts: Array<{ sql: string; params: unknown[] }> = [];
     stmts.push({
-      sql: `INSERT INTO books (id, title, genre, author, cover_path, storage_dir, enabled_skills, provider_config_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, '[]', NULL, ?, ?)`,
+      sql: `INSERT INTO books (id, title, genre, author, cover_path, storage_dir, enabled_skills, provider_config_id, outline_inject_enabled, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, '[]', NULL, ?, ?, ?)`,
       params: [
         newBookId,
         String(meta.book.title ?? '导入书籍'),
@@ -180,6 +180,8 @@ export class ImportService {
         (meta.book.author as string) ?? null,
         (meta.book.cover_path as string) ?? null,
         storageDir,
+        // G1 注入开关：随书备份携带，旧备份缺省视为开启
+        (meta.book.outline_inject_enabled as number | undefined) ?? 1,
         now,
         now
       ]

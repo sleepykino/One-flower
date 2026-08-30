@@ -2,6 +2,7 @@
  * BookOutlineService：全书大纲（storage_dir/outline.md）
  * - 作者在编辑器「大纲」弹窗编写，随书落盘（与 agents.md 同机制）
  * - 注入四模式生成（applyCtxExtras）与长文节拍规划的前瞻上下文：AI 知道"本章在全书计划中的定位"
+ * - 注入受随书开关控制（books.outline_inject_enabled，默认开启）：关闭后大纲仅保留在本书，不再注入
  * - 随书备份：v3 格式兼容扩展（入包 directives/outline.md，旧备份缺省视为无大纲）
  */
 
@@ -68,6 +69,23 @@ export class BookOutlineService {
   async outlineText(bookId: string): Promise<string | undefined> {
     const raw = await this.getOutline(bookId);
     return effectiveOutline(raw);
+  }
+
+  /** 注入开关：本书全书大纲是否注入 AI 生成（默认开启；关闭后四模式与长文均不注入） */
+  async isInjectionEnabled(bookId: string): Promise<boolean> {
+    const row = await this.bridge.db.queryOne<{ outline_inject_enabled: number }>(
+      'SELECT outline_inject_enabled FROM books WHERE id = ?',
+      [bookId]
+    );
+    return row ? Number(row.outline_inject_enabled) !== 0 : true;
+  }
+
+  /** 设置注入开关（随书持久化） */
+  async setInjectionEnabled(bookId: string, enabled: boolean): Promise<void> {
+    await this.bridge.db.exec('UPDATE books SET outline_inject_enabled = ? WHERE id = ?', [
+      enabled ? 1 : 0,
+      bookId
+    ]);
   }
 }
 

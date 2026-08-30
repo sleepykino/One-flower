@@ -357,7 +357,7 @@ export function ContextPanel({ bookId }: { bookId: string }): JSX.Element {
         {/* G1：全书大纲（前瞻约束） */}
         <Section title="全书大纲" tokens={tokensOf('bookOutline')} truncated={truncatedOf('bookOutline')}>
           {!ctx.bookOutline ? (
-            <Empty text="未编写全书大纲（编辑器顶栏「大纲」创建后注入 AI 生成）" />
+            <Empty text="未注入全书大纲（未编写，或「大纲」弹窗中已关闭注入开关）" />
           ) : (
             <ClampText text={ctx.bookOutline} />
           )}

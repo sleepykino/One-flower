@@ -19,20 +19,20 @@ async function createBook(page: Page, title: string): Promise<void> {
   await page.getByRole('button', { name: '新建书籍' }).click();
   await page.getByPlaceholder('书名 *').fill(title);
   await page.getByPlaceholder('类型（武侠 / 科幻 / 悬疑…）').fill('科幻');
-  await page.getByPlaceholder('作者').fill('测试员');
+  await page.getByPlaceholder('作者', { exact: true }).fill('测试员');
   await page.getByRole('button', { name: '创建' }).click();
   await expect(bookCard(page, title)).toBeVisible({ timeout: 8_000 });
 }
 
-/** 通过原生确认弹窗删除指定书籍；confirm=true 走确认分支，false 走取消分支 */
+/** 通过软件内确认弹窗删除指定书籍；confirm=true 走确认分支，false 走取消分支 */
 async function deleteViaDialog(page: Page, title: string, confirm: boolean): Promise<void> {
   const card = bookCard(page, title);
   await card.hover();
   // P6：删除入口移入 ⋮ 菜单（软删除移入回收站）
   await card.getByRole('button', { name: '更多操作' }).click();
   await card.getByRole('button', { name: '删除' }).click();
-  if (confirm) await acceptNativeDialog();
-  else await dismissNativeDialog();
+  if (confirm) await acceptNativeDialog(page);
+  else await dismissNativeDialog(page);
 }
 
 test.describe('阶段 1：书架首页', () => {

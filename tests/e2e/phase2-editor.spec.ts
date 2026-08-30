@@ -56,7 +56,7 @@ async function deleteBook(page: Page, title: string): Promise<void> {
   // P6：删除入口移入 ⋮ 菜单（软删除移入回收站）
   await card.getByRole('button', { name: '更多操作' }).click();
   await card.getByRole('button', { name: '删除' }).click();
-  await acceptNativeDialog();
+  await acceptNativeDialog(page);
   await expect(card).toHaveCount(0);
 }
 
@@ -131,13 +131,13 @@ test.describe('阶段 2：编辑器核心', () => {
     await expect(tauriPage.getByText(/已保存|未保存/)).toBeVisible();
 
     // 右栏：13 个面板 tab（长文受特性开关控制，单独软校验）
+    // 按钮 aria-label 为「打开X面板」，用稳定的 data-rail-tab 属性定位
     const railTabs = [
-      'AI 助手', 'Skill', '上下文', '角色', '世界书', '伏笔',
-      '角色采访', '如果…会怎样', '图库', '版本', '统计', '剧本'
+      'ai', 'skills', 'context', 'characters', 'worldbook', 'foreshadow',
+      'interview', 'whatif', 'library', 'history', 'stats', 'screenplay'
     ];
     for (const tab of railTabs) {
-      // 注意「角色」是「角色采访」的前缀，必须 exact 精确匹配
-      await expect(tauriPage.getByRole('navigation').getByRole('button', { name: tab, exact: true })).toBeVisible();
+      await expect(tauriPage.locator(`[data-rail-tab="${tab}"]`)).toBeVisible();
     }
 
     // 顶栏功能入口
@@ -179,16 +179,16 @@ test.describe('阶段 2：编辑器核心', () => {
     const topPad = await chapterRow(tauriPage, 'E2E卷B').evaluate((el) => el.style.paddingLeft);
     expect(parseFloat(childPad)).toBeGreaterThan(parseFloat(topPad));
 
-    // 删除子章节（原生确认框 Enter）
+    // 删除子章节（软件内确认框 确认）
     await chapterRow(tauriPage, 'A1-E2E子章').hover();
     await chapterRow(tauriPage, 'A1-E2E子章').getByRole('button', { name: '×' }).click();
-    await acceptNativeDialog();
+    await acceptNativeDialog(tauriPage);
     await expect(chapterRow(tauriPage, 'A1-E2E子章')).toHaveCount(0);
 
     // 删除仍存在的顶层章节（已改名）
     await chapterRow(tauriPage, 'E2E卷A改名').hover();
     await chapterRow(tauriPage, 'E2E卷A改名').getByRole('button', { name: '×' }).click();
-    await acceptNativeDialog();
+    await acceptNativeDialog(tauriPage);
     await expect(chapterRow(tauriPage, 'E2E卷A改名')).toHaveCount(0);
     await expect(chapterRow(tauriPage, 'E2E卷B')).toBeVisible();
   });
@@ -293,9 +293,9 @@ test.describe('阶段 2：编辑器核心', () => {
     await tauriPage.getByRole('button', { name: '搜索' }).click();
     await expect(tauriPage.getByText('命中 1 章')).toBeVisible();
 
-    // 替换前弹出原生确认框（标题非默认「确认操作」）
+    // 替换前弹出软件内确认框（标题非默认「确认操作」）
     await tauriPage.getByRole('button', { name: '全部替换' }).click();
-    await acceptNativeDialog('全局替换确认');
+    await acceptNativeDialog(tauriPage, '全局替换确认');
 
     // 替换后自动重建索引并复搜：原关键词无命中
     await expect(tauriPage.getByText(/已替换 \d+ 处|命中 0 章/)).toBeVisible({ timeout: 8_000 });

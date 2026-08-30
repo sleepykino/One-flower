@@ -44,19 +44,47 @@ function Segmented({
   );
 }
 
+/** 注入开关（随书持久化；关闭后大纲仅保留在本书，不再注入 AI 生成） */
+function Toggle({ checked, onToggle }: { checked: boolean; onToggle: () => void }): JSX.Element {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label="注入 AI 生成"
+      className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${
+        checked ? 'bg-violet-600' : 'bg-ink-200'
+      }`}
+      onClick={onToggle}
+    >
+      <span
+        className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${
+          checked ? 'translate-x-3.5' : 'translate-x-0.5'
+        }`}
+      />
+    </button>
+  );
+}
+
 export function OutlineModal({ bookId, onClose }: { bookId: string; onClose: () => void }): JSX.Element {
   const [outline, setOutline] = useState('');
   const [orig, setOrig] = useState('');
   const [loaded, setLoaded] = useState(false);
   const [view, setView] = useState<OutlineView>('split');
   const [saving, setSaving] = useState(false);
+  /** 注入开关：关闭后大纲不注入四模式生成与长文节拍规划（随书持久化） */
+  const [injectEnabled, setInjectEnabled] = useState(true);
 
   useEffect(() => {
     void (async () => {
       try {
-        const text = await getAppContext().outlineService.getOutline(bookId);
+        const [text, enabled] = await Promise.all([
+          getAppContext().outlineService.getOutline(bookId),
+          getAppContext().outlineService.isInjectionEnabled(bookId)
+        ]);
         setOutline(text);
         setOrig(text);
+        setInjectEnabled(enabled);
       } catch (e) {
         toast.error(`读取大纲失败：${e instanceof Error ? e.message : String(e)}`);
       } finally {
@@ -81,12 +109,31 @@ export function OutlineModal({ bookId, onClose }: { bookId: string; onClose: () 
     try {
       await getAppContext().outlineService.saveOutline(bookId, outline);
       setOrig(outline);
-      toast.success(effectiveChars > 0 ? '大纲已保存，将注入本书 AI 生成' : '大纲已保存（当前无有效正文，暂不注入）');
+      toast.success(
+        injectEnabled && effectiveChars > 0
+          ? '大纲已保存，将注入本书 AI 生成'
+          : injectEnabled
+            ? '大纲已保存（当前无有效正文，暂不注入）'
+            : '大纲已保存（注入开关已关闭，暂不注入 AI 生成）'
+      );
       onClose();
     } catch (e) {
       toast.error(`保存失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSaving(false);
+    }
+  };
+
+  /** 切换注入开关（立即持久化，无需等待保存） */
+  const toggleInject = async (): Promise<void> => {
+    const next = !injectEnabled;
+    setInjectEnabled(next);
+    try {
+      await getAppContext().outlineService.setInjectionEnabled(bookId, next);
+      toast.success(next ? '大纲注入已开启' : '大纲注入已关闭：续写 / 改写 / 对白 / 检查 / 长文将不再注入全书大纲');
+    } catch (e) {
+      setInjectEnabled(!next);
+      toast.error(`开关切换失败：${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -116,7 +163,7 @@ export function OutlineModal({ bookId, onClose }: { bookId: string; onClose: () 
   const textarea = (
     <textarea
       className="h-full w-full resize-none bg-white p-4 font-mono text-xs leading-relaxed text-ink-800 focus:outline-none"
-      placeholder={'写全书的故事走向：主线三幕 / 各卷要点 / 关键伏笔 / 结局方向……（支持 markdown）\n\n保存后会注入本书所有 AI 生成，续写将与本章在大纲中的定位对齐。'}
+      placeholder={'写全书的故事走向：主线三幕 / 各卷要点 / 关键伏笔 / 结局方向……（支持 markdown）\n\n保存后（且上方「注入 AI 生成」开启时）会注入本书所有 AI 生成，续写将与本章在大纲中的定位对齐。'}
       value={outline}
       onChange={(e) => setOutline(e.target.value)}
     />
@@ -138,7 +185,7 @@ export function OutlineModal({ bookId, onClose }: { bookId: string; onClose: () 
           <div>
             <div className="text-sm font-semibold text-ink-900">全书大纲</div>
             <div className="text-xs text-ink-500">
-              outline.md · 前瞻约束注入续写 / 改写 / 对白 / 检查 / 长文节拍规划 · 随书保存与备份
+              outline.md · 开启后作为前瞻约束注入续写 / 改写 / 对白 / 检查 / 长文节拍规划 · 随书保存与备份
             </div>
           </div>
           <button
@@ -163,16 +210,39 @@ export function OutlineModal({ bookId, onClose }: { bookId: string; onClose: () 
           />
           <div className="flex items-center gap-3">
             <span className="text-[11px] text-ink-400">有效正文约 {effectiveChars} 字（注释不计）</span>
+            <label
+              className={`flex cursor-pointer items-center gap-1.5 text-[11px] ${
+                injectEnabled ? 'text-ink-700' : 'text-ink-400'
+              }`}
+              title="关闭后：续写 / 改写 / 对白 / 检查 / 长文不再注入本书大纲（大纲仍保留在本书）"
+            >
+              <Toggle checked={injectEnabled} onToggle={() => void toggleInject()} />
+              注入 AI 生成
+            </label>
             <button type="button" className="text-xs text-violet-600 hover:underline" onClick={() => void insertTemplate()}>
               插入示例
             </button>
           </div>
         </div>
 
-        {/* 未创建提示 */}
-        {loaded && orig.trim() === '' && (
-          <div className="border-b border-amber-100 bg-amber-50/60 px-4 py-2 text-[11px] leading-relaxed text-amber-700">
-            尚未编写全书大纲，当前不会注入 AI。写清主线三幕、各卷要点与关键伏笔后，AI 续写将主动对齐本章在全书中的定位，减少剧情跑偏。可点「插入示例」参考——示例已注释，不会生效。
+        {/* 状态提示 */}
+        {loaded && (
+          <div
+            className={`border-b px-4 py-2 text-[11px] leading-relaxed ${
+              injectEnabled
+                ? 'border-amber-100 bg-amber-50/60 text-amber-700'
+                : 'border-ink-200 bg-ink-50/60 text-ink-500'
+            }`}
+          >
+            {injectEnabled ? (
+              orig.trim() === '' ? (
+                '尚未编写全书大纲，当前不会注入 AI。写清主线三幕、各卷要点与关键伏笔后，AI 续写将主动对齐本章在全书中的定位，减少剧情跑偏。可点「插入示例」参考——示例已注释，不会生效。'
+              ) : (
+                '正在注入：续写 / 改写 / 对白 / 检查 / 长文节拍规划会带入本书大纲作前瞻约束。'
+              )
+            ) : (
+              '注入开关已关闭：续写 / 改写 / 对白 / 检查 / 长文将不注入本书大纲（如需恢复请打开开关）。'
+            )}
           </div>
         )}
 
