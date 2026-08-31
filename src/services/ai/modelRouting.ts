@@ -31,7 +31,8 @@ export type FeatureKey =
   | 'image'
   | 'image-prompt'
   | 'script-outline'
-  | 'script-gen';
+  | 'script-gen'
+  | 'skill-forge';
 
 /** 功能域：唯一的 UI 分组维度 */
 export type FeatureDomain =
@@ -88,7 +89,8 @@ export const AI_FEATURES: FeatureMeta[] = [
   { key: 'script-outline', label: '剧本大纲', desc: '转化第一阶段：集与场次大纲规划（P5）', domain: 'review', cost: 'standard', trigger: 'manual' },
   { key: 'map', label: '地图生成', desc: '世界地图 AI 生成', domain: 'visual', cost: 'standard', trigger: 'manual' },
   { key: 'summary', label: '章节摘要', desc: '保存章节后自动生成（高频）', domain: 'background', cost: 'economy', trigger: 'auto' },
-  { key: 'embedding', label: '向量嵌入', desc: '世界书条目与章节片段向量化', domain: 'background', cost: 'economy', trigger: 'auto' }
+  { key: 'embedding', label: '向量嵌入', desc: '世界书条目与章节片段向量化', domain: 'background', cost: 'economy', trigger: 'auto' },
+  { key: 'skill-forge', label: '一把炼化', desc: '从文本 / 书籍提炼文风 Skill', domain: 'brainstorm', cost: 'standard', trigger: 'manual' }
 ];
 
 const KEY_BINDINGS = 'ai.featureModels';

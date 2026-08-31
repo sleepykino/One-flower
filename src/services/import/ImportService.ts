@@ -2,13 +2,13 @@
  * 备份导入服务：从 .zip 包流式解压逐章写入 SQLite + 落盘
  */
 
-import { Unzip, UnzipInflate } from 'fflate';
 import type { NativeBridge } from '../../native/NativeBridge';
 import type { Database } from '../../db/Database';
 import type { WriteQueue } from '../../db/WriteQueue';
 import type { ChapterStatus, ProseMirrorDoc } from '../../types';
 import { docToPlainText } from '../../utils/pmdoc';
 import { isPMDoc } from '../../utils/pmdoc';
+import { decodeUtf8, unzipToMap } from '../../utils/zipreader';
 
 interface BackupMeta {
   version: number;
@@ -63,43 +63,11 @@ export class ImportService {
 
   /** 解压 .zip（流式，逐文件回调） */
   private unzip(buffer: Uint8Array): Promise<Map<string, Uint8Array>> {
-    return new Promise((resolve, reject) => {
-      const files = new Map<string, Uint8Array>();
-      const unzip = new Unzip();
-      unzip.register(UnzipInflate);
-      unzip.onfile = (file) => {
-        const chunks: Uint8Array[] = [];
-        file.ondata = (err, data, final) => {
-          if (err) {
-            reject(err);
-            return;
-          }
-          chunks.push(data);
-          if (final) {
-            const len = chunks.reduce((s, c) => s + c.length, 0);
-            const out = new Uint8Array(len);
-            let off = 0;
-            for (const c of chunks) {
-              out.set(c, off);
-              off += c.length;
-            }
-            files.set(file.name, out);
-          }
-        };
-        file.start();
-      };
-      try {
-        unzip.push(buffer, true);
-      } catch (e) {
-        reject(e);
-        return;
-      }
-      resolve(files);
-    });
+    return unzipToMap(buffer);
   }
 
   private decode(u8: Uint8Array): string {
-    return new TextDecoder('utf-8').decode(u8);
+    return decodeUtf8(u8);
   }
 
   /** 校验备份包完整性（不实际导入） */

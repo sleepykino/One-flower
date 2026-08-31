@@ -38,7 +38,8 @@ const FEATURE_LABEL: Record<string, string> = {
   namegen: '命名生成',
   'image-prompt': '生图转写',
   'fact-extract': '设定抽取',
-  'fact-infer': '设定推导'
+  'fact-infer': '设定推导',
+  'skill-forge': '一把炼化'
 };
 
 function fmtTokens(n: number): string {

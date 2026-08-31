@@ -10,7 +10,11 @@ import type { AppSettingsService } from '../../src/services/settings/AppSettings
 function createService(
   settings: Record<string, string | null> = {},
   fs: { listDir?: ReturnType<typeof vi.fn>; deletePath?: ReturnType<typeof vi.fn> } = {},
-  books: Array<{ id: string; title: string }> = []
+  books: Array<{ id: string; title: string }> = [],
+  extra: {
+    exportBackup?: ReturnType<typeof vi.fn>;
+    notesExportBackup?: ReturnType<typeof vi.fn>;
+  } = {}
 ) {
   const appSettings = {
     get: vi.fn(async (key: string): Promise<string | null> => settings[key] ?? null),
@@ -23,17 +27,20 @@ function createService(
     fs: { ensureDir: vi.fn(async () => undefined), listDir, deletePath }
   } as unknown as NativeBridge;
   const bookService = { list: vi.fn(async (): Promise<unknown[]> => books) };
+  const exportService = { exportBook: extra.exportBackup ?? vi.fn(async () => undefined) };
+  const notesService = { exportBackup: extra.notesExportBackup ?? vi.fn(async () => undefined) };
   const svc = new AutoBackupService(
     bridge as never,
     appSettings,
-    {} as never,
+    exportService as never,
     bookService as never,
+    notesService as never,
     {
       list: () => [],
       register: vi.fn()
     } as never
   );
-  return { svc, appSettings, listDir, deletePath, bookService };
+  return { svc, appSettings, listDir, deletePath, bookService, notesService, exportService };
 }
 
 describe('sanitizeFileName（备份文件名）', () => {
@@ -239,5 +246,119 @@ describe('AutoBackupService.cleanInvalidBackups（清理无效备份）', () => 
     expect(r.deleted).toBe(1);
     expect(r.names).toEqual(['旧书名_20260701-080000.zip']);
     expect(deletePath).toHaveBeenCalledTimes(2);
+  });
+
+  it('备忘录_ 前缀的备份（跨书全局）视为有效保留，不删除', async () => {
+    const listDir = vi.fn(async (): Promise<DirEntry[]> => [
+      { name: '武侠_传奇_卷一_20260826-100000.zip', isDir: false }, // 现存书 -> 有效
+      { name: '备忘录_20260826-100000.zip', isDir: false }, // 全局备忘录 -> 有效，保留
+      { name: '旧书名_20260701-080000.zip', isDir: false } // 改名前遗留 -> 无效，删除
+    ]);
+    const deletePath = vi.fn(async (p: string): Promise<void> => undefined);
+    const { svc } = createService({}, { listDir, deletePath }, BOOKS);
+    const r = await svc.cleanInvalidBackups();
+    expect(r.deleted).toBe(1);
+    expect(r.names).toEqual(['旧书名_20260701-080000.zip']);
+  });
+});
+
+describe('AutoBackupService.runNow（备忘录单独备份，跨书全局）', () => {
+  it('书籍完成后调用 notesService.exportBackup 并置 notesOk=true；路径含备份目录与「备忘录_」前缀', async () => {
+    const exportBook = vi.fn(async (): Promise<void> => undefined);
+    const notesExportBackup = vi.fn(async (_path: string): Promise<void> => undefined);
+    const { svc } = createService(
+      {},
+      {},
+      [{ id: 'b1', title: '书A' }],
+      { exportBackup: exportBook, notesExportBackup }
+    );
+    const r = await svc.runNow();
+    expect(exportBook).toHaveBeenCalledTimes(1);
+    expect(notesExportBackup).toHaveBeenCalledTimes(1);
+    expect(String(notesExportBackup.mock.calls[0][0])).toMatch(
+      /^C:\/Users\/x\/AppData\/OneFlower\/backups\/备忘录_\d{8}-\d{6}\.zip$/
+    );
+    expect(r.notesOk).toBe(true);
+    expect(r.failed).toEqual([]);
+    expect(r.total).toBe(1);
+    expect(r.ok).toBe(1);
+  });
+
+  it('备忘录备份失败时 failed 含「备忘录」且 notesOk=false，书籍备份不受影响', async () => {
+    const exportBook = vi.fn(async (): Promise<void> => undefined);
+    const notesExportBackup = vi.fn(async (): Promise<void> => {
+      throw new Error('磁盘满');
+    });
+    const { svc } = createService(
+      {},
+      {},
+      [{ id: 'b1', title: '书A' }],
+      { exportBackup: exportBook, notesExportBackup }
+    );
+    const r = await svc.runNow();
+    expect(r.notesOk).toBe(false);
+    expect(r.failed).toEqual(['备忘录']);
+    expect(r.ok).toBe(1);
+  });
+
+  it('books 为空时仍执行备忘录备份（移除早退）', async () => {
+    const notesExportBackup = vi.fn(async (): Promise<void> => undefined);
+    const { svc } = createService({}, {}, [], { notesExportBackup });
+    const r = await svc.runNow();
+    expect(notesExportBackup).toHaveBeenCalledTimes(1);
+    expect(r.notesOk).toBe(true);
+    expect(r.failed).toEqual([]);
+  });
+
+  it('单书导出失败不中断，备忘录仍在全部书籍之后执行', async () => {
+    const exportBook = vi.fn(async (): Promise<void> => {
+      throw new Error('导出失败');
+    });
+    const notesExportBackup = vi.fn(async (): Promise<void> => undefined);
+    const { svc } = createService(
+      {},
+      {},
+      [{ id: 'b1', title: '书A' }],
+      { exportBackup: exportBook, notesExportBackup }
+    );
+    const r = await svc.runNow();
+    expect(r.failed).toEqual(['书A']);
+    expect(notesExportBackup).toHaveBeenCalledTimes(1);
+    expect(r.notesOk).toBe(true);
+  });
+});
+
+describe('AutoBackupService.listNotesBackups（备忘录备份前缀匹配）', () => {
+  const ENTRIES: DirEntry[] = [
+    { name: '备忘录_20260826-100000.zip', isDir: false }, // 匹配（新）
+    { name: '备忘录_20260825-100000.zip', isDir: false }, // 匹配（旧）
+    { name: '书A_20260826-100000.zip', isDir: false }, // 其他书，不匹配
+    { name: '备忘录_20260826-110000.zip.txt', isDir: false }, // 非 zip 后缀
+    { name: '备忘录_20260826-090000', isDir: false }, // 无 .zip 后缀
+    { name: '备忘录_20260826-080000.zip', isDir: true } // 目录
+  ];
+
+  it('仅前缀匹配的 zip（排除目录/非 zip/其他书），新到旧排序', async () => {
+    const listDir = vi.fn(async (): Promise<DirEntry[]> => ENTRIES);
+    const { svc } = createService({}, { listDir });
+    expect(await svc.listNotesBackups()).toEqual([
+      '备忘录_20260826-100000.zip',
+      '备忘录_20260825-100000.zip'
+    ]);
+  });
+
+  it('备份目录不存在时返回空（不抛错）', async () => {
+    const listDir = vi.fn(async (): Promise<DirEntry[]> => {
+      throw new Error('no such dir');
+    });
+    const { svc } = createService({}, { listDir });
+    expect(await svc.listNotesBackups()).toEqual([]);
+  });
+
+  it('自定义备份目录生效', async () => {
+    const listDir = vi.fn(async (_dir?: string): Promise<DirEntry[]> => ENTRIES);
+    const { svc } = createService({ 'backup.auto.dir': 'D:/my-backups' }, { listDir });
+    await svc.listNotesBackups();
+    expect(String(listDir.mock.calls[0][0])).toBe('D:/my-backups');
   });
 });

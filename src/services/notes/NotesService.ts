@@ -5,6 +5,8 @@
  */
 
 import type { NativeBridge } from '../../native/NativeBridge';
+import { ZipWriter } from '../../utils/zipbuilder';
+import { decodeUtf8, unzipToMap } from '../../utils/zipreader';
 
 export interface Note {
   id: string;
@@ -20,6 +22,18 @@ export interface NoteAttachment {
   fileName: string; // 相对 notes 根：{note_id}/{file_name}
   mimeType: string;
   createdAt: number;
+}
+
+/** 备忘录备份包 meta.json（version 1）：全部备忘录 + 附件元数据；附件二进制在 zip 的 files/ 目录 */
+export interface NotesBackupMeta {
+  version: number;
+  notes: Note[];
+  attachments: NoteAttachment[];
+}
+
+export interface NotesImportResult {
+  noteCount: number;
+  attachmentCount: number;
 }
 
 interface BridgeFs {
@@ -146,5 +160,88 @@ export class NotesService {
   async attachmentUrl(att: NoteAttachment): Promise<string> {
     const data = await this.bridge.fs.readBinaryFile(`${await this.notesRoot()}/${att.fileName}`);
     return URL.createObjectURL(new Blob([data as unknown as BlobPart], { type: att.mimeType }));
+  }
+
+  /**
+   * 导出全部备忘录为单独备份包（跨书全局数据，与单书备份 zip 分开）：
+   * meta.json（version 1，notes + attachments 元数据）+ files/{fileName}（附件二进制，缺失跳过）
+   */
+  async exportBackup(outputPath: string): Promise<void> {
+    const notes = await this.list();
+    const attachments: NoteAttachment[] = [];
+    for (const n of notes) {
+      attachments.push(...(await this.attachmentsOf(n.id)));
+    }
+    const root = await this.notesRoot();
+    const zip = new ZipWriter();
+    zip.addText(
+      'meta.json',
+      JSON.stringify({ version: 1, notes, attachments } satisfies NotesBackupMeta, null, 2)
+    );
+    for (const att of attachments) {
+      try {
+        const bytes = await this.bridge.fs.readBinaryFile(`${root}/${att.fileName}`);
+        zip.addBinary(`files/${att.fileName}`, bytes);
+      } catch {
+        /* 附件文件缺失（已手动删除等）：跳过，不中断备份 */
+      }
+    }
+    const out = await zip.finish();
+    await this.bridge.fs.writeBinaryFile(outputPath, out);
+  }
+
+  /**
+   * 从备忘录备份包导入：全部按新 ID 重建（不覆盖现有备忘录，重复导入会生成副本）；
+   * 附件二进制从 zip files/ 恢复到 {appData}/notes/{新note_id}/{file}，元数据 note_id/file_name 同步重映射
+   */
+  async importBackup(zipPath: string): Promise<NotesImportResult> {
+    const buffer = await this.bridge.fs.readBinaryFile(zipPath);
+    const files = await unzipToMap(buffer);
+    const metaRaw = files.get('meta.json');
+    if (!metaRaw) throw new Error('备忘录备份包缺少 meta.json');
+    let meta: NotesBackupMeta;
+    try {
+      meta = JSON.parse(decodeUtf8(metaRaw)) as NotesBackupMeta;
+    } catch {
+      throw new Error('备忘录备份包 meta.json 解析失败');
+    }
+
+    const root = await this.notesRoot();
+    const noteIdMap = new Map<string, string>();
+    const result: NotesImportResult = { noteCount: 0, attachmentCount: 0 };
+    const stmts: Array<{ sql: string; params: unknown[] }> = [];
+
+    for (const n of meta.notes ?? []) {
+      const newId = crypto.randomUUID();
+      noteIdMap.set(n.id, newId);
+      stmts.push({
+        sql: 'INSERT INTO notes (id, content, pinned, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+        params: [newId, n.content ?? '', n.pinned ? 1 : 0, n.createdAt, n.updatedAt]
+      });
+      result.noteCount += 1;
+    }
+
+    for (const att of meta.attachments ?? []) {
+      const newNoteId = noteIdMap.get(att.noteId);
+      if (!newNoteId) continue;
+      const fileName = String(att.fileName ?? '').replace(/\\/g, '/');
+      const base = fileName.split('/').pop() ?? fileName;
+      const newFileName = `${newNoteId}/${base}`;
+      const bytes = files.get(`files/${fileName}`);
+      if (bytes) {
+        await this.bridge.fs.ensureDir(`${root}/${newNoteId}`);
+        await this.bridge.fs.writeBinaryFile(`${root}/${newFileName}`, bytes);
+      }
+      stmts.push({
+        sql: 'INSERT INTO note_attachments (id, note_id, file_name, mime_type, created_at) VALUES (?, ?, ?, ?, ?)',
+        params: [crypto.randomUUID(), newNoteId, newFileName, att.mimeType ?? 'image/png', att.createdAt]
+      });
+      result.attachmentCount += 1;
+    }
+
+    for (const s of stmts) {
+      await this.bridge.db.exec(s.sql, s.params);
+    }
+    return result;
   }
 }

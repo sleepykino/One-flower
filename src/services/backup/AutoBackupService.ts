@@ -1,6 +1,7 @@
 /**
  * AutoBackupService（P6 M2）：自动定期备份编排
  * - 产物与手动备份格式完全一致：逐书调 ExportService.exportBook(bookId, 'backup') 产 v3 zip
+ * - 备忘录（跨书全局）另行单独产一份备份包（NotesService.exportBackup），独立前缀与轮换
  * - 调度照抄 UpdateService 幂等标记模式：app_settings 存 backup.auto.*，shouldRun 判断间隔
  * - 防雪崩照抄 StoryboardService：多书顺序执行不并发，单本失败记录书名继续下一本，可取消
  * - 任务中心托管 kind 'backup'（照抄 LongFormService 服务侧注册）
@@ -11,6 +12,7 @@ import type { DirEntry, NativeBridge, FileSystemAdapter } from '../../native/Nat
 import type { AppSettingsService } from '../settings/AppSettingsService';
 import type { ExportService } from '../export/ExportService';
 import type { BookService } from '../book/BookService';
+import type { NotesService } from '../notes/NotesService';
 import type { TaskCenterService } from '../task/TaskCenterService';
 
 export interface AutoBackupSettings {
@@ -24,6 +26,8 @@ export interface AutoBackupResult {
   total: number;
   ok: number;
   failed: string[];
+  /** 备忘录（跨书全局）单独备份是否成功（books 为空也照常执行） */
+  notesOk: boolean;
 }
 
 const KEY_ENABLED = 'backup.auto.enabled';
@@ -34,6 +38,9 @@ const KEY_LAST_RUN = 'backup.auto.lastRunAt';
 
 const DEFAULT_INTERVAL_HOURS = 24;
 const DEFAULT_KEEP_PER_BOOK = 5;
+
+/** 备忘录备份文件名前缀（全局数据，独立于逐书前缀；轮换/清理按此前缀识别） */
+export const NOTES_BACKUP_PREFIX = '备忘录_';
 
 /** 启动后首检延迟（避开启动高峰）与运行中重检间隔 */
 const FIRST_CHECK_DELAY_MS = 15_000;
@@ -60,6 +67,7 @@ export class AutoBackupService {
   private appSettings: AppSettingsService;
   private exportService: ExportService;
   private bookService: BookService;
+  private notesService: NotesService;
   private tasks: TaskCenterService;
   private firstTimer: number | null = null;
   private intervalTimer: number | null = null;
@@ -70,6 +78,7 @@ export class AutoBackupService {
     appSettings: AppSettingsService,
     exportService: ExportService,
     bookService: BookService,
+    notesService: NotesService,
     tasks: TaskCenterService
   ) {
     this.bridge = bridge;
@@ -77,6 +86,7 @@ export class AutoBackupService {
     this.appSettings = appSettings;
     this.exportService = exportService;
     this.bookService = bookService;
+    this.notesService = notesService;
     this.tasks = tasks;
   }
 
@@ -130,18 +140,19 @@ export class AutoBackupService {
   /**
    * 执行一轮：顺序遍历未删除书逐本 exportBook('backup')；
    * 每本成功后做轮换清理（保留最新 keepPerBook 份）；
+   * 全部书籍之后，单独产一份全局备忘录备份包（跨书数据，独立前缀 + 轮换保留 keepPerBook 份）；
    * 单本失败 push failed 继续（防雪崩）；开始时写 lastRunAt（防长备份期间调度器重入）；
-   * 每本导出前检查 signal（可取消，已完成的保留）
+   * 每步前检查 signal（可取消，已完成的保留）
    */
   async runNow(
     signal?: AbortSignal,
-    onProgress?: (done: number, total: number, bookTitle: string) => void
+    onProgress?: (done: number, total: number, label: string) => void
   ): Promise<AutoBackupResult> {
     const settings = await this.getSettings();
     const books = await this.bookService.list();
     await this.appSettings.set(KEY_LAST_RUN, String(Date.now()));
-    const result: AutoBackupResult = { total: books.length, ok: 0, failed: [] };
-    if (books.length === 0) return result;
+    const result: AutoBackupResult = { total: books.length, ok: 0, failed: [], notesOk: false };
+    const totalSteps = books.length + 1; // 每本书 + 备忘录一份
 
     await this.fs.ensureDir(settings.dir).catch(() => undefined);
     let done = 0;
@@ -160,8 +171,24 @@ export class AutoBackupService {
         result.failed.push(book.title);
       }
       done += 1;
-      onProgress?.(done, books.length, book.title);
+      onProgress?.(done, totalSteps, `第 ${done}/${books.length} 本 · ${book.title}`);
     }
+
+    // 备忘录（跨书全局）：单独一份备份包，books 为空也照常执行
+    if (signal?.aborted) throw new DOMException('已取消', 'AbortError');
+    try {
+      const fileName = `${NOTES_BACKUP_PREFIX}${formatBackupStamp(Date.now())}.zip`;
+      await this.notesService.exportBackup(`${settings.dir}/${fileName}`);
+      await this.rotate(settings.dir, NOTES_BACKUP_PREFIX, settings.keepPerBook);
+      result.notesOk = true;
+    } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') {
+        throw new DOMException('已取消', 'AbortError');
+      }
+      result.failed.push('备忘录');
+    }
+    done += 1;
+    onProgress?.(done, totalSteps, '备忘录');
     return result;
   }
 
@@ -177,11 +204,11 @@ export class AutoBackupService {
     const books = await this.bookService.list();
     const info = this.tasks.register({
       kind: 'backup',
-      title: `自动备份 · ${books.length} 本书`,
+      title: `自动备份 · ${books.length} 本书 + 备忘录`,
       cancellable: true,
       run: async (ctx) => {
-        await this.runNow(ctx.signal, (done, total, bookTitle) => {
-          ctx.report(Math.round((done / Math.max(total, 1)) * 100), `第 ${done}/${total} 本 · ${bookTitle}`);
+        await this.runNow(ctx.signal, (done, total, label) => {
+          ctx.report(Math.round((done / Math.max(total, 1)) * 100), label);
         });
       }
     });
@@ -250,6 +277,12 @@ export class AutoBackupService {
     return this.listPrefixZips(settings.dir, prefix);
   }
 
+  /** 全局备忘录的全部单独备份文件名（前缀固定「备忘录_」，新到旧）；目录不存在返回空 */
+  async listNotesBackups(): Promise<string[]> {
+    const settings = await this.getSettings();
+    return this.listPrefixZips(settings.dir, NOTES_BACKUP_PREFIX);
+  }
+
   /**
    * 删除某本书的全部自动备份文件（回收站「彻底删除」时按用户勾选联动清理），
    * 返回成功删除数量；单个文件删除失败跳过不中断
@@ -277,8 +310,11 @@ export class AutoBackupService {
   async cleanInvalidBackups(): Promise<{ deleted: number; names: string[] }> {
     const settings = await this.getSettings();
     const books = await this.bookService.list();
-    // 现存书的合法前缀（与生成时同规则：sanitize 标题 + '_'）
-    const validPrefixes = books.map((b) => `${sanitizeFileName(b.title, b.id.slice(0, 8))}_`);
+    // 现存书的合法前缀（与生成时同规则：sanitize 标题 + '_'）+ 全局备忘录备份前缀（跨书数据，不属于任何书，视为有效）
+    const validPrefixes = [
+      ...books.map((b) => `${sanitizeFileName(b.title, b.id.slice(0, 8))}_`),
+      NOTES_BACKUP_PREFIX
+    ];
     let entries: DirEntry[];
     try {
       entries = await this.fs.listDir(settings.dir);

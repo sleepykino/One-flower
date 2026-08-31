@@ -4,6 +4,7 @@ import { Editor } from './routes/Editor';
 import { Settings } from './routes/Settings';
 import { Inspiration } from './routes/Inspiration';
 import { Trash } from './routes/Trash';
+import { SkillForge } from './routes/SkillForge';
 import { ToastHost } from './components/common/toast';
 import { ConfirmDialogHost } from './components/common/confirm-dialog/ConfirmDialogHost';
 import { TourHost } from './components/onboarding/TourHost';
@@ -15,6 +16,7 @@ export default function App(): JSX.Element {
         <Route path="/" element={<Home />} />
         <Route path="/editor/:bookId" element={<Editor />} />
         <Route path="/inspiration" element={<Inspiration />} />
+        <Route path="/skillforge" element={<SkillForge />} />
         <Route path="/trash" element={<Trash />} />
         <Route path="/settings" element={<Settings />} />
       </Routes>

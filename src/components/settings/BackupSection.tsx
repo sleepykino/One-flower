@@ -32,6 +32,7 @@ export function BackupSection(): JSX.Element {
   const [importing, setImporting] = useState(false);
   const [autoSettings, setAutoSettings] = useState<AutoBackupSettings | null>(null);
   const [lastRunAt, setLastRunAt] = useState<number | null>(null);
+  const [notesCount, setNotesCount] = useState(0);
 
   useEffect(() => {
     void loadBooks();
@@ -43,6 +44,7 @@ export function BackupSection(): JSX.Element {
       const { autoBackupService } = getAppContext();
       setAutoSettings(await autoBackupService.getSettings());
       setLastRunAt(await autoBackupService.getLastRunAt());
+      setNotesCount((await autoBackupService.listNotesBackups()).length);
     })().catch(() => undefined);
   }, []);
 
@@ -99,6 +101,25 @@ export function BackupSection(): JSX.Element {
     }
   };
 
+  /** 备忘录（跨书全局）：从单独备份包导入，按新 ID 重建为副本，不覆盖现有备忘录 */
+  const importNotesBackup = async (): Promise<void> => {
+    const path = await open({
+      multiple: false,
+      filters: [{ name: '备忘录备份包', extensions: ['zip'] }]
+    });
+    if (typeof path !== 'string') return;
+    setImporting(true);
+    setImportMsg('导入备忘录中…');
+    try {
+      const r = await getAppContext().notesService.importBackup(path);
+      setImportMsg(`备忘录导入成功：${r.noteCount} 条${r.attachmentCount > 0 ? `，${r.attachmentCount} 张附件` : ''}`);
+    } catch (e) {
+      setImportMsg(`备忘录导入失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setImporting(false);
+    }
+  };
+
   /** P6：保存自动备份设置（实时保存，diff 写回） */
   const saveAuto = async (patch: Partial<AutoBackupSettings>): Promise<void> => {
     const { autoBackupService } = getAppContext();
@@ -135,7 +156,8 @@ export function BackupSection(): JSX.Element {
     try {
       await autoBackupService.run();
       setLastRunAt(await autoBackupService.getLastRunAt());
-      toast.info('正在备份');
+      setNotesCount((await autoBackupService.listNotesBackups()).length);
+      toast.info('正在备份（含备忘录）');
     } catch (e) {
       toast.error(`启动备份失败：${e instanceof Error ? e.message : String(e)}`);
     }
@@ -145,8 +167,8 @@ export function BackupSection(): JSX.Element {
     <div>
       <h2 className="mb-1 font-medium">备份与恢复</h2>
       <p className="mb-3 text-xs leading-5 text-ink-400">
-        备份包含章节正文、章节树、角色卡、世界书与伏笔，用于设备迁移或误删恢复。
-        迁移设备时：旧设备导出 → 新设备导入。
+        书籍备份包含章节正文、章节树、角色卡、世界书、伏笔、全书大纲（随书）与其余书级数据，用于设备迁移或误删恢复；
+        全局备忘录（跨书）单独备份。迁移设备时：旧设备导出 → 新设备导入。
       </p>
 
       {/* 导出 */}
@@ -181,9 +203,10 @@ export function BackupSection(): JSX.Element {
       <div className="mt-3 rounded border border-ink-100 bg-white px-3 py-3">
         <div className="mb-1 text-xs font-medium text-ink-600">导入备份</div>
         <p className="mb-2 text-[11px] leading-5 text-ink-400">
-          导入会创建一本新书（不覆盖现有书籍）；同名书籍可重复导入为多本。
+          书籍备份导入会创建一本新书（不覆盖现有书籍）；同名书籍可重复导入为多本。
+          备忘录备份按新 ID 重建为副本，不覆盖现有备忘录。
         </p>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             disabled={importing}
@@ -191,6 +214,14 @@ export function BackupSection(): JSX.Element {
             onClick={() => void importBackup()}
           >
             {importing ? '导入中…' : '选择备份包导入'}
+          </button>
+          <button
+            type="button"
+            disabled={importing}
+            className="rounded border border-ink-200 px-3 py-1.5 text-sm hover:bg-ink-100 disabled:opacity-40"
+            onClick={() => void importNotesBackup()}
+          >
+            {importing ? '导入中…' : '导入备忘录备份'}
           </button>
           {importMsg && <span className="min-w-0 flex-1 truncate text-xs text-ink-500">{importMsg}</span>}
         </div>
@@ -200,7 +231,8 @@ export function BackupSection(): JSX.Element {
       <div className="mt-3 rounded border border-ink-100 bg-white px-3 py-3">
         <div className="mb-1 text-xs font-medium text-ink-600">自动备份</div>
         <p className="mb-2 text-[11px] leading-5 text-ink-400">
-          定期把全部书籍备份为与手动备份格式一致的 zip（可随时在书架导入恢复）；已删除书籍不参与备份。
+          定期把全部书籍备份为与手动备份格式一致的 zip（可随时在书架导入恢复），并单独备份全局备忘录；
+          已删除书籍不参与备份。
         </p>
         {autoSettings ? (
           <div className="space-y-2">
@@ -280,6 +312,7 @@ export function BackupSection(): JSX.Element {
               </button>
               <span className="min-w-0 flex-1 truncate text-xs text-ink-400">
                 {lastRunAt != null ? `最近一次：${new Date(lastRunAt).toLocaleString()}` : '尚未执行过'}
+                {notesCount > 0 ? ` · 备忘录备份 ${notesCount} 份` : ''}
               </span>
             </div>
           </div>

@@ -79,7 +79,7 @@ export const TOURS: Tour[] = [
       {
         target: '[data-tour="editor-topbar-focus"]',
         title: '顶栏工具',
-        description: '「专注」进入沉浸写作；「大纲」维护全书大纲并注入 AI 生成；Ctrl+Shift+F 全局查找。',
+        description: '「专注」进入沉浸写作；「大纲」维护全书大纲并注入 AI 生成；「随手记」跨书速记想法；Ctrl+Shift+F 全局查找。',
         side: 'bottom'
       },
       {

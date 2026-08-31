@@ -14,6 +14,7 @@ import { CharacterService } from '../services/character/CharacterService';
 import { GlobalSearch } from '../services/search/GlobalSearch';
 import { SkillLoader } from '../services/skill/SkillLoader';
 import { SkillPackService } from '../services/skill/SkillPackService';
+import { SkillForgeService } from '../services/skill/SkillForgeService';
 import { ExportService } from '../services/export/ExportService';
 import { MarkdownExporter } from '../services/export/MarkdownExporter';
 import { TxtExporter } from '../services/export/TxtExporter';
@@ -68,6 +69,8 @@ export interface AppContext {
   characterService: CharacterService;
   search: GlobalSearch;
   skillLoader: SkillLoader;
+  /** P7.4：一把炼化（从文本 / 书籍提炼文风 Skill 的一站式服务） */
+  skillForgeService: SkillForgeService;
   exportService: ExportService;
   importService: ImportService;
   /** TXT / Markdown 文档导入（书架按钮 + 拖入书架） */
@@ -224,6 +227,8 @@ export async function initApp(): Promise<AppContext> {
   };
 
   const summaryService = new SummaryService(tauriBridge, db, wq, providerFactory, chapterService);
+  // P7.4：一把炼化（文本 / 书籍提炼文风 Skill；providerFactory 与 chapterService 之后装配）
+  const skillForgeService = new SkillForgeService(tauriBridge, providerFactory, chapterService);
   const appSettings = new AppSettingsService(db, wq);
   // G4：用量记账（providerResolver / Orchestrator 经共享单例取用，须在首个生成前装配）
   const usageService = new UsageService(tauriBridge, db, wq, appSettings);
@@ -306,7 +311,7 @@ export async function initApp(): Promise<AppContext> {
   const storyboardService = new StoryboardService(tauriBridge, imageAssetService, screenplayService, tasks);
 
   // P6 自动备份：调度器（幂等检查 + 定时重检），ctx 赋值后启动
-  const autoBackupService = new AutoBackupService(tauriBridge, appSettings, exportService, bookService, tasks);
+  const autoBackupService = new AutoBackupService(tauriBridge, appSettings, exportService, bookService, notesService, tasks);
 
   ctx = {
     bridge: tauriBridge,
@@ -318,6 +323,7 @@ export async function initApp(): Promise<AppContext> {
     characterService,
     search,
     skillLoader,
+    skillForgeService,
     exportService,
     importService,
     docImportService,
