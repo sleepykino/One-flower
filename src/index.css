@@ -2,6 +2,157 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============ P7.5 全局主题：三主题色板变量 ============ */
+/* 浅色 = 现状值（Token 化后零回归）；深色/护眼按《P7.5 颜色语义盘点表》定稿值 */
+:root {
+  --ink-50: 247 246 243;
+  --ink-100: 237 234 228;
+  --ink-200: 217 212 202;
+  --ink-300: 191 184 169;
+  --ink-400: 163 154 136;
+  --ink-500: 138 128 112;
+  --ink-600: 109 101 90;
+  --ink-700: 82 76 68;
+  --ink-800: 56 52 47;
+  --ink-900: 35 33 30;
+  --surface: 255 255 255;      /* D1：bg-white 系列深色/护眼下的替换值 */
+  --btn-solid: 35 33 30;       /* D2：深色实心按钮（浅=原 ink-900） */
+  --btn-solid-hover: 56 52 47; /* D2：hover（浅=原 ink-800） */
+  --code-bg: 0 0 0;            /* D3：code/pre 底（浅=原 bg-black 6%） */
+  --code-a: 0.06;
+  --violet-50: 245 243 255;
+  --violet-100: 237 233 254;
+  --violet-200: 221 214 254;
+  --violet-300: 196 181 253;
+  --violet-400: 167 139 250;
+  --violet-500: 139 92 246;
+  --violet-600: 124 58 237;
+  --violet-700: 109 40 217;
+  --violet-800: 91 33 182;
+  --violet-900: 76 29 149;
+  --emerald-50: 236 253 245;
+  --emerald-100: 209 250 229;
+  --emerald-200: 167 243 208;
+  --emerald-300: 110 231 183;
+  --emerald-500: 16 185 129;
+  --emerald-600: 5 150 105;
+  --emerald-700: 4 120 87;
+  --emerald-800: 6 95 70;
+  --emerald-900: 6 78 59;
+  --sky-50: 240 249 255;
+  --sky-100: 224 242 254;
+  --sky-200: 186 230 253;
+  --sky-500: 14 165 233;
+  --sky-600: 2 132 199;
+  --sky-700: 3 105 161;
+  --amber-50: 255 251 235;
+  --amber-100: 254 243 199;
+  --amber-200: 253 230 138;
+  --amber-300: 252 211 77;
+  --amber-400: 251 191 36;
+  --amber-500: 245 158 11;
+  --amber-600: 217 119 6;
+  --amber-700: 180 83 9;
+  --amber-800: 146 64 14;
+  --amber-900: 120 53 15;
+  --red-50: 254 242 242;
+  --red-100: 254 226 226;
+  --red-200: 254 202 202;
+  --red-300: 252 165 165;
+  --red-400: 248 113 113;
+  --red-500: 239 68 68;
+  --red-600: 220 38 38;
+  --red-700: 185 28 28;
+  --red-800: 153 27 27;
+  --blue-500: 59 130 246;
+  --blue-600: 37 99 235;
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark; /* UA 表单控件（input/textarea/select）与原生件跟随深色 */
+  --ink-50: 28 28 30;
+  --ink-100: 35 35 39;
+  --ink-200: 48 48 54;
+  --ink-300: 61 61 68;
+  --ink-400: 110 110 120;
+  --ink-500: 139 139 150;
+  --ink-600: 163 163 173;
+  --ink-700: 184 184 194;
+  --ink-800: 201 201 210;
+  --ink-900: 214 211 205;
+  --surface: 35 35 39;
+  --btn-solid: 42 42 47;
+  --btn-solid-hover: 51 51 56;
+  --code-bg: 255 255 255;
+  --code-a: 0.08;
+  --violet-50: 32 28 58;
+  --violet-100: 42 36 76;
+  --violet-200: 55 47 98;
+  --violet-300: 139 118 244;
+  --violet-400: 167 139 250;
+  --violet-500: 139 92 246;
+  --violet-600: 124 58 237;
+  --violet-700: 196 181 253;
+  --violet-800: 196 181 253;
+  --violet-900: 221 214 254;
+  --emerald-50: 18 42 36;
+  --emerald-100: 24 55 46;
+  --emerald-200: 42 84 69;
+  --emerald-300: 60 150 120;
+  --emerald-500: 45 212 158;
+  --emerald-600: 16 160 115;
+  --emerald-700: 110 231 183;
+  --emerald-800: 167 243 208;
+  --emerald-900: 110 231 183;
+  --sky-50: 22 42 60;
+  --sky-100: 28 53 76;
+  --sky-200: 34 66 95;
+  --sky-500: 56 189 248;
+  --sky-600: 125 211 252;
+  --sky-700: 186 230 253;
+  --amber-50: 41 33 16;
+  --amber-100: 54 44 22;
+  --amber-200: 76 62 30;
+  --amber-300: 252 211 77;
+  --amber-400: 251 191 36;
+  --amber-500: 245 158 11;
+  --amber-600: 217 119 6;
+  --amber-700: 252 211 77;
+  --amber-800: 253 224 71;
+  --amber-900: 254 240 138;
+  --red-50: 53 24 26;
+  --red-100: 65 28 31;
+  --red-200: 84 36 40;
+  --red-300: 136 57 60;
+  --red-400: 248 113 113;
+  --red-500: 239 68 68;
+  --red-600: 248 113 113;
+  --red-700: 248 113 113;
+  --red-800: 252 165 165;
+  --blue-500: 96 165 250;
+  --blue-600: 96 165 250;
+}
+
+html[data-theme='sepia'] {
+  color-scheme: light; /* 护眼为浅色系：UA 原生件按浅色渲染，表单控件底色由下方覆盖层接管 */
+  --ink-50: 245 240 225;
+  --ink-100: 239 231 211;
+  --ink-200: 221 210 184;
+  --ink-300: 196 182 154;
+  --ink-400: 171 154 128;
+  --ink-500: 156 138 110;
+  --ink-600: 138 120 92;
+  --ink-700: 115 98 74;
+  --ink-800: 102 86 61;
+  --ink-900: 91 74 50;
+  --surface: 253 250 242;
+  --btn-solid: 55 47 40;
+  --btn-solid-hover: 72 62 50;
+  --code-bg: 160 145 115;
+  --code-a: 0.35;
+  /* 护眼主题语义色与浅色一致（盘点表决策）——继承 :root */
+}
+
 html,
 body,
 #root {
@@ -181,4 +332,89 @@ body {
   @apply border-ink-200;
   margin: 0.8em 0;
   border-top-width: 1px;
+}
+
+/* ============ P7.5 全局主题：覆盖层 ============ */
+
+/* D1：bg-white 系列（含透明度修饰）在深色/护眼下替换为 --surface。
+   text-white / border-white 保持白（white 不变量化）。
+   var(--tw-bg-opacity) 由对应 Tailwind 类生成，覆盖后透明度语义不变。 */
+html[data-theme='dark'] .bg-white,
+html[data-theme='dark'] .bg-white\/10,
+html[data-theme='dark'] .bg-white\/20,
+html[data-theme='dark'] .bg-white\/60,
+html[data-theme='dark'] .bg-white\/70,
+html[data-theme='dark'] .bg-white\/80,
+html[data-theme='dark'] .bg-white\/90,
+html[data-theme='dark'] .bg-white\/95,
+html[data-theme='dark'] .hover\:bg-white:hover,
+html[data-theme='dark'] .hover\:bg-white\/20:hover,
+html[data-theme='dark'] .hover\:bg-white\/60:hover,
+html[data-theme='sepia'] .bg-white,
+html[data-theme='sepia'] .bg-white\/10,
+html[data-theme='sepia'] .bg-white\/20,
+html[data-theme='sepia'] .bg-white\/60,
+html[data-theme='sepia'] .bg-white\/70,
+html[data-theme='sepia'] .bg-white\/80,
+html[data-theme='sepia'] .bg-white\/90,
+html[data-theme='sepia'] .bg-white\/95,
+html[data-theme='sepia'] .hover\:bg-white:hover,
+html[data-theme='sepia'] .hover\:bg-white\/20:hover,
+html[data-theme='sepia'] .hover\:bg-white\/60:hover {
+  background-color: rgb(var(--surface) / var(--tw-bg-opacity, 1));
+}
+
+/* 护眼：无 bg 类的表单控件为 UA 纯白底，与纸黄面不协调——统一接管为 --surface。
+   :not 排除带任何 bg 工具类的控件（显式设色者不干预）；深色由上方 color-scheme: dark 兜底。 */
+html[data-theme='sepia'] input:not([class*='bg-']),
+html[data-theme='sepia'] textarea:not([class*='bg-']),
+html[data-theme='sepia'] select:not([class*='bg-']) {
+  background-color: rgb(var(--surface));
+}
+
+/* 沉浸模式（focus-root）三主题为物理色心智：容器内变量重置为浅色值，
+   使状态条等 bg-white 元素不被 D1 覆盖层染深（night 的 btnActive 白钮深字还原）。 */
+.focus-root {
+  --ink-50: 247 246 243;
+  --ink-100: 237 234 228;
+  --ink-200: 217 212 202;
+  --ink-300: 191 184 169;
+  --ink-400: 163 154 136;
+  --ink-500: 138 128 112;
+  --ink-600: 109 101 90;
+  --ink-700: 82 76 68;
+  --ink-800: 56 52 47;
+  --ink-900: 35 33 30;
+  --surface: 255 255 255;
+  --emerald-300: 110 231 183;
+  --emerald-900: 6 78 59;
+}
+
+/* D3：code/pre 底在深色/护眼下走 --code-bg（任意值类 bg-black/[0.06] 无法变量化，覆盖处理） */
+html[data-theme='dark'] .md-content code,
+html[data-theme='dark'] .md-content pre,
+html[data-theme='sepia'] .md-content code,
+html[data-theme='sepia'] .md-content pre {
+  background-color: rgb(var(--code-bg) / var(--code-a, 1));
+}
+
+/* React Flow（关系图）：控件按钮 / 边标签底为库内白底，随主题覆盖（节点/工具条走 token 自动适配） */
+html[data-theme='dark'] .react-flow__controls-button,
+html[data-theme='sepia'] .react-flow__controls-button {
+  background: rgb(var(--surface));
+  border-bottom: 1px solid rgb(var(--ink-200));
+  fill: rgb(var(--ink-700));
+  color: rgb(var(--ink-700));
+}
+html[data-theme='dark'] .react-flow__controls-button:hover,
+html[data-theme='sepia'] .react-flow__controls-button:hover {
+  background: rgb(var(--ink-100));
+}
+html[data-theme='dark'] .react-flow__edge-textbg,
+html[data-theme='sepia'] .react-flow__edge-textbg {
+  fill: rgb(var(--surface));
+}
+html[data-theme='dark'] .react-flow__edge-text,
+html[data-theme='sepia'] .react-flow__edge-text {
+  fill: rgb(var(--ink-700));
 }

@@ -921,7 +921,7 @@ function TB({
       title={title}
       onClick={onClick}
       className={`rounded px-2 py-1 hover:bg-ink-100 ${
-        active ? 'bg-ink-900 text-white hover:bg-ink-800' : 'text-ink-700'
+        active ? 'bg-btn-solid text-white hover:bg-btn-solid-hover' : 'text-ink-700'
       }`}
     >
       {children}

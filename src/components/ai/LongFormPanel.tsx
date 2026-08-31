@@ -457,7 +457,7 @@ export function LongFormPanel({ bookId }: { bookId: string }): JSX.Element {
               type="button"
               data-tour="longform-run"
               disabled={beats.filter((b) => b.text.trim()).length === 0}
-              className="mt-3 w-full rounded bg-ink-900 py-1.5 text-sm text-white hover:bg-ink-800 disabled:opacity-40"
+              className="mt-3 w-full rounded bg-btn-solid py-1.5 text-sm text-white hover:bg-btn-solid-hover disabled:opacity-40"
               onClick={() => setStep('confirm')}
             >
               下一步：成本确认

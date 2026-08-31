@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>P7.5 全局主题 · 三主题色板评审</title>
+<style>
+  /* ===== CSS 变量：三主题（与盘点表定稿值一一对应） ===== */
+  :root {
+    --ink-50: 247 246 243;  --ink-100: 237 234 228;  --ink-200: 217 212 202;
+    --ink-300: 191 184 169;  --ink-400: 163 154 136;  --ink-500: 138 128 112;
+    --ink-600: 109 101 90;  --ink-700: 82 76 68;  --ink-800: 56 52 47;  --ink-900: 35 33 30;
+    --surface: 255 255 255;
+    --btn-solid: 35 33 30;  --btn-solid-hover: 56 52 47;
+    --code-bg: 0 0 0;  --code-a: 0.06;
+    --violet-50: 245 243 255;  --violet-100: 237 233 254;  --violet-200: 221 214 254;
+    --violet-300: 196 181 253;  --violet-400: 167 139 250;  --violet-500: 139 92 246;
+    --violet-600: 124 58 237;  --violet-700: 109 40 217;  --violet-800: 91 33 182;  --violet-900: 76 29 149;
+    --emerald-50: 236 253 245;  --emerald-100: 209 250 229;  --emerald-200: 167 243 208;
+    --emerald-300: 110 231 183;  --emerald-500: 16 185 129;  --emerald-600: 5 150 105;
+    --emerald-700: 4 120 87;  --emerald-800: 6 95 70;  --emerald-900: 34 84 61;
+    --sky-50: 240 249 255;  --sky-100: 224 242 254;  --sky-200: 186 230 253;
+    --sky-500: 14 165 233;  --sky-600: 2 132 199;  --sky-700: 3 105 161;
+    --amber-50: 255 251 235;  --amber-100: 254 243 199;  --amber-200: 253 230 138;
+    --amber-300: 252 211 77;  --amber-400: 251 191 36;  --amber-500: 245 158 11;
+    --amber-600: 217 119 6;  --amber-700: 180 83 9;  --amber-800: 146 64 14;  --amber-900: 120 53 15;
+    --red-50: 254 242 242;  --red-100: 254 226 226;  --red-200: 254 202 202;  --red-300: 252 165 165;
+    --red-400: 248 113 113;  --red-500: 239 68 68;  --red-600: 220 38 38;  --red-700: 185 28 28;  --red-800: 153 27 27;
+    --blue-500: 59 130 246;  --blue-600: 37 99 235;
+  }
+  [data-theme="dark"] {
+    --ink-50: 28 28 30;  --ink-100: 35 35 39;  --ink-200: 48 48 54;
+    --ink-300: 61 61 68;  --ink-400: 110 110 120;  --ink-500: 139 139 150;
+    --ink-600: 163 163 173;  --ink-700: 184 184 194;  --ink-800: 201 201 210;  --ink-900: 214 211 205;
+    --surface: 35 35 39;
+    --btn-solid: 42 42 47;  --btn-solid-hover: 51 51 56;
+    --code-bg: 255 255 255;  --code-a: 0.08;
+    --violet-50: 32 28 58;  --violet-100: 42 36 76;  --violet-200: 55 47 98;
+    --violet-300: 139 118 244;  --violet-400: 167 139 250;  --violet-500: 139 92 246;
+    --violet-600: 124 58 237;  --violet-700: 196 181 253;  --violet-800: 196 181 253;  --violet-900: 221 214 254;
+    --emerald-50: 18 42 36;  --emerald-100: 24 55 46;  --emerald-200: 42 84 69;
+    --emerald-300: 60 150 120;  --emerald-500: 45 212 158;  --emerald-600: 16 160 115;
+    --emerald-700: 110 231 183;  --emerald-800: 167 243 208;  --emerald-900: 110 231 183;
+    --sky-50: 22 42 60;  --sky-100: 28 53 76;  --sky-200: 34 66 95;
+    --sky-500: 56 189 248;  --sky-600: 125 211 252;  --sky-700: 186 230 253;
+    --amber-50: 41 33 16;  --amber-100: 54 44 22;  --amber-200: 76 62 30;
+    --amber-300: 252 211 77;  --amber-400: 251 191 36;  --amber-500: 245 158 11;
+    --amber-600: 217 119 6;  --amber-700: 252 211 77;  --amber-800: 253 224 71;  --amber-900: 254 240 138;
+    --red-50: 53 24 26;  --red-100: 65 28 31;  --red-200: 84 36 40;  --red-300: 136 57 60;
+    --red-400: 248 113 113;  --red-500: 239 68 68;  --red-600: 248 113 113;  --red-700: 248 113 113;  --red-800: 252 165 165;
+    --blue-500: 96 165 250;  --blue-600: 96 165 250;
+  }
+  [data-theme="sepia"] {
+    --ink-50: 245 240 225;  --ink-100: 239 231 211;  --ink-200: 221 210 184;
+    --ink-300: 196 182 154;  --ink-400: 171 154 128;  --ink-500: 156 138 110;
+    --ink-600: 138 120 92;  --ink-700: 115 98 74;  --ink-800: 102 86 61;  --ink-900: 91 74 50;
+    --surface: 253 250 242;
+    --btn-solid: 55 47 40;  --btn-solid-hover: 72 62 50;
+    --code-bg: 160 145 115;  --code-a: 0.35;
+    /* 护眼主题：语义色与浅色一致（盘点表决策）——未覆盖，继承 :root */
+  }
+
+  /* ===== 基础 ===== */
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+    background: rgb(var(--ink-50));
+    color: rgb(var(--ink-900));
+    transition: background .2s, color .2s;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 20px 80px; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  h2 { font-size: 16px; margin: 44px 0 10px; border-bottom: 1px solid rgb(var(--ink-200)); padding-bottom: 6px; }
+  .muted { color: rgb(var(--ink-400)); font-size: 12px; }
+  .note { color: rgb(var(--ink-500)); font-size: 12px; }
+
+  /* ===== 主题切换 ===== */
+  .bar {
+    position: sticky; top: 0; z-index: 50;
+    display: flex; align-items: center; gap: 12px;
+    background: rgb(var(--surface)); border-bottom: 1px solid rgb(var(--ink-200));
+    padding: 10px 20px;
+  }
+  .bar b { font-size: 15px; }
+  .theme-btn {
+    border: 1px solid rgb(var(--ink-200)); border-radius: 6px; background: rgb(var(--ink-50));
+    color: rgb(var(--ink-700)); padding: 4px 14px; font-size: 13px; cursor: pointer;
+  }
+  .theme-btn.active { background: rgb(var(--violet-600)); border-color: rgb(var(--violet-600)); color: #fff; }
+  .bar .sp { margin-left: auto; }
+
+  /* ===== Mock UI ===== */
+  .app {
+    border: 1px solid rgb(var(--ink-200)); border-radius: 10px; overflow: hidden;
+    background: rgb(var(--ink-50));
+  }
+  .app-header {
+    display: flex; align-items: center; gap: 10px;
+    background: rgb(var(--surface)); border-bottom: 1px solid rgb(var(--ink-200)); padding: 8px 12px;
+  }
+  .btn-back {
+    border: 1px solid rgb(var(--ink-200)); border-radius: 6px; background: transparent;
+    color: rgb(var(--ink-700)); padding: 3px 10px; font-size: 13px; cursor: pointer;
+  }
+  .btn-back:hover { background: rgb(var(--ink-100)); }
+  .app-title { font-weight: 600; }
+  .app-meta { color: rgb(var(--ink-400)); font-size: 12px; margin-left: auto; margin-right: 10px; }
+  .btn-solid {
+    border: none; border-radius: 6px; background: rgb(var(--btn-solid)); color: #fff;
+    padding: 4px 12px; font-size: 12px; cursor: pointer;
+  }
+  .btn-solid:hover { background: rgb(var(--btn-solid-hover)); }
+  /* D2 新增专用 token 说明角标 */
+  .badge-d2 { position: relative; }
+  .badge-d2::after {
+    content: 'D2 token btn-solid · 三主题独立取值'; position: absolute; top: -26px; right: 0;
+    font-size: 10px; color: rgb(var(--ink-400)); white-space: nowrap;
+  }
+
+  .app-body { display: flex; min-height: 420px; }
+  .aside {
+    width: 210px; border-right: 1px solid rgb(var(--ink-200));
+    background: rgb(var(--surface)); padding: 8px;
+  }
+  .aside-item {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 8px; border-radius: 6px; font-size: 13px; color: rgb(var(--ink-800));
+    cursor: pointer;
+  }
+  .aside-item:hover { background: rgb(var(--ink-50)); }
+  .aside-item.active { background: rgb(var(--ink-100)); font-weight: 600; }
+  .badge {
+    margin-left: auto; font-size: 10px; border-radius: 4px; padding: 0 5px; line-height: 16px;
+  }
+  .badge.revised { background: rgb(var(--amber-200)); color: rgb(var(--amber-700)); }
+  .badge.final { background: rgb(var(--emerald-200)); color: rgb(var(--emerald-700)); }
+  .dot {
+    display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+    border: 1.5px solid #fff; flex-shrink: 0;
+  }
+  .dot.amber { background: rgb(var(--amber-400)); }
+  .dot.green { background: rgb(var(--emerald-500)); }
+  .dot.blue { background: rgb(var(--blue-500)); }
+
+  .editor { flex: 1; background: rgb(var(--surface)); padding: 22px 30px; }
+  .pm { font-size: 14px; line-height: 1.9; color: rgb(var(--ink-800)); }
+  .pm h1 { font-size: 20px; color: rgb(var(--ink-900)); margin: 0 0 14px; }
+  .pm .ph { color: rgb(var(--ink-300)); }
+  .pm blockquote {
+    border-left: 4px solid rgb(var(--ink-300)); color: rgb(var(--ink-600));
+    padding-left: 12px; font-style: italic; margin: 12px 0;
+  }
+  .pm .dlg {
+    padding-left: 12px; border-left: 2px solid rgb(var(--emerald-300));
+    color: rgb(var(--emerald-900)); margin: 12px 0;
+  }
+  .pm hr { border: none; border-top: 1px solid rgb(var(--ink-200)); margin: 14px 0; }
+  .chip {
+    display: inline-block; border-radius: 4px; padding: 0 6px; font-size: 12px; line-height: 18px;
+  }
+  .chip.violet { background: rgb(var(--violet-100)); color: rgb(var(--violet-700)); }
+  .chip.sky { background: rgb(var(--sky-100)); color: rgb(var(--sky-700)); }
+  .chip.emerald { background: rgb(var(--emerald-100)); color: rgb(var(--emerald-700)); }
+  .ai-temp {
+    border-left: 4px solid rgb(var(--violet-300)); background: rgb(var(--violet-50) / 0.6);
+    padding: 6px 10px; font-style: italic; color: rgb(var(--ink-500)); margin: 12px 0; position: relative;
+  }
+  .ai-temp .tag {
+    position: absolute; top: -4px; right: 6px; font-size: 10px; font-style: normal;
+    border-radius: 4px; padding: 0 5px;
+  }
+  .ai-temp .tag.running { background: rgb(var(--violet-200)); color: rgb(var(--violet-600)); }
+  .ai-temp .tag.done { background: rgb(var(--amber-200)); color: rgb(var(--amber-700)); }
+  .code {
+    background: rgb(var(--code-bg) / var(--code-a)); border-radius: 6px;
+    padding: 8px 12px; font-family: Consolas, monospace; font-size: 12px; margin: 12px 0;
+  }
+  .diff-add { background: rgb(var(--emerald-100)); color: rgb(var(--emerald-800)); }
+  .diff-del { background: rgb(var(--red-100)); color: rgb(var(--red-800)); text-decoration: line-through; }
+  .tr2 { margin-top: 6px; }
+
+  .btns { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; align-items: center; }
+  .btn {
+    border: none; border-radius: 6px; padding: 5px 14px; font-size: 12px; color: #fff; cursor: pointer;
+  }
+  .btn.violet { background: rgb(var(--violet-600)); } .btn.violet:hover { background: rgb(var(--violet-700)); }
+  .btn.emerald { background: rgb(var(--emerald-600)); } .btn.emerald:hover { background: rgb(var(--emerald-700)); }
+  .btn.amber { background: rgb(var(--amber-600)); } .btn.amber:hover { background: rgb(var(--amber-700)); }
+  .btn.red { background: rgb(var(--red-500)); } .btn.red:hover { background: rgb(var(--red-600)); }
+  .btn.disabled { background: rgb(var(--ink-200)); color: rgb(var(--ink-400)); cursor: not-allowed; }
+  .btn.lite { background: transparent; border: 1px solid rgb(var(--ink-200)); color: rgb(var(--ink-700)); }
+
+  .errbar {
+    border: 1px solid rgb(var(--red-200)); background: rgb(var(--red-50));
+    color: rgb(var(--red-600)); border-radius: 6px; padding: 6px 10px; font-size: 12px; margin: 8px 0;
+  }
+  .req { color: rgb(var(--red-500)); }
+
+  .cover {
+    width: 110px; height: 150px; border-radius: 8px; position: relative; overflow: hidden;
+    background: linear-gradient(135deg, rgb(var(--violet-200)) 0%, rgb(var(--sky-200)) 100%);
+    display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 600;
+    flex-shrink: 0;
+  }
+  .cover .tag2 { position: absolute; bottom: 4px; left: 6px; font-size: 9px; font-weight: 400; opacity: .9; }
+
+  /* 弹层 + toast 示例 */
+  .overlay {
+    position: relative; border-radius: 10px; padding: 12px;
+    background: rgb(0 0 0 / 0.40); margin-top: 14px;
+  }
+  .dialog {
+    background: rgb(var(--surface)); border: 1px solid rgb(var(--ink-200));
+    border-radius: 10px; padding: 14px 16px; max-width: 360px; margin: 0 auto;
+  }
+  .dialog h4 { margin: 0 0 8px; font-size: 14px; color: rgb(var(--ink-900)); }
+  .dialog p { font-size: 13px; color: rgb(var(--ink-600)); margin: 0 0 12px; }
+  .toasts { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; width: 260px; }
+  .toast {
+    display: flex; gap: 8px; align-items: center;
+    background: rgb(var(--surface)); border: 1px solid rgb(var(--ink-200));
+    border-left-width: 3px; border-radius: 8px; padding: 8px 10px; font-size: 12px;
+    color: rgb(var(--ink-700)); box-shadow: 0 2px 8px rgb(0 0 0 / .12);
+  }
+  .toast.info { border-left-color: rgb(var(--sky-500)); }
+  .toast.ok { border-left-color: rgb(var(--emerald-500)); }
+  .toast.err { border-left-color: rgb(var(--red-500)); }
+
+  /* 滚动条示例 */
+  .scroll-demo { margin-top: 10px; }
+  .scroll {
+    width: 180px; height: 8px; border-radius: 4px; background: rgb(var(--ink-100));
+  }
+  .scroll .thumb {
+    width: 60px; height: 8px; border-radius: 4px; background: rgb(var(--ink-200));
+  }
+
+  /* ===== 色板对照表 ===== */
+  table { border-collapse: collapse; width: 100%; font-size: 12px; margin-top: 8px; }
+  th, td { border: 1px solid rgb(var(--ink-200)); padding: 5px 8px; text-align: left; vertical-align: middle; }
+  th { background: rgb(var(--surface)); font-size: 12px; }
+  td.tk { font-family: Consolas, monospace; white-space: nowrap; font-size: 12px; color: rgb(var(--ink-800)); }
+  .sw { height: 26px; border-radius: 5px; border: 1px solid rgb(var(--ink-200)); position: relative; }
+  .sw .lab {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-family: Consolas, monospace; text-shadow: 0 0 3px rgb(255 255 255 / .6);
+  }
+  .sw.dark .lab { color: #fff; text-shadow: 0 0 3px rgb(0 0 0 / .5); }
+  thead .sw, td .sw { width: 100%; }
+  .fml { font-weight: 700; margin-top: 18px; font-size: 13px; color: rgb(var(--ink-700)); }
+  .fml::before { content: '▍'; }
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <b>P7.5 全局主题 · 三主题色板评审</b>
+  <span class="muted">切换下方主题，模拟界面与色板随 data-theme 联动</span>
+  <span class="sp"></span>
+  <button class="theme-btn active" data-t="light" onclick="setTheme('light')">☀ 浅色</button>
+  <button class="theme-btn" data-t="dark" onclick="setTheme('dark')">🌙 深色</button>
+  <button class="theme-btn" data-t="sepia" onclick="setTheme('sepia')">📖 护眼（纸黄）</button>
+</div>
+
+<div class="wrap">
+
+<h1>模拟应用界面</h1>
+<p class="note">还原应用主要界面骨架（顶栏 / 侧栏 / 编辑器正文 / 按钮 / 徽标 / code / diff / 弹层 / toast / 书封渐变）。书封渐变为固定原色（D5 已定）；"深色实心按钮"为 D2 新增专用 token `btn-solid`，三主题独立取值。</p>
+
+<div class="app">
+  <div class="app-header">
+    <button class="btn-back">← 书架</button>
+    <span class="app-title">一花一世界</span>
+    <span class="app-meta">第一章 · 灯下 · 18346 字</span>
+    <span class="badge-d2">
+      <button class="btn-solid">深色实心按钮</button>
+    </span>
+  </div>
+  <div class="app-body">
+    <div class="aside">
+      <div class="aside-item active"><span class="dot green"></span>第一章 灯下 <span class="badge final">定稿</span></div>
+      <div class="aside-item"><span class="dot amber"></span>第二章 雨夜 <span class="badge revised">修</span></div>
+      <div class="aside-item"><span class="dot blue"></span>第三章 山寺</div>
+      <div class="aside-item"><span class="dot"></span><span class="ph">…</span></div>
+      <div style="margin:16px 0 6px;font-size:11px;color:rgb(var(--ink-400))">关系 / 地图 / 时间线</div>
+      <div class="aside-item"><span class="dot amber"></span>伏笔A · 推进中</div>
+      <div class="aside-item"><span class="dot green"></span>伏笔B · 已回收</div>
+    </div>
+    <div class="editor">
+      <div class="pm">
+        <h1>第一章 · 灯下</h1>
+        <p><span class="ph">写点什么…</span></p>
+        <p>灯下提笔，一花一世界。<span class="chip violet">@林晚</span> <span class="chip sky">灵狐·鸣雪</span> <span class="chip emerald">§三章</span> 的旧事就此展开。</p>
+        <blockquote>故人不知何处去，桃花依旧笑春风。——这是她唯一记得的一句诗。</blockquote>
+        <p class="dlg">“你不是第一个来这里的人，”她说，“但会是最后一个。”</p>
+        <hr />
+        <div class="ai-temp">
+          陆离的袖口沾了露水，他低头看了看，没有拍掉。
+          <span class="tag running">AI 生成中</span>
+        </div>
+        <div class="ai-temp tr2" style="opacity:.75">
+          山门外，钟声响到第三遍时，她终于回头。
+          <span class="tag done">AI 生成</span>
+        </div>
+        <p>她翻开那本泛黄的手札——</p>
+        <div class="diff-add">+ 添上：「……而我在等一场不期而遇。」</div>
+        <div class="diff-del">- 删去：「而我在等一场不期而至。」</div>
+        <div class="code">await ctx.appSettings.get('ui.theme')</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>按钮 / 徽标 / 提示</h2>
+<div class="btns">
+  <button class="btn violet">主操作（violet-600）</button>
+  <button class="btn emerald">采用 / 成功（emerald-600）</button>
+  <button class="btn amber">警示（amber-600）</button>
+  <button class="btn red">危险（red-500）</button>
+  <button class="btn lite">次按钮</button>
+  <button class="btn disabled">禁用</button>
+  <span class="badge revised">修订（amber-200/700）</span>
+  <span class="badge final">定稿（emerald-200/700）</span>
+  <span class="chip violet">角色 @</span>
+  <span class="chip sky">世界书 #</span>
+  <span class="chip emerald">章节 §</span>
+  <span class="req">必填项 *</span>
+</div>
+<div class="errbar">⚠ 检测到长文生成中断（第 3/7 拍：已暂停）— 恢复横幅 / 错误提示条样例（amber-50 / red-50）</div>
+
+<h2>弹层 / toast / 书封 / 滚动条</h2>
+<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start">
+  <div class="cover">封面
+    <span class="tag2">渐变：violet-200→sky-200（保留原色）</span>
+  </div>
+  <div class="overlay" style="flex:1;min-width:320px">
+    <div class="dialog">
+      <h4>彻底删除章节？</h4>
+      <p>该操作不可恢复，本地文件将被一并删除。</p>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn lite">取消</button>
+        <button class="btn red">确认删除</button>
+      </div>
+    </div>
+  </div>
+  <div>
+    <div class="toasts">
+      <div class="toast info">◉ 数据已写入本地（sky 信息）</div>
+      <div class="toast ok">✓ 章节已保存（emerald 成功）</div>
+      <div class="toast err">✕ 保存失败，请重试（red 错误）</div>
+    </div>
+    <div class="scroll-demo" style="margin-top:14px">
+      <div class="note" style="margin-bottom:4px">滚动条（thumb = ink-200）</div>
+      <div class="scroll"><div class="thumb"></div></div>
+    </div>
+  </div>
+</div>
+
+<h2>色板对照总表（浅 / 深 / 护眼）</h2>
+<p class="note">护眼主题语义色与浅色一致（盘点表决策），列中显示「＝浅色」；深色列为深色值。其中 `btn-solid` 为 D2 新增专用 token，浅色=原 ink-900/800（零回归）。</p>
+<div id="pal"></div>
+
+</div>
+
+<script>
+// —— 色板数据（与 CSS 变量同步；alpha 项：【0,a】内第 4 位为 alpha；护眼=语义色浅值）——
+const DATA = [
+  { f: 'A · ink 灰阶（语义分层重排，十档全量）', rows: [
+    ['ink-50',  '页面底 / hover底', [247,246,243],[28,28,30],[245,240,225], null],
+    ['ink-100', '徽标底 / 浅边框',  [237,234,228],[35,35,39],[239,231,211], null],
+    ['ink-200', '标准边框 / 分隔',  [217,212,202],[48,48,54],[221,210,184], null],
+    ['ink-300', '占位符 / hover边', [191,184,169],[61,61,68],[196,182,154], null],
+    ['ink-400', '次要说明文字',     [163,154,136],[110,110,120],[171,154,128], null],
+    ['ink-500', '次级文字',         [138,128,112],[139,139,150],[156,138,110], null],
+    ['ink-600', 'muted 正文',       [109,101,90],[163,163,173],[138,120,92], null],
+    ['ink-700', '子标题',           [82,76,68],[184,184,194],[115,98,74], null],
+    ['ink-800', '卡片主文字',       [56,52,47],[201,201,210],[102,86,61], null],
+    ['ink-900', '正文主文字',       [35,33,30],[214,211,205],[91,74,50], null],
+  ]},
+  { f: 'B · 中性底 / 遮罩（white 不变量化，走覆盖层；D1）', rows: [
+    ['surface', 'bg-white→浮层', [255,255,255],[35,35,39],[253,250,242], null],
+    ['code-bg', 'code/pre 底 α', [0,0,0,0.06],[255,255,255,0.08],[160,145,115,0.35], 'α 见下标'],
+    ['遮罩 black', '模态遮罩', [0,0,0,0.4],[0,0,0,0.4],[0,0,0,0.4], null],
+    ['text/border-white', '按钮文字 / 白圈（不变）', [255,255,255],[255,255,255],[255,255,255], null],
+  ]},
+  { f: 'B-2 · D2 新增专用 token：btn-solid（浅=现状 ink-900/800 零回归）', rows: [
+    ['btn-solid', '深色实心按钮底', [35,33,30],[42,42,47],[55,47,40], '白字；深=与夜间底拉开层次 / 护眼=暖棕'],
+    ['btn-solid-hover', '按钮 hover 底', [56,52,47],[51,51,56],[72,62,50], '类 hover:bg-btn-solid-hover'],
+  ]},
+  { f: 'C-1 · violet（AI 主色 / 主操作）', rows: [
+    ['violet-50',  'chip / hover底',   [245,243,255],[32,28,58], null, '底档暗化'],
+    ['violet-100', '角色提及 chip 底', [237,233,254],[42,36,76], null, '底档暗化'],
+    ['violet-200', 'AI 徽标 / 渐暗',   [221,214,254],[55,47,98], null, '底档暗化'],
+    ['violet-300', 'AI 临时节点边',    [196,181,253],[139,118,244], null, '边框提亮'],
+    ['violet-400', '进度 / 指示灯',    [167,139,250],[167,139,250], null, '保持'],
+    ['violet-500', '实心进度条',       [139,92,246],[139,92,246], null, '保持'],
+    ['violet-600', '主按钮底',         [124,58,237],[124,58,237], null, '保持（白字）'],
+    ['violet-700', 'chip / tab 文字',  [109,40,217],[196,181,253], null, '字档提亮'],
+    ['violet-800', '强调文字',         [91,33,182],[196,181,253], null, '字档提亮'],
+    ['violet-900', '强调文字',         [76,29,149],[221,214,254], null, '字档提亮'],
+  ]},
+  { f: 'C-2 · emerald（对白 / 成功 / 采用）', rows: [
+    ['emerald-50',  '成功提示条',     [236,253,245],[18,42,36], null, '底档暗化'],
+    ['emerald-100', 'diff-add / chip',[209,250,229],[24,55,46], null, '底档暗化'],
+    ['emerald-200', '成功卡边框',     [167,243,208],[42,84,69], null, '底档暗化'],
+    ['emerald-300', '对白左边框',     [110,231,183],[60,150,120], null, 'D4：沉浸内另有 45% 透明覆盖'],
+    ['emerald-500', '完成圆点 / 进度',[16,185,129],[45,212,158], null, '小色块提亮'],
+    ['emerald-600', '采用按钮底',     [5,150,105],[16,160,115], null, '保持或微提亮'],
+    ['emerald-700', '成功文字',       [4,120,87],[110,231,183], null, '字档提亮'],
+    ['emerald-800', '徽标文字',       [6,95,70],[167,243,208], null, '字档提亮'],
+    ['emerald-900', '对白正文文字',   [6,78,59],[110,231,183], null, '字档提亮'],
+  ]},
+  { f: 'C-3 · sky（世界书引用 / 信息）', rows: [
+    ['sky-50',  '信息徽标底',   [240,249,255],[22,42,60], null, '底档暗化'],
+    ['sky-100', '世界书 chip 底',[224,242,254],[28,53,76], null, '底档暗化'],
+    ['sky-200', '书封渐变中段', [186,230,253],[34,66,95], null, 'D5：渐变保留原色，此档不着色'],
+    ['sky-500', 'toast info',  [14,165,233],[56,189,248], null, '提亮'],
+    ['sky-600', '记忆编号文字', [2,132,199],[125,211,252], null, '字档提亮'],
+    ['sky-700', '世界书 chip 字',[3,105,161],[186,230,253], null, '字档提亮'],
+  ]},
+  { f: 'C-4 · amber（警告 / 提示）', rows: [
+    ['amber-50',  '警告条底',      [255,251,235],[41,33,16], null, '底档暗化'],
+    ['amber-100', '警告边框',      [254,243,199],[54,44,22], null, '底档暗化'],
+    ['amber-200', '修订徽标底',    [253,230,138],[76,62,30], null, '底档暗化'],
+    ['amber-300', '伏笔条形图',    [252,211,77],[252,211,77], null, '图章色保持'],
+    ['amber-400', '未保存圆点',    [251,191,36],[251,191,36], null, '图章色保持'],
+    ['amber-500', '未保存圆点',    [245,158,11],[245,158,11], null, '图章色保持'],
+    ['amber-600', '警示按钮底',    [217,119,6],[217,119,6], null, '保持'],
+    ['amber-700', '警告条文字',    [180,83,9],[252,211,77], null, '字档提亮'],
+    ['amber-800', '提示文字',      [146,64,14],[253,224,71], null, '字档提亮'],
+    ['amber-900', '提示文字',      [120,53,15],[254,240,138], null, '字档提亮'],
+  ]},
+  { f: 'C-5 · red（错误 / 危险 / 删除）', rows: [
+    ['red-50',  '错误提示条底', [254,242,242],[53,24,26], null, '底档暗化'],
+    ['red-100', 'diff-remove 底',[254,226,226],[65,28,31], null, '底档暗化'],
+    ['red-200', '错误卡边框',   [254,202,202],[84,36,40], null, '底档暗化'],
+    ['red-300', '删除态边框',   [252,165,165],[136,57,60], null, '边框提亮'],
+    ['red-400', '负面 prompt', [248,113,113],[248,113,113], null, '保持'],
+    ['red-500', '危险按钮底',   [239,68,68],[239,68,68], null, '保持'],
+    ['red-600', '错误条文字',   [220,38,38],[248,113,113], null, '字档提亮'],
+    ['red-700', '错误标题',     [185,28,28],[248,113,113], null, '字档提亮'],
+    ['red-800', 'diff 文字',    [153,27,27],[252,165,165], null, '字档提亮'],
+  ]},
+  { f: 'C-6 · blue（附属链接 / 埋片）', rows: [
+    ['blue-500', '伏笔推进圆点', [59,130,246],[96,165,250], null, '图章色提亮'],
+    ['blue-600', '章节树链接数', [37,99,235],[96,165,250], null, '字档提亮'],
+  ]},
+];
+
+function hex(c) {
+  const pad = (n) => n.toString(16).padStart(2, '0');
+  return '#' + c.slice(0, 3).map(pad).join('');
+}
+function sw(c, dark) {
+  const a = c.length > 3 ? ' · ' + Math.round(c[3] * 100) + '%' : '';
+  return `<div class="sw${dark ? ' dark' : ''}" style="background:rgb(${c.join(' ')})"><span class="lab">${hex(c)}${a}</span></div>`;
+}
+function render() {
+  const out = [];
+  for (const grp of DATA) {
+    out.push(`<div class="fml">${grp.f}</div>`);
+    out.push(`<table><tr><th style="width:130px">档位</th><th>语义</th><th style="width:21%">浅色</th><th style="width:21%">深色</th><th style="width:21%">护眼</th><th>说明</th></tr>`);
+    for (const r of grp.rows) {
+      const [tk, sem, l, d, s, note] = r;
+      const sepia = s || l;
+      out.push(`<tr>
+        <td class="tk">${tk}</td><td>${sem}</td>
+        <td>${sw(l, false)}</td>
+        <td>${sw(d, true)}</td>
+        <td>${sw(sepia, false)}</td>
+        <td class="note">${note ?? ''}</td>
+      </tr>`);
+    }
+    out.push('</table>');
+  }
+  document.getElementById('pal').innerHTML = out.join('');
+}
+function setTheme(t) {
+  document.documentElement.dataset.theme = t;
+  document.querySelectorAll('.theme-btn').forEach((b) => b.classList.toggle('active', b.dataset.t === t));
+}
+render();
+</script>
+</body>
+</html>

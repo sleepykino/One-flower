@@ -1,13 +1,16 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
-import { initApp } from './context/app-context';
+import { getAppContext, initApp } from './context/app-context';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
+import { applyTheme, parseTheme, THEME_KEY } from './utils/theme';
 import './index.css';
 
 async function bootstrap(): Promise<void> {
   try {
     await initApp();
+    // P7.5：首帧渲染前应用持久化主题（避免启动闪白）
+    applyTheme(parseTheme(await getAppContext().appSettings.get(THEME_KEY)));
   } catch (e) {
     console.error('应用初始化失败', e);
     const root = document.getElementById('root')!;

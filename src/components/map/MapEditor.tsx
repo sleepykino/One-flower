@@ -13,6 +13,7 @@ import Konva from 'konva';
 import { Stage, Layer, Group, Circle, Rect, Line, Arrow, Text, Image } from 'react-konva';
 import { open } from '@tauri-apps/plugin-dialog';
 import { getAppContext } from '../../context/app-context';
+import { CANVAS_COLORS, useAppTheme } from '../../utils/theme';
 import { confirmDialog, pickSavePath } from '../../native/dialog';
 import { toast } from '../common/toast';
 import { useEditorStore } from '../../store/editorStore';
@@ -205,6 +206,9 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
   const [exportScale, setExportScale] = useState(2);
   /** 导出/插入进行中：临时隐藏选区装饰 */
   const [capturing, setCapturing] = useState(false);
+  // P7.5：画布配色随全局主题；导出瞬间强制浅色（导出产物不随主题变化）
+  const appTheme = useAppTheme();
+  const cv = capturing ? CANVAS_COLORS.light : CANVAS_COLORS[appTheme];
 
   // 画布尺寸：容器 div offsetWidth/Height，ResizeObserver 跟随
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1416,7 +1420,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
   const renderMarkerText = (label: string, node: MapNode): JSX.Element => {
     const ts = node.textStyle;
     const fontSize = ts?.fontSize ?? 13;
-    const fill = ts?.fontColor ?? '#23211e';
+    const fill = ts?.fontColor ?? cv.label;
     const stroke = ts?.strokeColor;
     const strokeWidth = ts?.strokeWidth ?? 0;
     if (ts?.vertical) {
@@ -1509,9 +1513,9 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
           {highlight && (
             <Line points={node.points ?? []} closed stroke="#7c3aed" strokeWidth={1.5} dash={[6, 4]} listening={false} />
           )}
-          <Text text={label} fontSize={13} fontStyle="bold" fill="#38342f" offsetX={label.length * 6.5} y={-9} listening={false} />
+          <Text text={label} fontSize={13} fontStyle="bold" fill={cv.label} offsetX={label.length * 6.5} y={-9} listening={false} />
           {linkedTitle && (
-            <Text text={linkedTitle} fontSize={11} fill="#8a8070" offsetX={linkedTitle.length * 5.5} y={9} listening={false} />
+            <Text text={linkedTitle} fontSize={11} fill={cv.sub} offsetX={linkedTitle.length * 5.5} y={9} listening={false} />
           )}
         </Group>
       );
@@ -1524,11 +1528,11 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
           <Circle
             radius={node.radius ?? 6}
             fill={node.color}
-            stroke={highlight ? '#7c3aed' : '#fff'}
+            stroke={highlight ? '#7c3aed' : cv.nodeRing}
             strokeWidth={highlight ? 3 : 1.5}
           />
           {renderMarkerText(label, node)}
-          {linkedTitle && <Text text={linkedTitle} x={12} y={8} fontSize={11} fill="#8a8070" listening={false} />}
+          {linkedTitle && <Text text={linkedTitle} x={12} y={8} fontSize={11} fill={cv.sub} listening={false} />}
         </Group>
       );
     }
@@ -1573,7 +1577,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
               offsetY={h / 2}
               fill={node.color}
               cornerRadius={4}
-              stroke={highlight ? '#7c3aed' : '#fff'}
+              stroke={highlight ? '#7c3aed' : cv.nodeRing}
               strokeWidth={highlight ? 3 : 2}
             />
           ) : node.shape === 'polygon' ? (
@@ -1586,7 +1590,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
               strokeWidth={2}
             />
           ) : (
-            <Circle radius={r} fill={node.color} stroke={highlight ? '#7c3aed' : '#fff'} strokeWidth={highlight ? 3 : 2} />
+            <Circle radius={r} fill={node.color} stroke={highlight ? '#7c3aed' : cv.nodeRing} strokeWidth={highlight ? 3 : 2} />
           )}
           {isAssetIcon ? (
             renderAssetStamp(node, Math.round(r * 1.6))
@@ -1606,9 +1610,9 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
           )}
         </Group>
         {/* 标签不随旋转，保持可读 */}
-        <Text text={label} fontSize={13} fontStyle="bold" fill="#23211e" offsetX={label.length * 6.5} y={bottom + 8} listening={false} />
+        <Text text={label} fontSize={13} fontStyle="bold" fill={cv.label} offsetX={label.length * 6.5} y={bottom + 8} listening={false} />
         {linkedTitle && (
-          <Text text={linkedTitle} fontSize={11} fill="#8a8070" offsetX={linkedTitle.length * 5.5} y={bottom + 24} listening={false} />
+          <Text text={linkedTitle} fontSize={11} fill={cv.sub} offsetX={linkedTitle.length * 5.5} y={bottom + 24} listening={false} />
         )}
       </Group>
     );
@@ -1644,7 +1648,7 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
     const b = nodeById.get(conn.toNodeId);
     if (!a || !b) return null;
     const selected = selectedConnId === conn.id;
-    const color = conn.color ?? '#8a8070';
+    const color = conn.color ?? cv.sub;
     const width = conn.width ?? 2;
     const wps = conn.waypoints ?? [];
     const smooth = conn.lineType === 'curve';
@@ -1703,13 +1707,13 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
             y={-10}
             width={boxW}
             height={20}
-            fill="#fff"
+            fill={cv.panel}
             opacity={0.92}
             cornerRadius={4}
-            stroke={selected ? '#7c3aed' : '#d9d4ca'}
+            stroke={selected ? '#7c3aed' : cv.panelBorder}
             strokeWidth={1}
           />
-          <Text text={conn.label} x={-boxW / 2} y={-7} width={boxW} align="center" fontSize={12} fill="#524c44" />
+          <Text text={conn.label} x={-boxW / 2} y={-7} width={boxW} align="center" fontSize={12} fill={cv.label} />
         </Group>
         {/* 选中态拐点手柄：拖动改位置，双击删除 */}
         {selected &&
@@ -2037,15 +2041,15 @@ export function MapEditor({ bookId, onClose, aiGenerateMap }: MapEditorProps): J
                     y={0.5}
                     width={Math.max(currentMap.width - 1, 1)}
                     height={Math.max(currentMap.height - 1, 1)}
-                    fill={exportTransparent && capturing ? undefined : '#fdfcf8'}
-                    stroke="#c9c2b4"
+                    fill={exportTransparent && capturing ? undefined : cv.bg}
+                    stroke={cv.bgBorder}
                     strokeWidth={1}
                     dash={[6, 6]}
                     listening={false}
                   />
                   {!(exportTransparent && capturing) &&
                     gridLines.map((g, i) => (
-                      <Line key={i} points={g.points} stroke="#ece7dc" strokeWidth={1} listening={false} />
+                      <Line key={i} points={g.points} stroke={cv.grid} strokeWidth={1} listening={false} />
                     ))}
                   {/* 底图层（透明导出时省略） */}
                   {layers.bg && bgImage && !(exportTransparent && capturing) && (

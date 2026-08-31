@@ -4,6 +4,8 @@
  * - 非激活：透传 children，保持原三栏布局
  * - 激活：切换为 fixed 全屏沉浸容器，支持 标准/护眼/夜间 三主题、
  *   打字机滚动（光标所在块居中）、本次字数 / 时长统计，Esc 或 × 退出
+ * - P7.5：进入沉浸默认跟随全局主题（浅→标准 / 深→夜间 / 护眼→护眼），
+ *   沉浸内仍可独立切换且不回写全局
  *
  * 用法：
  * <FocusMode active={focusOn} onExit={() => setFocusOn(false)}>
@@ -13,11 +15,19 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useEditorStore } from '../../store/editorStore';
+import { currentTheme, type AppTheme } from '../../utils/theme';
 
 /** 沉浸主题 */
 type Theme = 'standard' | 'sepia' | 'night';
 
 const THEME_ORDER: Theme[] = ['standard', 'sepia', 'night'];
+
+/** P7.5：全局主题 → 沉浸默认主题 */
+const GLOBAL_TO_FOCUS: Record<AppTheme, Theme> = {
+  light: 'standard',
+  dark: 'night',
+  sepia: 'sepia'
+};
 
 /**
  * 各主题样式：
@@ -112,12 +122,12 @@ export function FocusMode({ active, onExit, children }: FocusModeProps): JSX.Ele
   const startTimeRef = useRef(0);
   const startLenRef = useRef(0);
 
-  // 进入沉浸态：重置主题 / 打字机 / 统计，记录起始时间与字数
+  // 进入沉浸态：默认主题跟随全局（P7.5），重置打字机 / 统计，记录起始时间与字数
   useEffect(() => {
     if (!active) return;
     startTimeRef.current = Date.now();
     startLenRef.current = useEditorStore.getState().editorApi?.getPlainText().length ?? 0;
-    setTheme('standard');
+    setTheme(GLOBAL_TO_FOCUS[currentTheme()]);
     setTypewriter(false);
     setElapsed(0);
     setWritten(0);

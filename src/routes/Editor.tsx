@@ -32,9 +32,11 @@ import {
   PanelRight,
   Download,
   Search,
+  Sun,
   type LucideIcon
 } from 'lucide-react';
 import { useEditorStore } from '../store/editorStore';
+import { applyTheme, currentTheme, cycleTheme, THEME_KEY, THEME_LABELS, type AppTheme } from '../utils/theme';
 import { getEffectiveShortcuts, matchesShortcut } from '../utils/keymap';
 import { NovelEditor } from '../components/editor/NovelEditor';
 import { FocusMode } from '../components/editor/FocusMode';
@@ -150,6 +152,19 @@ const MAP_AI_SYSTEM = `你是小说世界地图设计师。根据用户描述生
 export function Editor(): JSX.Element {
   const { bookId = '' } = useParams();
   const navigate = useNavigate();
+  // P7.5：顶栏主题快捷切换（全局三主题，与设置页同源）
+  const [theme, setTheme] = useState<AppTheme>(currentTheme());
+  useEffect(() => {
+    const sync = (): void => setTheme(currentTheme());
+    window.addEventListener('app-theme-change', sync);
+    return () => window.removeEventListener('app-theme-change', sync);
+  }, []);
+  const cycleGlobalTheme = (): void => {
+    const next = cycleTheme(currentTheme());
+    setTheme(next);
+    applyTheme(next);
+    void getAppContext().appSettings.set(THEME_KEY, next);
+  };
   const setBookId = useEditorStore((s) => s.setBookId);
   const loadChapters = useEditorStore((s) => s.loadChapters);
   const chapters = useEditorStore((s) => s.chapters);
@@ -644,6 +659,16 @@ export function Editor(): JSX.Element {
           dataTour="editor-topbar-focus"
           items={tools}
         />
+        {/* P7.5 全局主题快捷切换：循环 浅色→深色→护眼，与设置页「外观-主题」同源 */}
+        <button
+          type="button"
+          className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded border border-ink-200 px-2 py-1 text-ink-500 hover:bg-ink-100"
+          title={`当前主题：${THEME_LABELS[theme]}（点击切换）`}
+          onClick={cycleGlobalTheme}
+        >
+          <Sun size={13} />
+          {THEME_LABELS[theme]}
+        </button>
       </header>
 
       {/* P2.1-M7：长文会话恢复横幅 */}

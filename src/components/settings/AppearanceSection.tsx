@@ -15,6 +15,7 @@ import {
   saveFontFamily,
   saveLineHeight
 } from '../../utils/editorAppearance';
+import { applyTheme, currentTheme, THEME_KEY, THEME_OPTIONS, type AppTheme } from '../../utils/theme';
 import { getAppContext } from '../../context/app-context';
 import {
   PASTE_CLEAN_KEY,
@@ -24,10 +25,24 @@ import {
 } from '../editor/extensions/PasteHandler';
 
 export function AppearanceSection(): JSX.Element {
+  const [theme, setTheme] = useState<AppTheme>(currentTheme);
   const [fontSize, setFontSize] = useState<number>(loadFontSize);
   const [fontFamily, setFontFamily] = useState<string>(loadFontFamily);
   const [lineHeight, setLineHeight] = useState<number>(loadLineHeight);
   const [pasteClean, setPasteClean] = useState(false);
+
+  // 主题双入口同步：编辑器顶栏切换 / 设置页本段共用同一事件源
+  useEffect(() => {
+    const sync = (): void => setTheme(currentTheme());
+    window.addEventListener('app-theme-change', sync);
+    return () => window.removeEventListener('app-theme-change', sync);
+  }, []);
+
+  const changeTheme = (t: AppTheme): void => {
+    setTheme(t);
+    applyTheme(t);
+    void getAppContext().appSettings.set(THEME_KEY, t);
+  };
 
   useEffect(() => {
     const sync = (): void => {
@@ -73,7 +88,31 @@ export function AppearanceSection(): JSX.Element {
 
   return (
     <div>
-      <h2 className="mb-1 font-medium">编辑器</h2>
+      {/* P7.5 全局主题：浅色 / 深色 / 护眼（与编辑器顶栏快捷切换同源） */}
+      <h2 className="mb-1 font-medium">主题</h2>
+      <p className="mb-3 text-xs text-ink-400">
+        全局界面主题，编辑器顶栏也可快捷循环切换（两处实时同步）。
+      </p>
+      <div className="rounded border border-ink-100 bg-white px-3 py-3">
+        <div className="grid grid-cols-3 gap-1.5">
+          {THEME_OPTIONS.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              onClick={() => changeTheme(o.value)}
+              className={`rounded border px-2 py-1.5 text-sm ${
+                theme === o.value
+                  ? 'border-violet-400 bg-violet-50 font-medium text-violet-700'
+                  : 'border-ink-200 hover:bg-ink-50'
+              }`}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <h2 className="mb-1 mt-6 font-medium">编辑器</h2>
       <p className="mb-3 text-xs text-ink-400">
         正文显示字体、字号与行间距，编辑器工具栏也可快捷调整（两处同步）。
       </p>
