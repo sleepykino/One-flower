@@ -1,0 +1,119 @@
+# 多平台发布构建：Windows / macOS(Intel+Apple Silicon) / Linux
+# 触发：push 符合 v* 的 tag（如 v0.12.0）；也可手动触发（workflow_dispatch）
+# 产物：GitHub Release 草稿（releaseDraft: true，确认无误后手动发布）
+#   每个平台一个 runner，macOS 额外交叉编译 Intel 架构（arm64 宿主交叉生产 x86_64 包）
+#
+# 前置条件（本仓库已满足）：
+#   - src-tauri/icons 已提交（icon.icns / icon.ico / icon.png 等）
+#   - src-tauri/Cargo.lock 已提交（构建可复现 + Rust 缓存 key）
+#   - 未启用 Tauri Updater / 代码签名（无私钥也可构建；正式对外分发再补签名）
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write # tauri-action 创建 Release 并上传产物
+
+jobs:
+  build:
+    env:
+      # Windows 签名所用证书（base64 的 .pfx）+ 导出密码；未配置时签名步骤自动跳过
+      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            args: --target x86_64-unknown-linux-gnu
+            rustTarget: x86_64-unknown-linux-gnu
+            deps: >-
+              libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev
+              librsvg2-dev libssl-dev libdbus-1-dev build-essential curl wget file
+          - platform: macos-14
+            args: --target aarch64-apple-darwin
+            rustTarget: aarch64-apple-darwin
+          - platform: macos-14
+            args: --target x86_64-apple-darwin
+            rustTarget: x86_64-apple-darwin
+          - platform: windows-latest
+            args: --target x86_64-pc-windows-msvc
+            rustTarget: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.deps }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rustTarget }}
+
+      - name: Cache Rust build output
+        uses: actions/cache@v4
+        with:
+          path: |
+            src-tauri/target/release/.fingerprint
+            src-tauri/target/release/build
+            src-tauri/target/release/deps
+            src-tauri/target/release/*.exe
+            src-tauri/target/release/*.dll
+            src-tauri/target/release/*.dylib
+            src-tauri/target/release/*.so
+            src-tauri/target/release/*.app
+            src-tauri/target/release/bundle
+          key: ${{ runner.os }}-tauri-${{ matrix.rustTarget }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-tauri
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      # 仅 Windows 且已配置 WINDOWS_CERTIFICATE 时执行：把 .pfx 装进证书库，
+      # 之后 tauri build 会按 tauri.conf.json 的 bundle.windows.certificateThumbprint 自动签名
+      - name: Import Windows code signing certificate
+        if: matrix.platform == 'windows-latest' && env.WINDOWS_CERTIFICATE != ''
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path certificate | Out-Null
+          Set-Content -Path certificate/tempCert.txt -Value $env:WINDOWS_CERTIFICATE
+          certutil -decode certificate/tempCert.txt certificate/certificate.pfx
+          Remove-Item -Path certificate/tempCert.txt -Force
+          $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          Import-PfxCertificate -FilePath certificate/certificate.pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password | Out-Null
+          Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert | ForEach-Object { Write-Output "Imported cert thumbprint: $($_.Thumbprint)" }
+
+      - name: Build & publish with tauri-action
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS 签名（Developer ID Application）+ 公证：tauri 检测到这些变量自动签名/公证；
+          # 未配置时保持现状（不签名）。
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'One Flower ${{ github.ref_name }}'
+          releaseBody: 'See the assets to download this version and install.'
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}

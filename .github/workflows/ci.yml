@@ -1,0 +1,76 @@
+# CI：三平台质量门禁 + 前端构建验证（Windows / Linux / macOS）
+# 触发：push 到默认分支 OneFlower / 任意 PR / 手动（workflow_dispatch）
+#
+# 分工：
+#   quality-gate  — JS 侧质量门禁（typecheck + lint + 单测），三平台并行
+#   frontend-build — 前端产物构建（tsc + vite build），三平台并行
+# Rust 后端编译 / 完整打包由 release.yml 在打 tag 时执行
+# E2E 需要真实 Tauri 窗口 + WebView2，不适合纯 CI，仍在本机 `npm run tauri dev` 存活时执行
+
+name: CI
+
+on:
+  push:
+    branches: [OneFlower]
+  pull_request:
+  workflow_dispatch:
+
+# 同一次 push / PR 有新提交到达时取消旧运行，节省 Actions 分钟数
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---- JS 侧质量门禁：三平台并行 ----
+  quality-gate:
+    name: quality-gate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm run test:unit
+
+  # ---- 前端产物构建验证：三平台并行 ----
+  frontend-build:
+    name: frontend-build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Frontend build
+        run: npm run build
