@@ -38,3 +38,46 @@ export function truncateToTokenBudget(text: string, budget: number): { text: str
   }
   return { text: text.slice(0, lo) + TRUNC_MARK, truncated: true };
 }
+
+/** P7.6：目标字数 → 单次回复 maxTokens 兜底（与长文模式公式一致；cap/floor 可配置，非法回退 8192/512） */
+export function computeMaxTokens(
+  targetWords?: number,
+  limits?: { cap?: number; floor?: number }
+): number {
+  const cap = limits?.cap && limits.cap > 0 ? Math.floor(limits.cap) : 8192;
+  const floor = limits?.floor && limits.floor > 0 ? Math.floor(limits.floor) : 512;
+  if (!targetWords || !Number.isFinite(targetWords) || targetWords <= 0) return 2048;
+  return Math.min(cap, Math.max(floor, Math.round(targetWords * 2.2)));
+}
+
+/**
+ * P7.6：按 targetWords 收束文本：段界 → 句界 → 硬截 三级回退；未超目标原样返回。
+ * 容忍带 20%（2026-09-01 决策）：目标 120% 内的段界优先；句界集合（。！？…）以方案 §4.3 为准。
+ */
+export function trimToTargetWords(
+  text: string,
+  target: number
+): { text: string; trimmed: boolean } {
+  if (!text || target <= 0 || countTokens(text) <= target) return { text, trimmed: false };
+  const tol = Math.round(target * 1.2); // 容忍带：目标 120% 内的段界优先
+  const para = text.lastIndexOf('\n\n');
+  if (para > 0 && countTokens(text.slice(0, para)) <= tol) {
+    return { text: text.slice(0, para), trimmed: true };
+  }
+  const sent = Math.max(
+    text.lastIndexOf('。'),
+    text.lastIndexOf('！'),
+    text.lastIndexOf('？'),
+    text.lastIndexOf('…')
+  );
+  if (sent > 0) return { text: text.slice(0, sent + 1), trimmed: true };
+  // 硬截：二分求不超目标的最长前缀（复用 countTokens 单调性）
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi + 1) / 2);
+    if (countTokens(text.slice(0, mid)) <= target) lo = mid;
+    else hi = mid - 1;
+  }
+  return { text: text.slice(0, lo), trimmed: true };
+}

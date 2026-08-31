@@ -193,6 +193,8 @@ export interface PerspectiveRewriteParams {
   tone?: string; // 风格调整提示
   signal?: AbortSignal;
   maxTokens?: number;
+  /** P7.6：本次生成目标字数（user 注入「篇幅要求」行 + maxTokens 动态换算） */
+  targetWords?: number;
   temperature?: number;
 }
 

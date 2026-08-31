@@ -76,8 +76,10 @@ export interface ContinueParams {
   characterBudget?: number;
   /** 三路检索 query 覆盖：默认取 currentContent 末尾；长文模式下并入拍文本/大纲以提升召回 */
   ragQuery?: string;
-  /** 单次回复的 token 上限（约等于中文字数） */
+  /** 单次回复的 token 上限（约等于中文字数）；P7.6：显式 maxTokens 优先于 targetWords 换算（长文模式直传） */
   maxTokens?: number;
+  /** P7.6：本次生成目标字数（提示词注入「篇幅要求」+ maxTokens 动态换算 + 流式优雅停） */
+  targetWords?: number;
   /** 采样温度，默认 0.85 */
   temperature?: number;
   signal?: AbortSignal;
@@ -91,8 +93,10 @@ export interface RewriteParams {
   recentChapters: ChapterContent[];
   /** M2: 当前文档的引用标记 */
   aiReferences?: AiReference[];
-  /** 单次回复的 token 上限（约等于中文字数） */
+  /** 单次回复的 token 上限（约等于中文字数）；P7.6：显式 maxTokens 优先于 targetWords 换算 */
   maxTokens?: number;
+  /** P7.6：本次生成目标字数（提示词注入「篇幅要求」+ maxTokens 动态换算 + 流式优雅停） */
+  targetWords?: number;
   /** 采样温度，默认 0.7 */
   temperature?: number;
   signal?: AbortSignal;
@@ -106,8 +110,10 @@ export interface DialogueParams {
   recentChapters: ChapterContent[];
   /** M2: 当前文档的引用标记 */
   aiReferences?: AiReference[];
-  /** 单次回复的 token 上限（约等于中文字数），默认 4096 */
+  /** 单次回复的 token 上限（约等于中文字数），默认 4096；P7.6：显式 maxTokens 优先于 targetWords 换算 */
   maxTokens?: number;
+  /** P7.6：本次生成目标字数（提示词注入「篇幅要求」+ maxTokens 动态换算 + 流式优雅停） */
+  targetWords?: number;
   /** 采样温度，默认 0.9 */
   temperature?: number;
   signal?: AbortSignal;

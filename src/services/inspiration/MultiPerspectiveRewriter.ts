@@ -11,6 +11,8 @@ import type { WriteQueue } from '../../db/WriteQueue';
 import type { LLMProvider, ChatMessage, ChatChunk } from '../ai/providers/LLMProvider';
 import { resolveProviderForFeature, resolveModelNameForFeature } from '../ai/providerResolver';
 import type { GenerationContextService } from '../ai/GenerationContext';
+import type { AppSettingsService } from '../settings/AppSettingsService';
+import { computeMaxTokens } from '../../utils/tokens';
 import { rowToCharacter } from '../character/CharacterService';
 import type { PerspectiveRewriteParams, AvailablePerspective } from './types';
 
@@ -48,19 +50,23 @@ export class MultiPerspectiveRewriter {
   private providerFactory: (configId: string) => Promise<LLMProvider>;
   /** 批次11-4：不经 orchestrator 的调用统一补充全局提示词 + 文风 Skill */
   private generation: GenerationContextService;
+  /** P7.6：生成安全网限值读取（ai.gen.maxTokensCap/Floor；未注入用缺省 8192/512） */
+  private appSettings?: AppSettingsService;
 
   constructor(
     bridge: NativeBridge,
     db: Database,
     wq: WriteQueue,
     providerFactory: (configId: string) => Promise<LLMProvider>,
-    generation: GenerationContextService
+    generation: GenerationContextService,
+    appSettings?: AppSettingsService
   ) {
     this.bridge = bridge;
     this.db = db;
     this.wq = wq;
     this.providerFactory = providerFactory;
     this.generation = generation;
+    this.appSettings = appSettings;
   }
 
   /** 列出可用视角：本书全部角色卡 + 固定非角色视角（不做章节角色出现分析，简化） */
@@ -117,6 +123,10 @@ export class MultiPerspectiveRewriter {
     const systemParts = [SYSTEM_BASE, `【目标视角】\n${perspectiveInstruction}`, ...extras];
 
     const userParts = [`【待改写的选中文本】\n${params.selectedText}`];
+    // P7.6：篇幅要求行（置于选中文本之后、改写要求之前）
+    if (params.targetWords && params.targetWords > 0) {
+      userParts.push(`【篇幅要求】改写后约 ${params.targetWords} 字，写到自然段落收束即止。`);
+    }
     if (params.tone?.trim()) {
       userParts.push(`【改写要求】\n${params.tone.trim()}`);
     }
@@ -126,12 +136,33 @@ export class MultiPerspectiveRewriter {
       { role: 'user', content: userParts.join('\n\n') }
     ];
 
+    // P7.6：显式 maxTokens 优先；否则按 targetWords 换算安全网兜底
+    const limits = params.maxTokens !== undefined ? undefined : await this.genLimits();
     yield* provider.stream(messages, {
       model,
       signal: params.signal,
-      maxTokens: params.maxTokens ?? 4096,
+      maxTokens: params.maxTokens ?? computeMaxTokens(params.targetWords, limits),
       temperature: params.temperature ?? 0.7
     });
+  }
+
+  /** P7.6：读取安全网限值（未注入 / 读失败 / 非法值由 computeMaxTokens 回退缺省 8192/512） */
+  private async genLimits(): Promise<{ cap?: number; floor?: number } | undefined> {
+    if (!this.appSettings) return undefined;
+    try {
+      const num = (v: string | null): number | undefined => {
+        if (v === null || v.trim() === '') return undefined;
+        const n = Number(v);
+        return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+      };
+      return {
+        cap: num(await this.appSettings.get('ai.gen.maxTokensCap')),
+        floor: num(await this.appSettings.get('ai.gen.maxTokensFloor'))
+      };
+    } catch (e) {
+      console.warn('[多视角] 读取生成安全网限值失败，使用缺省 8192/512:', e);
+      return undefined;
+    }
   }
 
   /** 角色卡 JSON 转可读文本（过滤空字段） */

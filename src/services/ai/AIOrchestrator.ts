@@ -18,6 +18,8 @@ import { resolveProviderConfigIdForFeature } from './providerResolver';
 import type { SummaryService } from '../summary/SummaryService';
 import type { WorldbookRAGService } from '../worldbook/WorldbookRAGService';
 import type { FullRAGService, SegmentRecall } from '../rag/FullRAGService';
+import type { AppSettingsService } from '../settings/AppSettingsService';
+import { computeMaxTokens } from '../../utils/tokens';
 import type {
   AiReference,
   Character,
@@ -39,6 +41,8 @@ export interface OrchestratorDeps {
   ragService?: WorldbookRAGService;
   /** P2：全量 RAG（三路检索），可用时替代 ragService 单路 */
   fullRagService?: FullRAGService;
+  /** P7.6：生成安全网限值读取（ai.gen.maxTokensCap/Floor；未注入时用缺省 8192/512） */
+  appSettings?: AppSettingsService;
 }
 
 /** 最近一次 AI 调用的上下文快照（ContextPanel 展示用） */
@@ -184,6 +188,29 @@ export class AIOrchestrator {
     // G4：四模式 + 错字检查统一记账（fire-and-forget，不影响生成主路径）
     const usage = getSharedUsageService();
     return usage ? createRecordingProvider(raw, { bookId, feature, configId }, usage) : raw;
+  }
+
+  /**
+   * P7.6：读取生成安全网限值（设置页可配的 ai.gen.maxTokensCap/Floor）。
+   * 未注入 / 读失败 / 非法值返回 undefined 字段，由 computeMaxTokens 回退缺省 8192/512。
+   */
+  private async genLimits(): Promise<{ cap?: number; floor?: number } | undefined> {
+    if (!this.deps.appSettings) return undefined;
+    try {
+      const [capRaw, floorRaw] = await Promise.all([
+        this.deps.appSettings.get('ai.gen.maxTokensCap'),
+        this.deps.appSettings.get('ai.gen.maxTokensFloor')
+      ]);
+      const num = (v: string | null): number | undefined => {
+        if (v === null || v.trim() === '') return undefined;
+        const n = Number(v);
+        return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+      };
+      return { cap: num(capRaw), floor: num(floorRaw) };
+    } catch (e) {
+      console.warn('[AI] 读取生成安全网限值失败，使用缺省 8192/512:', e);
+      return undefined;
+    }
   }
 
   /**
@@ -442,6 +469,7 @@ export class AIOrchestrator {
       segments,
       recentChapters,
       userInstruction: params.requirement,
+      targetWords: params.targetWords,
       currentChapter: {
         id: params.chapterId,
         title: '',
@@ -457,10 +485,12 @@ export class AIOrchestrator {
     const model = await this.modelOf(params.bookId, 'continue');
     this.recordContext(params.bookId, ctx, model);
     const messages = this.promptAssembler.assemble(ctx);
+    // P7.6：显式 maxTokens 优先（长文模式直传，行为零变化）；否则按 targetWords 换算安全网兜底
+    const limits = params.maxTokens !== undefined ? undefined : await this.genLimits();
     yield* provider.stream(messages, {
       model,
       signal: params.signal,
-      maxTokens: params.maxTokens ?? 4096,
+      maxTokens: params.maxTokens ?? computeMaxTokens(params.targetWords, limits),
       temperature: params.temperature ?? 0.85
     });
   }
@@ -476,16 +506,19 @@ export class AIOrchestrator {
       characters: [],
       recentChapters: params.recentChapters,
       selectedText: params.selectedText,
-      userInstruction: params.instruction
+      userInstruction: params.instruction,
+      targetWords: params.targetWords
     };
     await this.applyCtxExtras(ctx, params.bookId, params.aiReferences);
     const model = await this.modelOf(params.bookId, 'rewrite');
     this.recordContext(params.bookId, ctx, model);
     const messages = this.promptAssembler.assemble(ctx);
+    // P7.6：显式 maxTokens 优先；否则按 targetWords 换算安全网兜底
+    const limits = params.maxTokens !== undefined ? undefined : await this.genLimits();
     yield* provider.stream(messages, {
       model,
       signal: params.signal,
-      maxTokens: params.maxTokens ?? 4096,
+      maxTokens: params.maxTokens ?? computeMaxTokens(params.targetWords, limits),
       temperature: params.temperature ?? 0.7
     });
   }
@@ -512,16 +545,19 @@ export class AIOrchestrator {
       summaryChain,
       segments,
       recentChapters,
-      userInstruction: params.scene
+      userInstruction: params.scene,
+      targetWords: params.targetWords
     };
     await this.applyCtxExtras(ctx, params.bookId, params.aiReferences);
     const model = await this.modelOf(params.bookId, 'dialogue');
     this.recordContext(params.bookId, ctx, model);
     const messages = this.promptAssembler.assemble(ctx);
+    // P7.6：显式 maxTokens 优先；否则按 targetWords 换算安全网兜底
+    const limits = params.maxTokens !== undefined ? undefined : await this.genLimits();
     yield* provider.stream(messages, {
       model,
       signal: params.signal,
-      maxTokens: params.maxTokens ?? 4096,
+      maxTokens: params.maxTokens ?? computeMaxTokens(params.targetWords, limits),
       temperature: params.temperature ?? 0.9
     });
   }

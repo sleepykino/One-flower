@@ -248,7 +248,9 @@ export async function initApp(): Promise<AppContext> {
   const orchestrator = new AIOrchestrator(providerFactory, skillLoader, promptAssembler, tauriBridge, {
     summaryService,
     ragService,
-    fullRagService
+    fullRagService,
+    // P7.6：生成安全网限值（ai.gen.maxTokensCap/Floor）读取
+    appSettings
   });
   // P2.1-M1：全局提示词（四模式统一注入 system 段，优先级高于 Skill）
   const globalPrompts = new GlobalPromptService(appSettings);
@@ -292,7 +294,8 @@ export async function initApp(): Promise<AppContext> {
   const dailyCardService = new DailyInspirationService(tauriBridge, db, wq, providerFactory, appSettings, generationContext);
   const interviewService = new CharacterInterviewService(tauriBridge, db, wq, providerFactory, characterService, generationContext);
   const whatIfSimulator = new WhatIfSimulator(tauriBridge, db, wq, providerFactory, generationContext);
-  const multiPerspectiveRewriter = new MultiPerspectiveRewriter(tauriBridge, db, wq, providerFactory, generationContext);
+  // P7.6：多视角重写注入 appSettings（安全网限值读取）
+  const multiPerspectiveRewriter = new MultiPerspectiveRewriter(tauriBridge, db, wq, providerFactory, generationContext, appSettings);
 
   // P3 图片能力：资产服务 + 提示词转写（生图 Provider 在组件侧经 resolveImageProvider 解析）
   const imageAssetService = new ImageAssetService(tauriBridge, db, wq);

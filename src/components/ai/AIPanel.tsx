@@ -8,11 +8,13 @@ import { BookOpen } from 'lucide-react';
 import { getAppContext } from '../../context/app-context';
 import { toast } from '../common/toast';
 import { useEditorStore } from '../../store/editorStore';
+import type { EditorApi } from '../../store/editorStore';
 import { useAIStore } from '../../store/aiStore';
+import { countTokens, trimToTargetWords } from '../../utils/tokens';
 import type { AIMode } from '../../services/skill/types';
 import type { ChapterBeat } from '../../services/chapter/ChapterService';
 import type { AiReference } from '../../services/ai/types';
-import type { ChatMessage } from '../../services/ai/providers/LLMProvider';
+import type { ChatChunk, ChatMessage } from '../../services/ai/providers/LLMProvider';
 import type { Character } from '../../types';
 import { ConsistencyReportView } from './ConsistencyReport';
 import { TypoReportView } from './TypoReportView';
@@ -65,8 +67,8 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
   const [comparePreview, setComparePreview] = useState<'prev' | 'current'>('current');
   // P2.1-M7：长文模式视图（第 5 tab；rail 'longform' 入口经 initialTab 打开）
   const [longform, setLongform] = useState(initialTab === 'longform');
-  // 生成参数：单次回复 token 上限（约等于中文字数）与采样温度
-  const [maxTokens, setMaxTokens] = useState(2048);
+  // 生成参数：P7.6 目标字数（档位 + 自由输入，持久化 ai.targetWords）与采样温度
+  const [targetWords, setTargetWords] = useState(1000);
   const [temperature, setTemperature] = useState('0.8');
   // G3：候选数（续写 / 改写；1 = 单候选与现状一致，>1 逐条生成后挑选）
   const [candidateCount, setCandidateCount] = useState(1);
@@ -100,8 +102,9 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
   useEffect(() => {
     refreshDirectiveHints();
   }, [bookId]);
-  const tokenValue = (): number | undefined =>
-    Number.isFinite(maxTokens) && maxTokens > 0 ? Math.floor(maxTokens) : undefined;
+  // P7.6：有效值过滤（>= 100 的整数；非法不传 = 缺省行为：无注入、2048 兜底）
+  const targetWordsValue = (): number | undefined =>
+    Number.isFinite(targetWords) && targetWords >= 100 ? Math.floor(targetWords) : undefined;
 
   useEffect(() => {
     void getAppContext()
@@ -141,6 +144,25 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
       .then((v) => setSessionEnabled(v === 'true'))
       .catch(() => setSessionEnabled(false));
   }, []);
+
+  // P7.6：读取持久化目标字数（>= 100 的整数，非法回退 1000）
+  useEffect(() => {
+    void getAppContext()
+      .appSettings.get('ai.targetWords')
+      .then((v) => {
+        const n = v === null ? NaN : parseInt(v, 10);
+        setTargetWords(Number.isFinite(n) && n >= 100 ? n : 1000);
+      })
+      .catch(() => setTargetWords(1000));
+  }, []);
+
+  /** P7.6：设定目标字数并持久化（档位 chips 点击 / 数字输入 onBlur；十进制字符串沿用 ai.session.enabled 约定） */
+  const applyTargetWords = (n: number): void => {
+    setTargetWords(n);
+    void getAppContext()
+      .appSettings.set('ai.targetWords', String(n))
+      .catch(() => undefined);
+  };
 
   const streaming = phase === 'streaming';
   const deciding = phase === 'deciding';
@@ -203,6 +225,37 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
   };
 
   /**
+   * P7.6：消费一条生成流；targetWords 有效时启用优雅停（累计达标即停止消费，按段/句边界收束回填）。
+   * 返回是否触发优雅停（仅内部信息，不改 aborted 语义与 finishStream 路径；手动停止与 provider 自然结束不受影响）。
+   */
+  const consumeStream = async (
+    iterable: AsyncIterable<ChatChunk>,
+    target: number | undefined,
+    api: EditorApi
+  ): Promise<boolean> => {
+    let buffer = '';
+    let stopped = false;
+    for await (const chunk of iterable) {
+      if (!chunk.delta) continue;
+      buffer += chunk.delta;
+      useAIStore.getState().appendText(chunk.delta);
+      api.appendAITemp(chunk.delta);
+      if (target && target > 0 && countTokens(buffer) >= target) {
+        stopped = true;
+        break; // 停止消费：剩余流与底层连接由 provider abort 语义之外的自然放弃处理
+      }
+    }
+    if (stopped) {
+      const fit = trimToTargetWords(buffer, target!);
+      if (fit.text !== buffer) {
+        useAIStore.getState().setText(fit.text); // store 与临时节点同步回填
+        api.setAITempText(fit.text);
+      }
+    }
+    return stopped;
+  };
+
+  /**
    * 生成一条候选：临时节点承载输出；hook block 命中时带反馈自动重试一次。
    * 不落 store 终态（phase 由调用方统一 settle），返回文本与中断/错误标记。
    * P7.3b：会话块续写原地重写同一节点（setAITempText 复用），并按 R2 组装请求历史；
@@ -248,7 +301,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
             history,
             aiReferences,
             beat: beatDirect ? pendingBeat : undefined,
-            maxTokens: tokenValue(),
+            targetWords: targetWordsValue(),
             temperature: tempValue(),
             signal: controller.signal
           });
@@ -264,7 +317,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
               perspective: perspective.label,
               characterId: perspective.characterId,
               tone: [instruction.trim(), feedback].filter(Boolean).join('\n') || undefined,
-              maxTokens: tokenValue(),
+              targetWords: targetWordsValue(),
               temperature: tempValue(),
               signal: controller.signal
             });
@@ -276,7 +329,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
             instruction: [instruction.trim(), feedback].filter(Boolean).join('\n'),
             recentChapters: recent,
             aiReferences,
-            maxTokens: tokenValue(),
+            targetWords: targetWordsValue(),
             temperature: tempValue(),
             signal: controller.signal
           });
@@ -288,7 +341,7 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
           characterIds: selectedCharIds,
           recentChapters: recent,
           aiReferences,
-          maxTokens: tokenValue(),
+          targetWords: targetWordsValue(),
           temperature: tempValue(),
           signal: controller.signal
         });
@@ -305,12 +358,8 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
         }
         if (attempt > 0) useAIStore.getState().setText('');
         const iterable = makeIterable(feedback);
-        for await (const chunk of iterable) {
-          if (chunk.delta) {
-            useAIStore.getState().appendText(chunk.delta);
-            api.appendAITemp(chunk.delta);
-          }
-        }
+        // P7.6：优雅停接入（hook 重试 attempt 与多候选每次迭代从空 buffer 重新计数）
+        await consumeStream(iterable, targetWordsValue(), api);
         // hook.md 后处理（block 命中且可重试时带反馈再来一次）
         const blocked = await applyHooks();
         if (blocked && attempt === 0 && kind !== 'dialogue') {
@@ -463,16 +512,12 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
         recentChapters: recent,
         selectedCharacterIds: selectedCharIds,
         requirement,
-        maxTokens: tokenValue(),
+        // P7.6：补完豁免——不传 targetWords（无篇幅注入与停机目标；maxTokens 由服务层缺省 2048 兜底）
         temperature: tempValue(),
         signal: controller.signal
       });
-      for await (const chunk of iterable) {
-        if (chunk.delta) {
-          useAIStore.getState().appendText(chunk.delta);
-          api.appendAITemp(chunk.delta);
-        }
-      }
+      // P7.6：补完只保流式体验，target 传 undefined（不设停机目标）
+      await consumeStream(iterable, undefined, api);
       // hook.md 后处理（补完场景只做替换与提醒，不再重试）
       await applyHooks();
       api.finishAITemp();
@@ -725,8 +770,9 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
               className="mt-2 mb-1 w-full resize-none rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400"
             />
             <GenParams
-              maxTokens={maxTokens}
-              setMaxTokens={setMaxTokens}
+              targetWords={targetWords}
+              setTargetWords={setTargetWords}
+              commitTargetWords={applyTargetWords}
               temperature={temperature}
               setTemperature={setTemperature}
             />
@@ -786,8 +832,9 @@ export function AIPanel({ bookId, initialTab }: { bookId: string; initialTab?: '
               className="mb-2 w-full resize-none rounded border border-ink-200 px-2 py-1 text-sm outline-none focus:border-violet-400"
             />
             <GenParams
-              maxTokens={maxTokens}
-              setMaxTokens={setMaxTokens}
+              targetWords={targetWords}
+              setTargetWords={setTargetWords}
+              commitTargetWords={applyTargetWords}
               temperature={temperature}
               setTemperature={setTemperature}
             />
@@ -1179,30 +1226,52 @@ function CandidatePicker({
   );
 }
 
+/** P7.6：生成参数——目标字数（档位 chips + 自由输入）与温度；chips 点击与输入 onBlur 持久化 */
 function GenParams({
-  maxTokens,
-  setMaxTokens,
+  targetWords,
+  setTargetWords,
+  commitTargetWords,
   temperature,
   setTemperature
 }: {
-  maxTokens: number;
-  setMaxTokens: (v: number) => void;
+  targetWords: number;
+  setTargetWords: (v: number) => void;
+  commitTargetWords: (v: number) => void;
   temperature: string;
   setTemperature: (v: string) => void;
 }): JSX.Element {
+  const chips = [500, 1000, 2000, 3000];
   return (
-    <div className="mt-3 flex items-center gap-2 text-xs text-ink-600">
-      <label className="flex items-center gap-1">
-        字数上限
-        <input
-          type="number"
-          min={1}
-          step={128}
-          value={maxTokens}
-          onChange={(e) => setMaxTokens(parseInt(e.target.value, 10) || 0)}
-          className="w-20 rounded border border-ink-200 px-1.5 py-1 outline-none focus:border-violet-400"
-        />
-      </label>
+    <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-ink-600">
+      <span title="单次生成目标字数；整章生成请用长文模式">目标字数</span>
+      <div className="flex gap-1">
+        {chips.map((g) => (
+          <button
+            key={g}
+            type="button"
+            onClick={() => commitTargetWords(g)}
+            className={`rounded-full px-2 py-0.5 ${
+              targetWords === g
+                ? 'bg-violet-600 text-white'
+                : 'bg-ink-100 text-ink-600 hover:bg-ink-200'
+            }`}
+          >
+            {g}
+          </button>
+        ))}
+      </div>
+      <input
+        type="number"
+        min={100}
+        step={100}
+        value={targetWords}
+        onChange={(e) => setTargetWords(parseInt(e.target.value, 10) || 0)}
+        onBlur={() => {
+          if (Number.isFinite(targetWords) && targetWords > 0) commitTargetWords(targetWords);
+        }}
+        title="单次生成目标字数；整章生成请用长文模式"
+        className="w-20 rounded border border-ink-200 px-1.5 py-1 outline-none focus:border-violet-400"
+      />
       <label className="flex items-center gap-1" title="0 = 严谨确定，2 = 发散大胆">
         温度
         <input

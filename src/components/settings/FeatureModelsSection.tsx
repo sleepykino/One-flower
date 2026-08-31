@@ -30,6 +30,9 @@ export function FeatureModelsSection(): JSX.Element {
   const [bindings, setBindings] = useState<Partial<Record<FeatureKey, string>>>({});
   const [embedModel, setEmbedModel] = useState('');
   const [savedAt, setSavedAt] = useState(0);
+  // P7.6：生成安全网（单次回复 token 兜底上下限，设置页可配；字符串存取沿用 app_settings 约定）
+  const [genCap, setGenCap] = useState('8192');
+  const [genFloor, setGenFloor] = useState('512');
 
   useEffect(() => {
     void loadConfigs();
@@ -37,9 +40,16 @@ export function FeatureModelsSection(): JSX.Element {
 
   useEffect(() => {
     void (async () => {
-      const { modelRouting } = getAppContext();
+      const { modelRouting, appSettings } = getAppContext();
       setBindings(await modelRouting.getBindings());
       setEmbedModel(await modelRouting.getEmbeddingModel());
+      // P7.6：读取安全网限值（非法值交由读侧兜底，此处原样展示）
+      const [cap, floor] = await Promise.all([
+        appSettings.get('ai.gen.maxTokensCap'),
+        appSettings.get('ai.gen.maxTokensFloor')
+      ]);
+      if (cap !== null) setGenCap(cap);
+      if (floor !== null) setGenFloor(floor);
     })();
   }, []);
 
@@ -203,6 +213,54 @@ export function FeatureModelsSection(): JSX.Element {
       <div className="mt-1 flex items-center gap-2 text-[11px] text-ink-400">
         {savedAt > 0 && <span className="text-emerald-600">已保存 ✓</span>}
         <span>说明：Anthropic 无 embeddings 接口，向量嵌入请选 OpenAI 兼容或 Google 配置；AI 上下文面板会显示每次调用实际使用的模型。</span>
+      </div>
+
+      {/* P7.6：生成安全网（高级项）——AI 单次回复 token 兜底上下限，目标字数 ×2.2 后被夹在此区间 */}
+      <div className="mt-6 border-t border-ink-100 pt-4">
+        <div className="mb-1 text-xs font-medium text-ink-700">生成安全网</div>
+        <p className="mb-2 text-[11px] leading-4 text-ink-400">
+          AI 单次回复的 token 兜底上下限，目标字数 ×2.2 后被夹在此区间；一般无需修改
+        </p>
+        <div className="flex items-center gap-4 text-xs text-ink-600">
+          <label className="flex items-center gap-1">
+            单次回复上限
+            <input
+              type="number"
+              min={256}
+              step={256}
+              value={genCap}
+              onChange={(e) => setGenCap(e.target.value)}
+              onBlur={() =>
+                void getAppContext()
+                  .appSettings.set('ai.gen.maxTokensCap', genCap)
+                  .then(() => setSavedAt(Date.now()))
+                  .catch((e) =>
+                    void toast.error(`保存失败：${e instanceof Error ? e.message : String(e)}`)
+                  )
+              }
+              className="w-24 rounded border border-ink-200 px-1.5 py-1 outline-none focus:border-violet-400"
+            />
+          </label>
+          <label className="flex items-center gap-1">
+            单次回复下限
+            <input
+              type="number"
+              min={256}
+              step={256}
+              value={genFloor}
+              onChange={(e) => setGenFloor(e.target.value)}
+              onBlur={() =>
+                void getAppContext()
+                  .appSettings.set('ai.gen.maxTokensFloor', genFloor)
+                  .then(() => setSavedAt(Date.now()))
+                  .catch((e) =>
+                    void toast.error(`保存失败：${e instanceof Error ? e.message : String(e)}`)
+                  )
+              }
+              className="w-24 rounded border border-ink-200 px-1.5 py-1 outline-none focus:border-violet-400"
+            />
+          </label>
+        </div>
       </div>
     </div>
   );

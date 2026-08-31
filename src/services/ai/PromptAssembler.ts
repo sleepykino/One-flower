@@ -51,6 +51,8 @@ export interface PromptContext {
   history?: ChatMessage[];
   /** P7.3-Phase 0：历史 token 预算覆盖（默认 budget.history） */
   historyBudget?: number;
+  /** P7.6：本次生成目标字数（>0 且非 check 模式时，system 注入「篇幅要求」小节） */
+  targetWords?: number;
 }
 
 export interface TokenBudget {
@@ -101,6 +103,22 @@ const MODE_TASK_INSTRUCTION: Record<AIMode, string> = {
   dialogue: '你是一位资深小说作者。请根据场景与参与角色，创作符合人物性格的对白。直接输出对白正文（可含必要的动作/神态描写），不要任何解释。',
   check: '你是一位严谨的小说一致性审校。请对比章节正文与角色卡、世界书设定，找出矛盾之处。仅输出 JSON。'
 };
+
+/**
+ * P7.6：篇幅要求小节（固定一行，不占 userInstruction 预算；不设独立 token 预算段）。
+ * 仅 targetWords > 0 且非 check 模式注入；分模式首句措辞：continue=本次输出 / rewrite=改写后篇幅 / dialogue=对白篇幅。
+ * 供 assemble 注入与 inspect 统计共用（保持调试输出一致）。
+ */
+export function targetWordsSectionText(targetWords: number | undefined, mode: AIMode): string | null {
+  if (!targetWords || targetWords <= 0 || mode === 'check') return null;
+  const first =
+    mode === 'rewrite'
+      ? `改写后篇幅约 ${targetWords} 字`
+      : mode === 'dialogue'
+        ? `对白篇幅约 ${targetWords} 字`
+        : `本次输出约 ${targetWords} 字`;
+  return `## 篇幅要求\n${first}，写到自然段落收束即止；宁短勿凑，不得为凑字重复注水。`;
+}
 
 /**
  * P7.3-Phase 0：多轮历史后进优先截断——保留最近 N 条、丢弃最旧，保证最后一条历史一定在内
@@ -155,6 +173,10 @@ export class PromptAssembler {
     // ---- system：任务指令（system 预算内）----
     const task = MODE_TASK_INSTRUCTION[ctx.mode];
     systemParts.push(task);
+
+    // ---- system：P7.6 篇幅要求（任务指令之后；targetWords > 0 且非 check 时注入）----
+    const twSection = targetWordsSectionText(ctx.targetWords, ctx.mode);
+    if (twSection) systemParts.push(twSection);
 
     // ---- system：项目级 agents.md（最高优先级，高于全局提示词与任何 Skill 指令）----
     if (ctx.projectDirective && ctx.projectDirective.trim() !== '') {
@@ -406,6 +428,9 @@ export class PromptAssembler {
       tokens: keptHistory.reduce((sum, m) => sum + countTokens(m.content), 0),
       truncated: keptHistory.length < (ctx.history?.length ?? 0)
     });
+    // P7.6：篇幅要求小节实际注入的 token（未注入时为 0，保持调试输出完整）
+    const twSection = targetWordsSectionText(ctx.targetWords, ctx.mode);
+    out.push({ part: 'targetWords', tokens: twSection ? countTokens(twSection) : 0, truncated: false });
     return out;
   }
 }
