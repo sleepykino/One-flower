@@ -6,6 +6,10 @@
 #   frontend-build — 前端产物构建（tsc + vite build），三平台并行
 # Rust 后端编译 / 完整打包由 release.yml 在打 tag 时执行
 # E2E 需要真实 Tauri 窗口 + WebView2，不适合纯 CI，仍在本机 `npm run tauri dev` 存活时执行
+#
+# 注意：npm 版本必须与本地一致（npm@11.6.1）。本地 lock 由 npm 11 生成，
+#   npm 10 严格校验会报 "Missing: esbuild@0.28.2 from lock file"（npm 已知 bug，见
+#   https://github.com/npm/cli/issues/8805）。两 job 均在 npm ci 前钉定版本。
 
 name: CI
 
@@ -39,6 +43,10 @@ jobs:
           node-version: 20
           cache: npm
 
+      # 与本地 npm 版本对齐，避免 npm 10/11 对 lock 校验不一致导致 npm ci 失败
+      - name: Pin npm version
+        run: npm install -g npm@11.6.1
+
       - name: Install dependencies
         run: npm ci
 
@@ -68,6 +76,10 @@ jobs:
         with:
           node-version: 20
           cache: npm
+
+      # 与本地 npm 版本对齐，避免 npm 10/11 对 lock 校验不一致导致 npm ci 失败
+      - name: Pin npm version
+        run: npm install -g npm@11.6.1
 
       - name: Install dependencies
         run: npm ci

@@ -6,6 +6,7 @@
 # 前置条件（本仓库已满足）：
 #   - src-tauri/icons 已提交（icon.icns / icon.ico / icon.png 等）
 #   - src-tauri/Cargo.lock 已提交（构建可复现 + Rust 缓存 key）
+#   - npm 版本钉定 npm@11.6.1（与本地一致，规避 npm 10/11 对 lock 校验不一致，同 ci.yml，见 npm/cli#8805）
 #   - 未启用 Tauri Updater / 代码签名（无私钥也可构建；正式对外分发再补签名）
 
 name: Release
@@ -59,6 +60,10 @@ jobs:
         with:
           node-version: 20
           cache: npm
+
+      # 与本地 npm 版本对齐，避免 npm 10/11 对 lock 校验不一致导致 npm ci 失败（同 ci.yml）
+      - name: Pin npm version
+        run: npm install -g npm@11.6.1
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
