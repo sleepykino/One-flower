@@ -1,5 +1,5 @@
 # CI：三平台质量门禁 + 前端构建验证（Windows / Linux / macOS）
-# 触发：push 到默认分支 OneFlower / 任意 PR / 手动（workflow_dispatch）
+# 触发：仅手动 —— Actions 页面 → CI → Run workflow（不再随 push / PR 自动执行）
 #
 # 分工：
 #   quality-gate  — JS 侧质量门禁（typecheck + lint + 单测），三平台并行
@@ -14,9 +14,6 @@
 name: CI
 
 on:
-  push:
-    branches: [OneFlower]
-  pull_request:
   workflow_dispatch:
 
 # 同一次 push / PR 有新提交到达时取消旧运行，节省 Actions 分钟数

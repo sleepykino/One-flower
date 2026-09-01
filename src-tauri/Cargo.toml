@@ -2,7 +2,7 @@
 name = "oneflower"
 version = "0.12.0"
 description = "One Flower"
-edition = "2026"
+edition = "2021"
 
 [lib]
 name = "oneflower_lib"

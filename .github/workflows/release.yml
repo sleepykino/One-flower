@@ -1,5 +1,7 @@
 # 多平台发布构建：Windows / macOS(Intel+Apple Silicon) / Linux
-# 触发：push 符合 v* 的 tag（如 v0.12.0）；也可手动触发（workflow_dispatch）
+# 触发：仅手动 —— Actions 页面 → Release → Run workflow
+#   重要：运行时必须把 ref 切到目标 v* tag（页面上 Run workflow 按钮旁的分支选择器选 tag），
+#   Release 名与 tag 取自 github.ref_name；从分支运行会被 Verify tag ref 步骤拦截。
 # 产物：GitHub Release 草稿（releaseDraft: true，确认无误后手动发布）
 #   每个平台一个 runner，macOS 额外交叉编译 Intel 架构（arm64 宿主交叉生产 x86_64 包）
 #
@@ -12,8 +14,6 @@
 name: Release
 
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -46,6 +46,15 @@ jobs:
             rustTarget: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.platform }}
     steps:
+      # 手动触发时必须从 v* tag 运行：否则 github.ref_name 是分支名，
+      # tauri-action 会创建错误的 Release 名与 tag。从分支运行直接失败提示。
+      - name: Verify tag ref
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          echo "当前运行 ref 为 '${{ github.ref }}'，不是 v* tag。"
+          echo "请在 Actions 页面 Run workflow 时，用按钮旁的选择器切换到目标 v* tag 后再运行。"
+          exit 1
+
       - name: Checkout
         uses: actions/checkout@v4
 
