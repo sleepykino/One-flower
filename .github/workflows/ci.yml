@@ -40,7 +40,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       # 与本地 npm 版本对齐，避免 npm 10/11 对 lock 校验不一致导致 npm ci 失败
@@ -74,7 +74,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       # 与本地 npm 版本对齐，避免 npm 10/11 对 lock 校验不一致导致 npm ci 失败
