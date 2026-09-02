@@ -503,8 +503,8 @@ export class ImportService {
       const chapterId = oldToNewChapterId.get(String(ls.chapter_id ?? ''));
       if (!chapterId) continue;
       stmts.push({
-        sql: `INSERT INTO longform_sessions (id, book_id, chapter_id, status, beats, current_beat_index, used_tokens, estimated_tokens, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        sql: `INSERT INTO longform_sessions (id, book_id, chapter_id, status, beats, current_beat_index, used_tokens, estimated_tokens, hints, character_ids, seams, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         params: [
           crypto.randomUUID(),
           newBookId,
@@ -514,6 +514,9 @@ export class ImportService {
           Number(ls.current_beat_index ?? 0),
           Number(ls.used_tokens ?? 0),
           Number(ls.estimated_tokens ?? 0),
+          (ls.hints as string) ?? null,
+          (ls.character_ids as string) ?? null,
+          (ls.seams as string) ?? null,
           Number(ls.created_at ?? now),
           now
         ]
