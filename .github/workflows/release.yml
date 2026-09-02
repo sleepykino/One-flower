@@ -112,18 +112,49 @@ jobs:
           Import-PfxCertificate -FilePath certificate/certificate.pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password | Out-Null
           Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert | ForEach-Object { Write-Output "Imported cert thumbprint: $($_.Thumbprint)" }
 
-      - name: Build & publish with tauri-action
-        uses: tauri-apps/tauri-action@v0
+      # macOS 签名（Developer ID Application）+ 公证变量按需注入：仅当 secrets 已配置时
+      # 才写入 $GITHUB_ENV。不能直接在 tauri-action 的 env 里写 APPLE_CERTIFICATE: ${{ secrets.X }} ——
+      # secrets 未配置时 GitHub Actions 会把它设成空字符串（变量依然“存在”），
+      # tauri-bundler 用 var_os 检测到变量存在就会向钥匙串导入空证书，导致
+      # "SecKeychainItemImport: One or more parameters passed to a function were not valid."
+      # 注意：APPLE_CERTIFICATE 须为 .p12 的单行 base64（无换行），否则 tauri 解码失败。
+      - name: Configure Apple signing & notarization (optional)
+        if: startsWith(matrix.platform, 'macos')
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS 签名（Developer ID Application）+ 公证：tauri 检测到这些变量自动签名/公证；
-          # 未配置时保持现状（不签名）。
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_SECRET: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        shell: bash
+        run: |
+          if [ -n "$APPLE_CERTIFICATE_SECRET" ]; then
+            {
+              echo "APPLE_CERTIFICATE=$APPLE_CERTIFICATE_SECRET"
+              echo "APPLE_CERTIFICATE_PASSWORD=$APPLE_CERTIFICATE_PASSWORD"
+              echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY"
+            } >> "$GITHUB_ENV"
+            echo "已配置 macOS 签名证书，tauri 将自动签名"
+          else
+            echo "未配置 APPLE_CERTIFICATE，跳过（产物不签名）"
+          fi
+          if [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            {
+              echo "APPLE_ID=$APPLE_ID"
+              echo "APPLE_PASSWORD=$APPLE_PASSWORD"
+              echo "APPLE_TEAM_ID=$APPLE_TEAM_ID"
+            } >> "$GITHUB_ENV"
+            echo "已配置公证账号，tauri 将自动公证"
+          else
+            echo "未配置完整公证账号（APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID），跳过公证"
+          fi
+
+      - name: Build & publish with tauri-action
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # APPLE_* 签名/公证变量由上一步按需写入 $GITHUB_ENV（未配置时不注入，保持不签名）
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'One Flower ${{ github.ref_name }}'
